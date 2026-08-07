@@ -1,0 +1,24 @@
+[workspace]
+authors = ["Ondřej Čertík <ondrej@certik.us>"]
+channels = ["conda-forge"]
+name = "fplot"
+platforms = ["osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+build-flang = "bash scripts/build_flang.sh"
+# Run binaries from repo root so relative paths like tests/out/*.svg resolve.
+test-flang = "bash scripts/build_flang.sh && mkdir -p tests/out && ./build/flang/test_plots"
+demo-flang = "bash scripts/build_flang.sh && ./build/flang/demo"
+
+build-lfortran = "bash scripts/build_lfortran.sh"
+test-lfortran = "bash scripts/build_lfortran.sh && mkdir -p tests/out && ./build/lfortran/test_plots"
+demo-lfortran = "bash scripts/build_lfortran.sh && ./build/lfortran/demo"
+
+mpl-refs = "python tests/gen_mpl_refs.py"
+compare = "python tests/gen_mpl_refs.py && bash scripts/build_flang.sh && mkdir -p tests/out && ./build/flang/test_plots && python tests/compare_svgs.py"
+
+[dependencies]
+python = ">=3.14.6,<3.15"
+matplotlib = ">=3.11.1,<4"
+numpy = ">=2.5.1,<3"

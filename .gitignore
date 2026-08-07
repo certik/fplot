@@ -1,0 +1,21 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# build artifacts
+build/
+*.mod
+*.o
+*.a
+*.exe
+
+# generated plots
+tests/out/
+tests/refs/
+demo.svg
+fplot_show.svg
+*.svg
+
+# python
+__pycache__/
+*.pyc
