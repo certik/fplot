@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   test:
-    name: Linux (lfortran)
+    name: Linux (flang + lfortran)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,5 +23,7 @@ jobs:
           pixi-version: v0.76.1
           cache: true
           locked: true
+      - name: Test with Flang
+        run: pixi run test-flang
       - name: Test with LFortran
         run: pixi run test-lfortran

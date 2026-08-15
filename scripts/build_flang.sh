@@ -4,7 +4,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build/flang"
 mkdir -p "$BUILD" "$ROOT/tests/out"
 
-FLANG="${FLANG:-flang}"
+# conda-forge's flang_linux-64 activation sets FC to the target wrapper.
+FLANG="${FLANG:-${FC:-flang}}"
 echo "Using compiler: $FLANG"
 
 cd "$BUILD"

@@ -40,8 +40,8 @@ call suptitle("figure title")
 ## Build
 
 Requires [pixi](https://pixi.sh). LFortran is installed by pixi on all platforms.
-Flang is installed by pixi on Linux (conda-forge); on macOS provide a system
-Flang on `PATH`.
+Flang is installed by pixi on Linux via conda-forge `flang_linux-64` (compiler
+plus `libflang-rt`); on macOS provide a system Flang on `PATH`.
 
 ```bash
 pixi install
