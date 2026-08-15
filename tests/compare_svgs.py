@@ -33,6 +33,8 @@ CASES = [
     "many_series",
     "alpha",
     "facecolor",
+    "imshow",
+    "imshow_cbar",
 ]
 
 

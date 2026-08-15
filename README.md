@@ -31,6 +31,9 @@ call suptitle("figure title")
 - `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`
 - `text` and `annotate` (with a leader line to the annotated point)
+- `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
+  `aspect`, plus `colorbar`
+- Colormaps: `viridis`, `plasma`, `inferno`, `magma`, `gray`, `coolwarm`
 - Format strings: colors `bgrcmykw` / `C0`–`C9`, linestyles `-` `--` `:` `-.`,
   markers `o x . s ^ v < > * + D`
 - Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`

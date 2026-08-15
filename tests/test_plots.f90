@@ -22,7 +22,9 @@ program test_plots
         2.4_dp, 2.6_dp, 2.9_dp, 3.0_dp, 3.2_dp, 3.3_dp, 3.7_dp, 4.0_dp, 4.4_dp, 4.9_dp]
     character(len=1), parameter :: mark_codes(n_marks) = &
         ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
-    integer :: i
+    integer :: i, j
+    integer, parameter :: nzr = 8, nzc = 16
+    real(dp) :: zimg(nzr, nzc)
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
     ! Shared data
@@ -332,6 +334,30 @@ program test_plots
     call grid(.true.)
     call savefig("tests/out/facecolor.svg", facecolor="#eeeeee")
     print *, "wrote tests/out/facecolor.svg"
+
+    do i = 1, nzr
+        do j = 1, nzc
+            zimg(i, j) = sin(0.4_dp * real(j, dp)) + cos(0.5_dp * real(i, dp))
+        end do
+    end do
+
+    ! 22) imshow with the default upper origin
+    call figure()
+    call imshow(zimg)
+    call title("imshow")
+    call savefig("tests/out/imshow.svg")
+    print *, "wrote tests/out/imshow.svg"
+
+    ! 23) imshow with an extent, lower origin and a colorbar
+    call figure()
+    call imshow(zimg, cmap="plasma", extent=[0.0_dp, 4.0_dp, 0.0_dp, 2.0_dp], &
+                origin="lower")
+    call colorbar(label="value")
+    call title("imshow with colorbar")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/imshow_cbar.svg")
+    print *, "wrote tests/out/imshow_cbar.svg"
 
     print *, "All test plots written."
 end program test_plots

@@ -35,6 +35,8 @@ OUT_NAMES = [
     "many_series",
     "alpha",
     "facecolor",
+    "imshow",
+    "imshow_cbar",
 ]
 
 
@@ -326,6 +328,25 @@ def main() -> None:
     ax.set_ylabel("y")
     ax.grid(True)
     save(fig, "facecolor", facecolor="#eeeeee")
+
+    # 22/23 imshow
+    nzr, nzc = 8, 16
+    zimg = np.array([[np.sin(0.4 * (j + 1)) + np.cos(0.5 * (i + 1))
+                      for j in range(nzc)] for i in range(nzr)])
+
+    fig, ax = setup_fig()
+    ax.imshow(zimg)
+    ax.set_title("imshow")
+    save(fig, "imshow")
+
+    fig, ax = setup_fig()
+    im = ax.imshow(zimg, cmap="plasma", extent=(0.0, 4.0, 0.0, 2.0), origin="lower")
+    cb = fig.colorbar(im)
+    cb.set_label("value")
+    ax.set_title("imshow with colorbar")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "imshow_cbar")
 
     print("All matplotlib references written.")
 

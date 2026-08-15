@@ -12,6 +12,7 @@ module fplot
     public :: bar, hist, fill_between, errorbar, axhline, axvline
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
+    public :: imshow, colorbar
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg
@@ -23,6 +24,12 @@ module fplot
     ! on demand, so this is only the allocation granularity.
     integer, parameter :: INIT_SLOTS = 8
     integer, parameter :: MAX_MINOR = 256
+
+    ! Colorbar layout, as fractions of the axes box before it was shrunk.
+    real(dp), parameter :: CBAR_SHRINK = 0.8_dp
+    real(dp), parameter :: CBAR_X = 0.85_dp
+    real(dp), parameter :: CBAR_W = 0.03725_dp
+    integer, parameter :: CBAR_SLICES = 64
 
     real(dp), parameter :: FIG_W_DEFAULT = 6.4_dp
     real(dp), parameter :: FIG_H_DEFAULT = 4.8_dp
@@ -98,6 +105,17 @@ module fplot
         real(dp) :: xtick_pos(MAX_TICKS), ytick_pos(MAX_TICKS)
         logical :: xtick_labeled = .false., ytick_labeled = .false.
         character(len=24) :: xtick_lab(MAX_TICKS), ytick_lab(MAX_TICKS)
+        ! Image (imshow). One image per axes, as in normal matplotlib use.
+        logical :: has_img = .false.
+        real(dp), allocatable :: img(:, :)
+        integer :: img_cmap = CMAP_VIRIDIS
+        real(dp) :: img_vmin = 0.0_dp, img_vmax = 1.0_dp
+        real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
+        logical :: img_origin_upper = .true.
+        ! aspect="equal" keeps pixels square by shrinking the axes box.
+        logical :: aspect_equal = .false.
+        logical :: cbar_on = .false.
+        character(len=32) :: cbar_label = ""
         integer :: xscale = SCALE_LINEAR
         integer :: yscale = SCALE_LINEAR
         logical :: xlim_set = .false.
@@ -449,6 +467,64 @@ contains
         end if
     end function resolve_color
 
+    ! Draw z as an image. z is indexed (row, column) and, with the default
+    ! origin="upper", row 1 is drawn at the top, which is why that case gives
+    ! a descending y axis exactly as matplotlib does.
+    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect)
+        real(dp), intent(in) :: z(:, :)
+        character(len=*), intent(in), optional :: cmap, origin, aspect
+        real(dp), intent(in), optional :: vmin, vmax, extent(4)
+        integer :: nr, nc
+        real(dp) :: lo, hi
+
+        call ensure_fig()
+        nr = size(z, 1)
+        nc = size(z, 2)
+        if (nr < 1 .or. nc < 1) return
+
+        if (allocated(ax(cur_i)%img)) deallocate (ax(cur_i)%img)
+        allocate (ax(cur_i)%img(nr, nc))
+        ax(cur_i)%img = z
+        ax(cur_i)%has_img = .true.
+
+        ax(cur_i)%img_cmap = CMAP_VIRIDIS
+        if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
+
+        lo = minval(z)
+        hi = maxval(z)
+        if (present(vmin)) lo = vmin
+        if (present(vmax)) hi = vmax
+        if (hi <= lo) hi = lo + 1.0_dp
+        ax(cur_i)%img_vmin = lo
+        ax(cur_i)%img_vmax = hi
+
+        ax(cur_i)%img_origin_upper = .true.
+        if (present(origin)) ax(cur_i)%img_origin_upper = trim(origin) /= "lower"
+
+        ! Pixel centres sit on integers, so the edges fall on the half values.
+        if (present(extent)) then
+            ax(cur_i)%img_ext = extent
+        else
+            ax(cur_i)%img_ext = [-0.5_dp, real(nc, dp) - 0.5_dp, &
+                                 -0.5_dp, real(nr, dp) - 0.5_dp]
+        end if
+
+        ax(cur_i)%aspect_equal = .true.
+        if (present(aspect)) ax(cur_i)%aspect_equal = trim(aspect) /= "auto"
+    end subroutine imshow
+
+    subroutine colorbar(label)
+        character(len=*), intent(in), optional :: label
+        call ensure_fig()
+        if (.not. ax(cur_i)%has_img) return
+        if (ax(cur_i)%cbar_on) return
+        ax(cur_i)%cbar_on = .true.
+        if (present(label)) ax(cur_i)%cbar_label = label
+        ! Same split matplotlib uses: the axes keeps 80% of its width and the
+        ! bar sits in the gap that frees up.
+        ax(cur_i)%right = ax(cur_i)%left + CBAR_SHRINK * (ax(cur_i)%right - ax(cur_i)%left)
+    end subroutine colorbar
+
     ! Vertical bars of the given heights, centred on x and drawn from y = 0.
     subroutine bar(x, height, width, color, label, alpha)
         real(dp), intent(in) :: x(:), height(:)
@@ -796,6 +872,15 @@ contains
             end if
         end do
 
+        if (a%has_img) then
+            anyx = .true.
+            anyy = .true.
+            xmin = min(xmin, a%img_ext(1))
+            xmax = max(xmax, a%img_ext(2))
+            ymin = min(ymin, a%img_ext(3))
+            ymax = max(ymax, a%img_ext(4))
+        end if
+
         if (a%xlim_set) then
             xmin = a%xmin_user
             xmax = a%xmax_user
@@ -817,7 +902,29 @@ contains
             end if
             call expand_limits(ymin, ymax, a%yscale == SCALE_LOG, sticky_lo, sticky_hi)
         end if
+
+        ! An image fits its extent exactly, and origin="upper" puts the first
+        ! row at the top, which matplotlib expresses as a descending y axis.
+        if (a%has_img) then
+            if (.not. a%xlim_set) then
+                xmin = a%img_ext(1)
+                xmax = a%img_ext(2)
+            end if
+            if (.not. a%ylim_set) then
+                ymin = a%img_ext(3)
+                ymax = a%img_ext(4)
+                if (a%img_origin_upper) call swap(ymin, ymax)
+            end if
+        end if
     end subroutine compute_limits
+
+    pure subroutine swap(u, v)
+        real(dp), intent(inout) :: u, v
+        real(dp) :: t
+        t = u
+        u = v
+        v = t
+    end subroutine swap
 
     ! Pad a data range by matplotlib's 5% margin. A sticky edge (the bar
     ! baseline) is left exactly where it is.
@@ -1252,6 +1359,145 @@ contains
         m(nm) = v
     end subroutine push_minor
 
+    ! One <rect> per sample. SVG has no raster primitive we can reach without
+    ! embedding an encoded image, and nearest-neighbour cells are what
+    ! matplotlib's default interpolation looks like at these sizes anyway.
+    subroutine append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        integer :: nr, nc, i, j
+        real(dp) :: xe0, xe1, ye0, ye1, px0, px1, py0, py1, t, dxc, dyc
+
+        nr = size(a%img, 1)
+        nc = size(a%img, 2)
+        dxc = (a%img_ext(2) - a%img_ext(1)) / real(nc, dp)
+        dyc = (a%img_ext(4) - a%img_ext(3)) / real(nr, dp)
+
+        do i = 1, nr
+            ye0 = a%img_ext(3) + real(i - 1, dp) * dyc
+            ye1 = ye0 + dyc
+            py0 = map_y(ye0, ymin, ymax, ax_b, ax_h, ylog)
+            py1 = map_y(ye1, ymin, ymax, ax_b, ax_h, ylog)
+            do j = 1, nc
+                xe0 = a%img_ext(1) + real(j - 1, dp) * dxc
+                xe1 = xe0 + dxc
+                px0 = map_x(xe0, xmin, xmax, ax_l, ax_w, xlog)
+                px1 = map_x(xe1, xmin, xmax, ax_l, ax_w, xlog)
+                t = (a%img(i, j) - a%img_vmin) / (a%img_vmax - a%img_vmin)
+                call append_cell(b, min(px0, px1), min(py0, py1), &
+                                 abs(px1 - px0), abs(py1 - py0), &
+                                 cmap_color(a%img_cmap, t))
+            end do
+        end do
+    end subroutine append_image
+
+    ! Cells are grown by a hairline so that neighbours overlap; without it the
+    ! renderer leaves visible seams between abutting rectangles.
+    subroutine append_cell(b, x, y, w, h, color)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x, y, w, h
+        character(len=*), intent(in) :: color
+        real(dp), parameter :: BLEED = 0.05_dp
+        call builder_append(b, '<rect x="')
+        call append_num(b, x - BLEED)
+        call builder_append(b, '" y="')
+        call append_num(b, y - BLEED)
+        call builder_append(b, '" width="')
+        call append_num(b, w + 2.0_dp * BLEED)
+        call builder_append(b, '" height="')
+        call append_num(b, h + 2.0_dp * BLEED)
+        call builder_append(b, '" fill="')
+        call builder_append(b, color)
+        call builder_append(b, '"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_cell
+
+    ! Vertical gradient strip plus its own frame, ticks and labels.
+    subroutine append_colorbar(b, a, idx, W, H)
+        type(svg_builder), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        integer, intent(in) :: idx
+        real(dp), intent(in) :: W, H
+        real(dp) :: bx, bw, bt, bb, bh, y0, y1, t, v, py
+        real(dp) :: cb_ticks(MAX_TICKS), lo, hi
+        integer :: i, nt, ln
+        character(len=64) :: lbl
+        character(len=512) :: esc
+        real(dp) :: w0, l0
+
+        ! The axes was already shrunk by colorbar(), so recover the original
+        ! box that the bar fractions are defined against.
+        l0 = a%left * W
+        w0 = (a%right * W - l0) / CBAR_SHRINK
+        bx = l0 + CBAR_X * w0
+        bw = CBAR_W * w0
+        bt = (1.0_dp - a%top) * H
+        bb = (1.0_dp - a%bottom) * H
+        bh = bb - bt
+
+        call builder_append(b, '<defs><clipPath id="axclip')
+        call builder_append(b, int_to_str(idx))
+        call builder_append(b, 'cb"><rect x="')
+        call append_num(b, bx)
+        call builder_append(b, '" y="')
+        call append_num(b, bt)
+        call builder_append(b, '" width="')
+        call append_num(b, bw)
+        call builder_append(b, '" height="')
+        call append_num(b, bh)
+        call builder_append(b, '"/></clipPath></defs>')
+        call builder_append(b, new_line("a"))
+
+        do i = 1, CBAR_SLICES
+            y1 = bb - real(i - 1, dp) * bh / real(CBAR_SLICES, dp)
+            y0 = bb - real(i, dp) * bh / real(CBAR_SLICES, dp)
+            t = (real(i, dp) - 0.5_dp) / real(CBAR_SLICES, dp)
+            call append_cell(b, bx, y0, bw, y1 - y0, cmap_color(a%img_cmap, t))
+        end do
+
+        call builder_append(b, '<rect x="')
+        call append_num(b, bx)
+        call builder_append(b, '" y="')
+        call append_num(b, bt)
+        call builder_append(b, '" width="')
+        call append_num(b, bw)
+        call builder_append(b, '" height="')
+        call append_num(b, bh)
+        call builder_append(b, '" fill="none" stroke="#000000" stroke-width="0.8"/>')
+        call builder_append(b, new_line("a"))
+
+        lo = a%img_vmin
+        hi = a%img_vmax
+        call linear_ticks(lo, hi, 6, cb_ticks, nt)
+        do i = 1, nt
+            v = cb_ticks(i)
+            if (v < lo .or. v > hi) cycle
+            py = bb - (v - lo) / (hi - lo) * bh
+            call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
+            call format_tick_to(v, .false., lbl, ln)
+            call append_text(b, bx + bw + 7.0_dp, py + 3.5_dp, lbl(1:ln), &
+                             "left", 10.0_dp, "#000000")
+        end do
+
+        if (len_trim(a%cbar_label) > 0) then
+            call xml_escape_to(a%cbar_label, esc, ln)
+            call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), esc(1:ln), &
+                             "center", 11.0_dp, "#000000", &
+                             "rotate(-90 " // trim(fmt_pt(bx + bw + 34.0_dp)) // " " // &
+                             trim(fmt_pt(0.5_dp * (bt + bb))) // ")")
+        end if
+    end subroutine append_colorbar
+
+    function fmt_pt(v) result(t)
+        real(dp), intent(in) :: v
+        character(len=64) :: t
+        integer :: n
+        call fmt_num(v, t, n)
+        t = t(1:n)
+    end function fmt_pt
+
     ! matplotlib's "best" needs a data-overlap search; upper right is the
     ! placement it picks for the common case, so we use it as the fallback.
     subroutine legend_origin(loc, ax_l, ax_r, ax_t, ax_b, leg_w, leg_h, leg_x, leg_y)
@@ -1333,6 +1579,7 @@ contains
         real(dp) :: xmin, xmax, ymin, ymax
         real(dp) :: xticks(MAX_TICKS), yticks(MAX_TICKS)
         real(dp) :: xminor(MAX_MINOR), yminor(MAX_MINOR)
+        real(dp) :: span_x, span_y, sc, new_w, new_h
         integer :: nxt, nyt, nxm, nym, i, j, n, nl
         real(dp) :: px, py, ms, r, mid
         character(len=64) :: lbl
@@ -1352,11 +1599,28 @@ contains
         ax_h = ax_b - ax_t
 
         call compute_limits(a, xmin, xmax, ymin, ymax)
+
+        if (a%aspect_equal) then
+            span_x = abs(xmax - xmin)
+            span_y = abs(ymax - ymin)
+            if (span_x > 0.0_dp .and. span_y > 0.0_dp) then
+                sc = min(ax_w / span_x, ax_h / span_y)
+                new_w = sc * span_x
+                new_h = sc * span_y
+                ax_l = ax_l + 0.5_dp * (ax_w - new_w)
+                ax_t = ax_t + 0.5_dp * (ax_h - new_h)
+                ax_w = new_w
+                ax_h = new_h
+                ax_r = ax_l + ax_w
+                ax_b = ax_t + ax_h
+            end if
+        end if
         xlog = a%xscale == SCALE_LOG
         ylog = a%yscale == SCALE_LOG
 
         call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xlog, xticks, nxt)
-        call axis_ticks(a%n_yticks, a%ytick_pos, ymin, ymax, ylog, yticks, nyt)
+        call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
+                        ylog, yticks, nyt)
         if (a%minor_ticks) then
             call minor_positions(xticks, nxt, xmin, xmax, xlog, xminor, nxm)
             call minor_positions(yticks, nyt, ymin, ymax, ylog, yminor, nym)
@@ -1421,6 +1685,16 @@ contains
                 call builder_append(b, '" stroke="#b0b0b0" stroke-width="0.8"/>')
                 call builder_append(b, new_line("a"))
             end do
+        end if
+
+        if (a%has_img) then
+            call builder_append(b, '<g clip-path="url(#axclip')
+            call builder_append(b, int_to_str(idx))
+            call builder_append(b, ')">')
+            call builder_append(b, new_line("a"))
+            call append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+            call builder_append(b, "</g>")
+            call builder_append(b, new_line("a"))
         end if
 
         ! data
@@ -1575,6 +1849,8 @@ contains
             call append_text(b, 0.5_dp * (ax_l + ax_r), ax_t - 6.0_dp, esc(1:en), &
                              "center", 12.0_dp, "#000000")
         end if
+
+        if (a%cbar_on) call append_colorbar(b, a, idx, W, H)
 
         ! legend
         if (a%legend_on) then
