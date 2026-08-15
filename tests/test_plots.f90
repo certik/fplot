@@ -47,6 +47,7 @@ program test_plots
         18.0_dp, 19.0_dp]
     real(dp) :: qx(64), qy(64), qu(64), qv(64)
     real(dp) :: hx(500), hy(500), mz(6, 6), ev(40)
+    real(dp) :: sxg(16), syg(16), su(16, 16), sv(16, 16)
     real(dp), parameter :: yedge(nzr + 1) = [ &
         0.0_dp, 1.0_dp, 2.0_dp, 4.0_dp, 6.0_dp, 6.5_dp, 7.0_dp, 8.0_dp, 10.0_dp]
     real(dp) :: svals(ns), cvals(ns)
@@ -810,6 +811,24 @@ program test_plots
                      [2.5_dp, 0.8_dp], color="C1")
     call title("broken_barh")
     call save_all("broken_barh")
+
+! 72) streamlines of a vector field
+    call clf()
+    do i = 1, 16
+        sxg(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/15.0_dp
+    end do
+    do i = 1, 16
+        syg(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/15.0_dp
+    end do
+    do i = 1, 16
+        do j = 1, 16
+            su(i, j) = -1.0_dp - sxg(j)**2 + syg(i)
+            sv(i, j) = 1.0_dp + sxg(j) - syg(i)**2
+        end do
+    end do
+    call streamplot(sxg, syg, su, sv)
+    call title("streamplot")
+    call save_all("streamplot")
 
     print *, "All test plots written."
 

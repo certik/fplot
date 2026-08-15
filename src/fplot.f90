@@ -21,7 +21,7 @@ module fplot
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
     public :: pcolormesh, pcolor, hist2d, hexbin
-    public :: matshow, eventplot, broken_barh
+    public :: matshow, eventplot, broken_barh, streamplot
     public :: add_axes, secondary_xaxis, secondary_yaxis
     public :: add_rectangle, add_circle, add_ellipse, add_polygon
     public :: polar, set_polar
@@ -119,6 +119,26 @@ module fplot
     integer, parameter :: SERIES_PATCH = 16
     ! QUIVER: x, y hold the tails and qu, qv the vectors.
     integer, parameter :: SERIES_QUIVER = 15
+    ! ARROWHEAD: x, y hold the tips and qu, qv the direction. Drawn at a
+    ! fixed size in points, which is what streamplot wants.
+    integer, parameter :: SERIES_ARROWHEAD = 17
+    ! The most points one streamline may have.
+    integer, parameter :: MAX_STREAM_PTS = 20000
+
+    ! Working state for streamplot: the field in grid coordinates, and the
+    ! coarse mask that keeps the streamlines apart by refusing a second one
+    ! through any cell.
+    type :: stream_t
+        integer :: nx = 0, ny = 0
+        real(dp), allocatable :: u(:, :), v(:, :), sp(:, :)
+        integer :: mnx = 30, mny = 30
+        integer, allocatable :: mask(:, :)
+        real(dp) :: g2mx = 1.0_dp, g2my = 1.0_dp
+        real(dp) :: m2gx = 1.0_dp, m2gy = 1.0_dp
+        integer :: cx = -1, cy = -1
+        integer :: nclaim = 0
+        integer, allocatable :: claim(:, :)
+    end type stream_t
 
     type :: series_t
         integer :: kind = SERIES_LINE
@@ -280,6 +300,10 @@ module fplot
         ! keeps a whole line length clear above and below its strokes.
         logical :: yroom_set = .false.
         real(dp) :: yroom(2) = 0.0_dp
+        logical :: xroom_set = .false.
+        real(dp) :: xroom(2) = 0.0_dp
+        ! Whether that room is a sticky edge, taking no margin beyond it.
+        logical :: room_sticks = .false.
         logical :: xaxis_off = .false., yaxis_off = .false.
         logical :: patch_off = .false.
         real(dp) :: aspect = 0.0_dp
@@ -2460,6 +2484,416 @@ contains
         end do
     end subroutine broken_barh
 
+    ! Streamlines of a vector field. This follows matplotlib closely: the
+    ! field is integrated with an adaptive Heun step in grid coordinates,
+    ! seeds spiral inwards from the corner of a 30x30 mask, and a line stops
+    ! as soon as it enters a cell another line already went through.
+    !
+    ! u and v are indexed (row, column), that is (y, x), as everywhere else.
+    subroutine streamplot(x, y, u, v, density, color, lw, arrowsize)
+        real(dp), intent(in) :: x(:), y(:), u(:, :), v(:, :)
+        real(dp), intent(in), optional :: density, lw, arrowsize
+        character(len=*), intent(in), optional :: color
+        type(stream_t) :: st
+        real(dp), parameter :: MINLENGTH = 0.1_dp
+        real(dp), allocatable :: xs(:), ys(:), tx(:), ty(:), ahx(:), ahy(:), ahu(:), ahv(:)
+        real(dp) :: dx, dy, x0, y0, dens, tot, sl, half, ca
+        integer :: nx, ny, i, j, np, is, na, k, nseed, sx, sy, sd(5)
+        character(len=32) :: col
+
+        call ensure_fig()
+        nx = size(x)
+        ny = size(y)
+        if (nx < 2 .or. ny < 2) return
+        if (size(u, 1) /= ny .or. size(u, 2) /= nx) return
+        if (size(v, 1) /= ny .or. size(v, 2) /= nx) return
+
+        dx = x(2) - x(1)
+        dy = y(2) - y(1)
+        x0 = x(1)
+        y0 = y(1)
+        dens = 1.0_dp
+        if (present(density)) dens = density
+
+        ! Velocities in grid coordinates, and the speed in axes coordinates,
+        ! which is what the arc length is measured in.
+        st%nx = nx
+        st%ny = ny
+        allocate (st%u(ny, nx), st%v(ny, nx), st%sp(ny, nx))
+        st%u = u/dx
+        st%v = v/dy
+        st%sp = sqrt((st%u/real(nx - 1, dp))**2 + (st%v/real(ny - 1, dp))**2)
+
+        st%mnx = int(30.0_dp*dens)
+        st%mny = int(30.0_dp*dens)
+        if (st%mnx < 1 .or. st%mny < 1) return
+        allocate (st%mask(st%mny, st%mnx), st%claim(2, st%mnx*st%mny))
+        st%mask = 0
+        st%g2mx = real(st%mnx - 1, dp)/real(nx - 1, dp)
+        st%g2my = real(st%mny - 1, dp)/real(ny - 1, dp)
+        ! Going back the other way through the reciprocal, not by dividing:
+        ! a seed on the far edge must land a hair outside the grid, exactly
+        ! as it does in matplotlib, or it starts a line that should not be.
+        st%m2gx = 1.0_dp/st%g2mx
+        st%m2gy = 1.0_dp/st%g2my
+
+        col = resolve_color(color, ca)
+        if (len_trim(col) == 0) then
+            col = cycle_color(ax(cur_i)%color_cycle)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
+        end if
+
+        allocate (xs(MAX_STREAM_PTS), ys(MAX_STREAM_PTS))
+        allocate (tx(MAX_STREAM_PTS), ty(MAX_STREAM_PTS))
+        nseed = st%mnx*st%mny
+        allocate (ahx(nseed), ahy(nseed), ahu(nseed), ahv(nseed))
+        na = 0
+
+        sx = 0
+        sy = 0
+        do i = 1, nseed
+            call stream_seed(st%mnx, st%mny, i, sx, sy, sd)
+            if (st%mask(sy + 1, sx + 1) /= 0) cycle
+            call stream_line(st, real(sx, dp)*st%m2gx, real(sy, dp)*st%m2gy, &
+                             xs, ys, np, tot)
+            if (np < 2 .or. tot <= MINLENGTH) cycle
+
+            do j = 1, np
+                tx(j) = x0 + xs(j)*dx
+                ty(j) = y0 + ys(j)*dy
+            end do
+            is = new_shape_series(SERIES_LINE, tx(1:np), ty(1:np), trim(col))
+            if (is < 1) cycle
+            if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
+
+            ! One arrowhead per line, at the halfway point along it.
+            sl = 0.0_dp
+            do j = 1, np - 1
+                sl = sl + hypot(tx(j + 1) - tx(j), ty(j + 1) - ty(j))
+            end do
+            half = 0.5_dp*sl
+            sl = 0.0_dp
+            k = np - 1
+            do j = 1, np - 1
+                sl = sl + hypot(tx(j + 1) - tx(j), ty(j + 1) - ty(j))
+                if (sl >= half) then
+                    k = j
+                    exit
+                end if
+            end do
+            na = na + 1
+            ! The tip sits where matplotlib puts the head of its arrow patch,
+            ! at the middle of the segment the halfway point falls in.
+            ahx(na) = 0.5_dp*(tx(k) + tx(k + 1))
+            ahy(na) = 0.5_dp*(ty(k) + ty(k + 1))
+            ahu(na) = tx(k + 1) - tx(k)
+            ahv(na) = ty(k + 1) - ty(k)
+        end do
+
+        if (na > 0) then
+            is = new_shape_series(SERIES_ARROWHEAD, ahx(1:na), ahy(1:na), trim(col))
+            if (is > 0) then
+                allocate (ax(cur_i)%series(is)%qu(na), ax(cur_i)%series(is)%qv(na))
+                ax(cur_i)%series(is)%qu = ahu(1:na)
+                ax(cur_i)%series(is)%qv = ahv(1:na)
+            end if
+        end if
+
+        ! matplotlib makes the edges of the field sticky, so the axes end
+        ! exactly on the grid with no margin.
+        ax(cur_i)%xroom = [x(1), x(nx)]
+        ax(cur_i)%xroom_set = .true.
+        if (ax(cur_i)%yroom_set) then
+            ax(cur_i)%yroom = [min(ax(cur_i)%yroom(1), y(1)), max(ax(cur_i)%yroom(2), y(ny))]
+        else
+            ax(cur_i)%yroom = [y(1), y(ny)]
+            ax(cur_i)%yroom_set = .true.
+        end if
+        ax(cur_i)%room_sticks = .true.
+    end subroutine streamplot
+
+    ! Seed points spiral inwards from the corner of the mask, which is what
+    ! gives the boundary streamlines first claim on the cells.
+    ! st holds the four closing edges and the direction of travel, so that
+    ! the walk keeps no state of its own.
+    subroutine stream_seed(nx, ny, i, x, y, sd)
+        integer, intent(in) :: nx, ny, i
+        integer, intent(inout) :: x, y, sd(5)
+        integer :: xfirst, yfirst, xlast, ylast, dirn
+
+        if (i == 1) then
+            sd = [0, 1, nx - 1, ny - 1, 0]
+            x = 0
+            y = 0
+            return
+        end if
+        xfirst = sd(1)
+        yfirst = sd(2)
+        xlast = sd(3)
+        ylast = sd(4)
+        dirn = sd(5)
+        select case (dirn)
+        case (0)
+            x = x + 1
+            if (x >= xlast) then
+                xlast = xlast - 1
+                dirn = 1
+            end if
+        case (1)
+            y = y + 1
+            if (y >= ylast) then
+                ylast = ylast - 1
+                dirn = 2
+            end if
+        case (2)
+            x = x - 1
+            if (x <= xfirst) then
+                xfirst = xfirst + 1
+                dirn = 3
+            end if
+        case default
+            y = y - 1
+            if (y <= yfirst) then
+                yfirst = yfirst + 1
+                dirn = 0
+            end if
+        end select
+        sd = [xfirst, yfirst, xlast, ylast, dirn]
+    end subroutine stream_seed
+
+    ! Bilinear lookup on the integer grid, with the position given in grid
+    ! coordinates running 0..n-1.
+    function stream_interp(a, xi, yi) result(r)
+        real(dp), intent(in) :: a(:, :), xi, yi
+        real(dp) :: r, xt, yt, a0, a1
+        integer :: ix, iy, ixn, iyn
+
+        ix = int(xi)
+        iy = int(yi)
+        ixn = min(ix + 1, size(a, 2) - 1)
+        iyn = min(iy + 1, size(a, 1) - 1)
+        xt = xi - real(ix, dp)
+        yt = yi - real(iy, dp)
+        a0 = a(iy + 1, ix + 1)*(1.0_dp - xt) + a(iy + 1, ixn + 1)*xt
+        a1 = a(iyn + 1, ix + 1)*(1.0_dp - xt) + a(iyn + 1, ixn + 1)*xt
+        r = a0*(1.0_dp - yt) + a1*yt
+    end function stream_interp
+
+    function stream_in_grid(st, xi, yi) result(r)
+        type(stream_t), intent(in) :: st
+        real(dp), intent(in) :: xi, yi
+        logical :: r
+        r = xi >= 0.0_dp .and. xi <= real(st%nx - 1, dp) .and. &
+            yi >= 0.0_dp .and. yi <= real(st%ny - 1, dp)
+    end function stream_in_grid
+
+    ! The direction of travel at a point, normalised so that a step in the
+    ! parameter is a step in arc length. code is 1 off the grid and 2 where
+    ! the field stalls.
+    subroutine stream_dir(st, xi, yi, dirn, dxi, dyi, code)
+        type(stream_t), intent(in) :: st
+        real(dp), intent(in) :: xi, yi
+        integer, intent(in) :: dirn
+        real(dp), intent(out) :: dxi, dyi
+        integer, intent(out) :: code
+        real(dp) :: ds_dt
+
+        dxi = 0.0_dp
+        dyi = 0.0_dp
+        code = 0
+        if (.not. stream_in_grid(st, xi, yi)) then
+            code = 1
+            return
+        end if
+        ds_dt = stream_interp(st%sp, xi, yi)
+        if (ds_dt == 0.0_dp) then
+            code = 2
+            return
+        end if
+        dxi = real(dirn, dp)*stream_interp(st%u, xi, yi)/ds_dt
+        dyi = real(dirn, dp)*stream_interp(st%v, xi, yi)/ds_dt
+    end subroutine stream_dir
+
+    ! Claim the mask cell a point falls in. ok comes back false when another
+    ! streamline already went through it.
+    subroutine stream_claim(st, xg, yg, ok)
+        type(stream_t), intent(inout) :: st
+        real(dp), intent(in) :: xg, yg
+        logical, intent(out) :: ok
+        integer :: mx, my
+
+        ok = .true.
+        mx = nint(xg*st%g2mx)
+        my = nint(yg*st%g2my)
+        if (mx == st%cx .and. my == st%cy) return
+        if (st%mask(my + 1, mx + 1) /= 0) then
+            ok = .false.
+            return
+        end if
+        st%nclaim = st%nclaim + 1
+        st%claim(1, st%nclaim) = mx
+        st%claim(2, st%nclaim) = my
+        st%mask(my + 1, mx + 1) = 1
+        st%cx = mx
+        st%cy = my
+    end subroutine stream_claim
+
+    ! A whole streamline through the seed: backwards from it, then forwards,
+    ! joined up. The cells claimed along the way are released again if the
+    ! line turns out to be too short to keep.
+    subroutine stream_line(st, x0, y0, xs, ys, np, tot)
+        type(stream_t), intent(inout) :: st
+        real(dp), intent(in) :: x0, y0
+        real(dp), intent(inout) :: xs(:), ys(:)
+        integer, intent(out) :: np
+        real(dp), intent(out) :: tot
+        real(dp), allocatable :: bx(:), by(:), fx(:), fy(:)
+        real(dp) :: sb, sf
+        integer :: nb, nf, j
+        logical :: ok
+
+        np = 0
+        tot = 0.0_dp
+        st%nclaim = 0
+        st%cx = -1
+        st%cy = -1
+        call stream_claim(st, x0, y0, ok)
+        if (.not. ok) return
+
+        allocate (bx(MAX_STREAM_PTS), by(MAX_STREAM_PTS))
+        allocate (fx(MAX_STREAM_PTS), fy(MAX_STREAM_PTS))
+        call stream_rk12(st, x0, y0, -1, bx, by, nb, sb)
+        st%cx = nint(x0*st%g2mx)
+        st%cy = nint(y0*st%g2my)
+        call stream_rk12(st, x0, y0, 1, fx, fy, nf, sf)
+        tot = sb + sf
+
+        do j = nb, 1, -1
+            np = np + 1
+            xs(np) = bx(j)
+            ys(np) = by(j)
+        end do
+        do j = 2, nf
+            np = np + 1
+            xs(np) = fx(j)
+            ys(np) = fy(j)
+        end do
+        if (tot <= 0.1_dp) then
+            do j = 1, st%nclaim
+                st%mask(st%claim(2, j) + 1, st%claim(1, j) + 1) = 0
+            end do
+        end if
+    end subroutine stream_line
+
+    ! Heun's method with an adaptive step: cheap, and small enough a step to
+    ! visit every mask cell on the way, which is what the mask needs.
+    subroutine stream_rk12(st, x0, y0, dirn, xs, ys, np, tot)
+        type(stream_t), intent(inout) :: st
+        real(dp), intent(in) :: x0, y0
+        integer, intent(in) :: dirn
+        real(dp), intent(inout) :: xs(:), ys(:)
+        integer, intent(out) :: np
+        real(dp), intent(out) :: tot
+        real(dp), parameter :: MAXERROR = 0.003_dp, MAXLENGTH = 4.0_dp
+        real(dp) :: maxds, ds, xi, yi, k1x, k1y, k2x, k2y, dx1, dy1, dx2, dy2, err
+        integer :: code
+        logical :: ok
+
+        maxds = min(1.0_dp/real(st%mnx, dp), 1.0_dp/real(st%mny, dp), 0.1_dp)
+        ds = maxds
+        tot = 0.0_dp
+        xi = x0
+        yi = y0
+        np = 0
+
+        do
+            if (.not. stream_in_grid(st, xi, yi)) then
+                if (np > 0) call stream_euler(st, xs, ys, np, dirn, tot)
+                exit
+            end if
+            if (np >= size(xs)) exit
+            np = np + 1
+            xs(np) = xi
+            ys(np) = yi
+
+            call stream_dir(st, xi, yi, dirn, k1x, k1y, code)
+            if (code == 1) then
+                call stream_euler(st, xs, ys, np, dirn, tot)
+                exit
+            else if (code == 2) then
+                exit
+            end if
+            call stream_dir(st, xi + ds*k1x, yi + ds*k1y, dirn, k2x, k2y, code)
+            if (code == 1) then
+                call stream_euler(st, xs, ys, np, dirn, tot)
+                exit
+            else if (code == 2) then
+                exit
+            end if
+
+            dx1 = ds*k1x
+            dy1 = ds*k1y
+            dx2 = ds*0.5_dp*(k1x + k2x)
+            dy2 = ds*0.5_dp*(k1y + k2y)
+            ! The error is measured in axes coordinates, so that it means the
+            ! same thing whatever the grid.
+            err = hypot((dx2 - dx1)/real(st%nx - 1, dp), (dy2 - dy1)/real(st%ny - 1, dp))
+
+            if (err < MAXERROR) then
+                xi = xi + dx2
+                yi = yi + dy2
+                ! Leaving the grid ends the line here: matplotlib only takes
+                ! the Euler step to the boundary when the trial point of the
+                ! step, not the step itself, falls outside.
+                if (.not. stream_in_grid(st, xi, yi)) exit
+                call stream_claim(st, xi, yi, ok)
+                if (.not. ok) exit
+                if (tot + ds > MAXLENGTH) exit
+                tot = tot + ds
+            end if
+
+            if (err == 0.0_dp) then
+                ds = maxds
+            else
+                ds = min(maxds, 0.85_dp*ds*sqrt(MAXERROR/err))
+            end if
+        end do
+    end subroutine stream_rk12
+
+    ! One plain Euler step out to the edge of the grid, so a line that leaves
+    ! the field ends on the boundary rather than short of it.
+    subroutine stream_euler(st, xs, ys, np, dirn, tot)
+        type(stream_t), intent(in) :: st
+        real(dp), intent(inout) :: xs(:), ys(:), tot
+        integer, intent(inout) :: np
+        integer, intent(in) :: dirn
+        real(dp) :: xi, yi, cx, cy, dsx, dsy, ds
+        integer :: code
+
+        if (np < 1 .or. np >= size(xs)) return
+        xi = xs(np)
+        yi = ys(np)
+        call stream_dir(st, xi, yi, dirn, cx, cy, code)
+        if (code /= 0) return
+        dsx = huge(1.0_dp)
+        dsy = huge(1.0_dp)
+        if (cx < 0.0_dp) then
+            dsx = xi/(-cx)
+        else if (cx > 0.0_dp) then
+            dsx = (real(st%nx - 1, dp) - xi)/cx
+        end if
+        if (cy < 0.0_dp) then
+            dsy = yi/(-cy)
+        else if (cy > 0.0_dp) then
+            dsy = (real(st%ny - 1, dp) - yi)/cy
+        end if
+        ds = min(dsx, dsy)
+        np = np + 1
+        xs(np) = xi + cx*ds
+        ys(np) = yi + cy*ds
+        tot = tot + ds
+    end subroutine stream_euler
+
     ! A two dimensional histogram: count the points into a grid of cells
     ! and hand the counts to pcolormesh, which is how matplotlib draws one.
     subroutine hist2d(x, y, bins, cmap, vmin, vmax)
@@ -4059,6 +4493,19 @@ contains
             anyy = .true.
             ymin = min(ymin, a%yroom(1))
             ymax = max(ymax, a%yroom(2))
+            if (a%room_sticks) then
+                sticky_lo = .true.
+                sticky_hi = .true.
+            end if
+        end if
+        if (a%xroom_set) then
+            anyx = .true.
+            xmin = min(xmin, a%xroom(1))
+            xmax = max(xmax, a%xroom(2))
+            if (a%room_sticks) then
+                sx_lo = .true.
+                sx_hi = .true.
+            end if
         end if
 
         if (a%xlim_set) then
@@ -4808,6 +5255,56 @@ contains
             call append_polygon(b, px, py, 7, trim(s%color), s%alpha)
         end do
     end subroutine append_quiver
+
+    ! matplotlib draws these as a FancyArrowPatch with the "-|>" style at a
+    ! mutation scale of ten: a filled triangle four points long and four
+    ! points across, with its tip on the curve.
+    subroutine append_arrowheads(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        ! "-|>" at a mutation scale of ten: four points long and two either
+        ! side. The barbs are then pushed back far enough that the stroke
+        ! around the head does not overshoot the line it sits on.
+        real(dp), parameter :: HEAD_L = 4.0_dp, HEAD_W = 2.0_dp
+        real(dp) :: x0, y0, dx, dy, mag, ct, st, px(4), py(4)
+        real(dp) :: dist, cs, sn, d, lw
+        integer :: j
+
+        dist = hypot(HEAD_L, HEAD_W)
+        cs = HEAD_L/dist
+        sn = HEAD_W/dist
+        lw = s%linewidth
+        d = dist + 0.5_dp*lw/sn
+
+        do j = 1, s%n
+            x0 = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+            y0 = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            ! The direction is given in data units, so it has to go through
+            ! the same mapping before it means anything on the page.
+            dx = map_x(s%x(j) + s%qu(j), xmin, xmax, ax_l, ax_w, xsc) - x0
+            dy = map_y(s%y(j) + s%qv(j), ymin, ymax, ax_b, ax_h, ysc) - y0
+            mag = hypot(dx, dy)
+            if (mag <= 0.0_dp) cycle
+            ct = dx/mag
+            st = dy/mag
+            ! matplotlib shrinks both ends of the arrow by two points before
+            ! putting the head on, so the tip lands short of the point given.
+            x0 = x0 - 2.0_dp*ct
+            y0 = y0 - 2.0_dp*st
+            px(1) = x0
+            py(1) = y0
+            px(2) = x0 - d*(cs*ct - sn*st)
+            py(2) = y0 - d*(cs*st + sn*ct)
+            px(3) = x0 - d*(cs*ct + sn*st)
+            py(3) = y0 - d*(cs*st - sn*ct)
+            px(4) = px(1)
+            py(4) = py(1)
+            call append_polygon(b, px, py, 3, trim(s%color), s%alpha)
+            call append_stroke_path(b, px, py, 4, trim(s%color), lw, s%alpha)
+        end do
+    end subroutine append_arrowheads
 
     subroutine append_fill(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         class(renderer_t), intent(inout) :: b
@@ -6236,6 +6733,10 @@ contains
             case (SERIES_QUIVER)
                 call append_quiver(b, a%series(i), xmin, xmax, ymin, ymax, &
                                    ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+                cycle
+            case (SERIES_ARROWHEAD)
+                call append_arrowheads(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                       ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 cycle
             case (SERIES_HSPAN, SERIES_VSPAN)
                 call append_span(b, a%series(i), xmin, xmax, ymin, ymax, &

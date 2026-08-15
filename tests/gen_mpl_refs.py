@@ -69,6 +69,7 @@ OUT_NAMES = [
     "matshow",
     "eventplot",
     "broken_barh",
+    "streamplot",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -818,6 +819,14 @@ def main() -> None:
     ax.broken_barh([(2.0, 3.0), (6.0, 3.0)], (2.5, 0.8), color="C1")
     ax.set_title("broken_barh")
     save(fig, "broken_barh")
+
+    # 72 streamlines of a vector field
+    fig, ax = setup_fig()
+    sg = np.linspace(-3.0, 3.0, 16)
+    sxx, syy = np.meshgrid(sg, sg)
+    ax.streamplot(sg, sg, -1.0 - sxx**2 + syy, 1.0 + sxx - syy**2)
+    ax.set_title("streamplot")
+    save(fig, "streamplot")
 
     print("All matplotlib references written.")
 
