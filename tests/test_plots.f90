@@ -750,6 +750,16 @@ program test_plots
     call title("patches")
     call save_all("patches")
 
+    ! 65) a polar plot
+    call clf()
+    do i = 1, n
+        td(i) = 2.0_dp*pi*real(i - 1, dp)/real(n - 1, dp)
+        yd(i) = 1.0_dp + cos(td(i))
+    end do
+    call polar(td(1:n), yd(1:n))
+    call title("polar")
+    call save_all("polar")
+
     print *, "All test plots written."
 
 contains

@@ -68,6 +68,8 @@ call suptitle("figure title")
 - `add_axes` for an axes placed by hand, `inset_axes` for a small axes
   inside another, and `secondary_xaxis`/`secondary_yaxis` for a second
   scale along an edge
+- Polar axes: `polar(theta, r)`, or `set_polar()` on an axes, with the
+  angular grid, the degree labels and the radial labels along 22.5°
 - Patches: `add_rectangle`, `add_circle`, `add_ellipse` and `add_polygon`,
   filled and outlined in data coordinates
 - `clabel` to write the level into each contour line, breaking the line

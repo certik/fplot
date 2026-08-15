@@ -62,6 +62,7 @@ OUT_NAMES = [
     "clabel",
     "inset",
     "patches",
+    "polar",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -755,6 +756,14 @@ def main() -> None:
                          edgecolor="tab:red", lw=2.0, fill=False))
     ax.set_title("patches")
     save(fig, "patches")
+
+    # 65 a polar plot
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax = fig.add_subplot(projection="polar")
+    th = np.linspace(0.0, 2.0 * np.pi, 100)
+    ax.plot(th, 1.0 + np.cos(th))
+    ax.set_title("polar")
+    save(fig, "polar")
 
     print("All matplotlib references written.")
 

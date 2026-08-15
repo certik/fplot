@@ -23,6 +23,7 @@ module fplot
     public :: pcolormesh, pcolor
     public :: add_axes, secondary_xaxis, secondary_yaxis
     public :: add_rectangle, add_circle, add_ellipse, add_polygon
+    public :: polar, set_polar
     public :: quiver
     public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
@@ -249,6 +250,9 @@ module fplot
         ! An axes placed by hand rather than in the grid. An inset keeps
         ! its rectangle in the fractions of the axes it sits in, so it
         ! follows that axes when the layout moves.
+        ! A polar axes: x is the angle in radians and y the radius, and the
+        ! box holds a circle rather than a rectangle.
+        logical :: polar = .false.
         logical :: fixed_pos = .false.
         integer :: inset_of = 0
         real(dp) :: inset_rect(4) = [0.0_dp, 0.0_dp, 1.0_dp, 1.0_dp]
@@ -312,6 +316,7 @@ module fplot
         procedure :: step => ax_step
         procedure :: stem => ax_stem
         procedure :: quiver => ax_quiver
+        procedure :: set_polar => ax_set_polar
         procedure :: add_rectangle => ax_add_rectangle
         procedure :: add_circle => ax_add_circle
         procedure :: add_ellipse => ax_add_ellipse
@@ -1532,6 +1537,12 @@ contains
         call step(x, y, where, label, color, lw, linestyle, alpha)
     end subroutine ax_step
 
+    subroutine ax_set_polar(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call set_polar()
+    end subroutine ax_set_polar
+
     subroutine ax_add_rectangle(self, xy, width, height, angle, facecolor, &
                                 edgecolor, lw, alpha, fill)
         class(axes), intent(in) :: self
@@ -2640,6 +2651,27 @@ contains
         if (is < 1) return
         ax(cur_i)%series(is)%marker = MARKER_CIRCLE
     end subroutine stem
+
+    ! Turn the current axes into a polar one: angle along x, radius along y.
+    subroutine set_polar()
+        call ensure_fig()
+        ax(cur_i)%polar = .true.
+        ! A polar axes carries its grid unless the caller says otherwise,
+        ! which is how matplotlib draws one.
+        ax(cur_i)%grid_on = .true.
+    end subroutine set_polar
+
+    ! pylab's polar(): make the axes polar and plot on it in one call.
+    subroutine polar(theta, r, color, label, lw, linestyle, marker, alpha)
+        real(dp), intent(in) :: theta(:), r(:)
+        character(len=*), intent(in), optional :: color, label, linestyle, marker
+        real(dp), intent(in), optional :: lw, alpha
+
+        call ensure_fig()
+        call set_polar()
+        call plot(theta, r, color=color, label=label, lw=lw, &
+                  linestyle=linestyle, marker=marker, alpha=alpha)
+    end subroutine polar
 
     ! ----------------------------------------------------------------------
     ! Patches: plain shapes in data coordinates. Each one is kept as the
@@ -5606,6 +5638,122 @@ contains
         end if
     end function axis_decimals
 
+    ! A polar axes. The box holds the largest circle that fits: the angle
+    ! runs anticlockwise from the right and the radius from the middle out,
+    ! so the whole of the drawing is one change of coordinates away from
+    ! everything else here.
+    subroutine render_polar(b, a, ax_l, ax_r, ax_b, ax_t)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: ax_l, ax_r, ax_b, ax_t
+        integer, parameter :: NC = 180
+        real(dp) :: cx, cy, R, rmax, t(MAX_TICKS), cxs(NC + 1), cys(NC + 1)
+        real(dp) :: ang, rr, lx, ly
+        real(dp), allocatable :: px(:), py(:)
+        character(len=64) :: lbl
+        integer :: nt, i, j, k, n, unit, dec
+
+        cx = 0.5_dp*(ax_l + ax_r)
+        cy = 0.5_dp*(ax_t + ax_b)
+        R = 0.5_dp*min(ax_r - ax_l, ax_b - ax_t)
+
+        ! The radius starts at the middle and reaches 5% past the data, as
+        ! matplotlib scales it.
+        rmax = 0.0_dp
+        do i = 1, a%n_series
+            do j = 1, a%series(i)%n
+                rmax = max(rmax, a%series(i)%y(j))
+            end do
+        end do
+        if (a%ylim_set) rmax = a%ymax_user
+        if (rmax <= 0.0_dp) rmax = 1.0_dp
+        if (.not. a%ylim_set) rmax = 1.05_dp*rmax
+
+        call linear_ticks(0.0_dp, rmax, tick_space(ax_b - ax_t, a%ytick_size, .false.), t, nt)
+        dec = tick_decimals(t, nt)
+
+        ! Grid: a circle at every radial tick and a spoke every 45 degrees.
+        if (a%grid_on) then
+            do k = 1, nt
+                if (t(k) <= 0.0_dp .or. t(k) > rmax) cycle
+                call polar_circle(cx, cy, R*t(k)/rmax, cxs, cys)
+                call append_stroke_path(b, cxs, cys, NC + 1, rc_grid_color, 0.8_dp, 1.0_dp)
+            end do
+            do k = 0, 7
+                ang = real(k, dp)*PI/4.0_dp
+                call append_stroke_path(b, [cx, cx + R*cos(ang)], &
+                                        [cy, cy - R*sin(ang)], 2, &
+                                        rc_grid_color, 0.8_dp, 1.0_dp)
+            end do
+        end if
+
+        ! The data, drawn straight through the change of coordinates.
+        do i = 1, a%n_series
+            n = a%series(i)%n
+            if (n < 1) cycle
+            allocate (px(n), py(n))
+            do j = 1, n
+                rr = R*a%series(i)%y(j)/rmax
+                px(j) = cx + rr*cos(a%series(i)%x(j))
+                py(j) = cy - rr*sin(a%series(i)%x(j))
+            end do
+            if (a%series(i)%linestyle /= LINE_NONE .and. n >= 2) &
+                call append_stroke_path(b, px, py, n, trim(a%series(i)%color), &
+                                        a%series(i)%linewidth, a%series(i)%alpha)
+            if (a%series(i)%marker /= MARKER_NONE) &
+                call append_markers(b, a%series(i)%marker, px, py, n, &
+                                    a%series(i)%markersize, trim(a%series(i)%color), &
+                                    a%series(i)%alpha)
+            deallocate (px, py)
+        end do
+
+        ! The outer circle is the whole of the frame a polar axes has.
+        call polar_circle(cx, cy, R, cxs, cys)
+        call append_stroke_path(b, cxs, cys, NC + 1, rc_spine_color, 0.8_dp, 1.0_dp)
+
+        ! Angles are labelled outside the circle, radii along the 22.5
+        ! degree line, which is where matplotlib puts them.
+        do k = 0, 7
+            ang = real(k, dp)*PI/4.0_dp
+            ! The degree sign is byte 176, which the backends know how to
+            ! write: a character reference in SVG, WinAnsi in PDF, and an
+            ! outline of its own in PNG.
+            write (lbl, "(I0,A)") k*45, achar(176)
+            lx = cx + (R + 4.0_dp + 0.5_dp*a%xtick_size)*cos(ang)
+            ly = cy - (R + 4.0_dp + 0.5_dp*a%xtick_size)*sin(ang) + 0.36_dp*a%xtick_size
+            call append_text(b, lx, ly, trim(lbl), "middle", a%xtick_size, rc_text_color)
+        end do
+        do k = 1, nt
+            if (t(k) <= 0.0_dp .or. t(k) > rmax) cycle
+            call format_tick_fixed(t(k), dec, lbl, n)
+            rr = R*t(k)/rmax
+            lx = cx + rr*cos(22.5_dp*PI/180.0_dp)
+            ly = cy - rr*sin(22.5_dp*PI/180.0_dp) + 0.36_dp*a%ytick_size
+            call append_text(b, lx, ly, lbl(1:n), "middle", a%ytick_size, rc_text_color)
+        end do
+
+        ! The title clears the angle label above the circle rather than
+        ! sitting on the box, which would run straight through it.
+        if (len_trim(a%title) > 0) &
+            call append_text(b, cx, cy - R - 4.0_dp - 1.6_dp*a%xtick_size &
+                             - 0.5_dp*a%title_size, trim(a%title), &
+                             "center", a%title_size, rc_text_color)
+    end subroutine render_polar
+
+    pure subroutine polar_circle(cx, cy, r, px, py)
+        real(dp), intent(in) :: cx, cy, r
+        real(dp), intent(out) :: px(:), py(:)
+        integer :: i, n
+        real(dp) :: t
+
+        n = size(px) - 1
+        do i = 1, n + 1
+            t = 2.0_dp*PI*real(i - 1, dp)/real(n, dp)
+            px(i) = cx + r*cos(t)
+            py(i) = cy - r*sin(t)
+        end do
+    end subroutine polar_circle
+
     subroutine render_axes(b, a, idx, W, H, clear)
         class(renderer_t), intent(inout) :: b
         type(axes_t), intent(in) :: a
@@ -5639,6 +5787,11 @@ contains
         ax_t = (1.0_dp - a%top) * H
         ax_w = ax_r - ax_l
         ax_h = ax_b - ax_t
+
+        if (a%polar) then
+            call render_polar(b, a, ax_l, ax_r, ax_b, ax_t)
+            return
+        end if
 
         call compute_limits(a, xmin, xmax, ymin, ymax)
 
