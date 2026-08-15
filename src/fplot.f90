@@ -7,7 +7,10 @@ module fplot
     private
 
     public :: dp
-    public :: plot, semilogx, semilogy, loglog
+    public :: plot, scatter, semilogx, semilogy, loglog
+    public :: bar, hist, fill_between, errorbar, axhline, axvline
+    public :: text, annotate
+    public :: xticks, yticks, minorticks_on
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg
@@ -16,6 +19,8 @@ module fplot
     integer, parameter :: SCALE_LINEAR = 0
     integer, parameter :: SCALE_LOG = 1
     integer, parameter :: MAX_SERIES = 32
+    integer, parameter :: MAX_TEXTS = 32
+    integer, parameter :: MAX_MINOR = 256
     integer, parameter :: MAX_POINTS = 100000
 
     ! Default figure margins (matplotlib rcParams), in figure fractions.
@@ -32,27 +37,62 @@ module fplot
     ! Mean advance width of DejaVu Sans at the 10 pt legend font size, used
     ! to size the legend box to its labels.
     real(dp), parameter :: LEGEND_CHAR_W = 5.6_dp
+    real(dp), parameter :: PI = 3.141592653589793_dp
+
+    ! What a series draws. LINE covers plot/scatter/semilog*; the rest are
+    ! the shape-based plot types.
+    integer, parameter :: SERIES_LINE = 0
+    integer, parameter :: SERIES_BAR = 1
+    integer, parameter :: SERIES_FILL = 2
+    integer, parameter :: SERIES_ERRORBAR = 3
+    integer, parameter :: SERIES_HLINE = 4
+    integer, parameter :: SERIES_VLINE = 5
 
     type :: series_t
+        integer :: kind = SERIES_LINE
         integer :: n = 0
         real(dp), allocatable :: x(:)
         real(dp), allocatable :: y(:)
+        ! FILL: lower edge. ERRORBAR: symmetric y error.
+        real(dp), allocatable :: y2(:)
         character(len=7) :: color = "#1f77b4"
         integer :: marker = MARKER_NONE
         integer :: linestyle = LINE_SOLID
         real(dp) :: linewidth = 1.5_dp
         real(dp) :: markersize = 6.0_dp
+        real(dp) :: width = 0.8_dp
+        real(dp) :: alpha = 1.0_dp
         character(len=128) :: label = ""
     end type series_t
+
+    type :: text_t
+        real(dp) :: x = 0.0_dp, y = 0.0_dp
+        ! Arrow tail; only used when has_arrow is set.
+        real(dp) :: xtail = 0.0_dp, ytail = 0.0_dp
+        logical :: has_arrow = .false.
+        real(dp) :: fontsize = 10.0_dp
+        character(len=7) :: color = "#000000"
+        character(len=8) :: ha = "left"
+        character(len=128) :: s = ""
+    end type text_t
 
     type :: axes_t
         integer :: n_series = 0
         type(series_t) :: series(MAX_SERIES)
+        integer :: n_texts = 0
+        type(text_t) :: texts(MAX_TEXTS)
         character(len=256) :: title = ""
         character(len=256) :: xlabel = ""
         character(len=256) :: ylabel = ""
         logical :: grid_on = .false.
         logical :: legend_on = .false.
+        character(len=16) :: legend_loc = "upper right"
+        logical :: minor_ticks = .false.
+        ! User-specified tick positions and optional labels.
+        integer :: n_xticks = 0, n_yticks = 0
+        real(dp) :: xtick_pos(MAX_TICKS), ytick_pos(MAX_TICKS)
+        logical :: xtick_labeled = .false., ytick_labeled = .false.
+        character(len=24) :: xtick_lab(MAX_TICKS), ytick_lab(MAX_TICKS)
         integer :: xscale = SCALE_LINEAR
         integer :: yscale = SCALE_LINEAR
         logical :: xlim_set = .false.
@@ -180,10 +220,49 @@ contains
         ax(cur_i)%grid_on = on
     end subroutine grid
 
-    subroutine legend()
+    subroutine legend(loc)
+        character(len=*), intent(in), optional :: loc
         call ensure_fig()
         ax(cur_i)%legend_on = .true.
+        if (present(loc)) ax(cur_i)%legend_loc = loc
     end subroutine legend
+
+    subroutine xticks(vals, labels)
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        call ensure_fig()
+        call set_ticks(vals, labels, ax(cur_i)%n_xticks, ax(cur_i)%xtick_pos, &
+                       ax(cur_i)%xtick_labeled, ax(cur_i)%xtick_lab)
+    end subroutine xticks
+
+    subroutine yticks(vals, labels)
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        call ensure_fig()
+        call set_ticks(vals, labels, ax(cur_i)%n_yticks, ax(cur_i)%ytick_pos, &
+                       ax(cur_i)%ytick_labeled, ax(cur_i)%ytick_lab)
+    end subroutine yticks
+
+    subroutine set_ticks(vals, labels, n, pos, labeled, lab)
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        integer, intent(out) :: n
+        real(dp), intent(out) :: pos(MAX_TICKS)
+        logical, intent(out) :: labeled
+        character(len=24), intent(out) :: lab(MAX_TICKS)
+        integer :: i
+        n = min(size(vals), MAX_TICKS)
+        labeled = present(labels)
+        do i = 1, n
+            pos(i) = vals(i)
+            if (labeled) lab(i) = labels(i)
+        end do
+    end subroutine set_ticks
+
+    subroutine minorticks_on()
+        call ensure_fig()
+        ax(cur_i)%minor_ticks = .true.
+    end subroutine minorticks_on
 
     subroutine xlim(xmin, xmax)
         real(dp), intent(in) :: xmin, xmax
@@ -208,6 +287,28 @@ contains
         call ensure_fig()
         call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle)
     end subroutine plot
+
+    ! Marker-only plot. s is the marker area in points^2 (matplotlib's
+    ! convention), so the marker size is its square root.
+    subroutine scatter(x, y, s, c, marker, label)
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: s
+        character(len=*), intent(in), optional :: c, marker, label
+        integer :: is
+
+        call ensure_fig()
+        if (present(marker)) then
+            call add_series(cur_i, x, y, label=label, color=c, marker=marker, &
+                            linestyle="None")
+        else
+            call add_series(cur_i, x, y, label=label, color=c, marker="o", &
+                            linestyle="None")
+        end if
+        is = ax(cur_i)%n_series
+        if (is >= 1) then
+            if (present(s)) ax(cur_i)%series(is)%markersize = sqrt(max(s, 0.0_dp))
+        end if
+    end subroutine scatter
 
     subroutine semilogx(x, y, fmt, label, lw, color)
         real(dp), intent(in) :: x(:), y(:)
@@ -236,6 +337,267 @@ contains
         ax(cur_i)%yscale = SCALE_LOG
         call add_series(cur_i, x, y, fmt, label, lw, color)
     end subroutine loglog
+
+    ! Start a new series of the given kind and return its index, applying the
+    ! shared bookkeeping (point count, colour cycling, label).
+    function new_shape_series(kd, x, y, color, label, alpha) result(is)
+        integer, intent(in) :: kd
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        integer :: is, n
+
+        is = 0
+        n = min(size(x), size(y))
+        if (n <= 0) return
+        if (n > MAX_POINTS) n = MAX_POINTS
+        if (ax(cur_i)%n_series >= MAX_SERIES) return
+
+        ax(cur_i)%n_series = ax(cur_i)%n_series + 1
+        is = ax(cur_i)%n_series
+        allocate (ax(cur_i)%series(is)%x(n), ax(cur_i)%series(is)%y(n))
+        ax(cur_i)%series(is)%x(1:n) = x(1:n)
+        ax(cur_i)%series(is)%y(1:n) = y(1:n)
+        ax(cur_i)%series(is)%n = n
+        ax(cur_i)%series(is)%kind = kd
+        ax(cur_i)%series(is)%marker = MARKER_NONE
+        ax(cur_i)%series(is)%linestyle = LINE_SOLID
+        ax(cur_i)%series(is)%linewidth = default_linewidth
+        ax(cur_i)%series(is)%markersize = default_markersize
+        ax(cur_i)%series(is)%label = ""
+        if (present(label)) ax(cur_i)%series(is)%label = label
+        if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
+
+        ax(cur_i)%series(is)%color = resolve_color(color)
+        if (len_trim(ax(cur_i)%series(is)%color) == 0) then
+            ax(cur_i)%series(is)%color = color_from_C(ax(cur_i)%color_cycle)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
+        end if
+    end function new_shape_series
+
+    ! Accept "#rrggbb", a single-letter name, or a "C<n>" cycle index.
+    function resolve_color(color) result(col)
+        character(len=*), intent(in), optional :: color
+        character(len=7) :: col
+        integer :: m
+
+        col = ""
+        if (.not. present(color)) return
+        if (len_trim(color) == 0) return
+        if (is_hex_color(trim(color))) then
+            col = color(1:7)
+        else if (len_trim(color) == 1) then
+            col = color_from_char(color(1:1))
+        else if (len_trim(color) >= 2 .and. color(1:1) == "C") then
+            read (color(2:2), *) m
+            col = color_from_C(m)
+        end if
+    end function resolve_color
+
+    ! Vertical bars of the given heights, centred on x and drawn from y = 0.
+    subroutine bar(x, height, width, color, label, alpha)
+        real(dp), intent(in) :: x(:), height(:)
+        real(dp), intent(in), optional :: width, alpha
+        character(len=*), intent(in), optional :: color, label
+        integer :: is
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_BAR, x, height, color, label, alpha)
+        if (is < 1) return
+        if (present(width)) ax(cur_i)%series(is)%width = width
+    end subroutine bar
+
+    ! Histogram of x using `bins` equal-width bins over the data range.
+    subroutine hist(x, bins, color, label, alpha)
+        real(dp), intent(in) :: x(:)
+        integer, intent(in), optional :: bins
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        integer :: nb, i, k, n, is
+        real(dp) :: lo, hi, w
+        real(dp), allocatable :: centers(:), counts(:)
+
+        n = size(x)
+        if (n <= 0) return
+        nb = 10
+        if (present(bins)) nb = bins
+        if (nb < 1) return
+
+        lo = minval(x)
+        hi = maxval(x)
+        if (hi <= lo) then
+            lo = lo - 0.5_dp
+            hi = hi + 0.5_dp
+        end if
+        w = (hi - lo) / real(nb, dp)
+
+        allocate (centers(nb), counts(nb))
+        counts = 0.0_dp
+        do i = 1, nb
+            centers(i) = lo + (real(i, dp) - 0.5_dp) * w
+        end do
+        do i = 1, n
+            k = int((x(i) - lo) / w) + 1
+            if (k < 1) k = 1
+            if (k > nb) k = nb          ! the top edge belongs to the last bin
+            counts(k) = counts(k) + 1.0_dp
+        end do
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_BAR, centers, counts, color, label, alpha)
+        if (is >= 1) ax(cur_i)%series(is)%width = w
+    end subroutine hist
+
+    ! Shade between y1 and y2 (default 0).
+    subroutine fill_between(x, y1, y2, color, label, alpha)
+        real(dp), intent(in) :: x(:), y1(:)
+        real(dp), intent(in), optional :: y2(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        integer :: is, n
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_FILL, x, y1, color, label, alpha)
+        if (is < 1) return
+        n = ax(cur_i)%series(is)%n
+        allocate (ax(cur_i)%series(is)%y2(n))
+        if (present(y2)) then
+            ax(cur_i)%series(is)%y2(1:n) = y2(1:n)
+        else
+            ax(cur_i)%series(is)%y2(1:n) = 0.0_dp
+        end if
+    end subroutine fill_between
+
+    ! Line plot with symmetric vertical error bars.
+    subroutine errorbar(x, y, yerr, fmt, color, label, capsize, marker)
+        real(dp), intent(in) :: x(:), y(:), yerr(:)
+        character(len=*), intent(in), optional :: fmt, color, label, marker
+        real(dp), intent(in), optional :: capsize
+        integer :: is, n, mk, ls
+        character(len=7) :: col
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_ERRORBAR, x, y, color, label)
+        if (is < 1) return
+        n = ax(cur_i)%series(is)%n
+        allocate (ax(cur_i)%series(is)%y2(n))
+        ax(cur_i)%series(is)%y2(1:n) = abs(yerr(1:n))
+
+        if (present(fmt)) then
+            if (len_trim(fmt) > 0) then
+                call parse_fmt(trim(fmt), col, mk, ls)
+                ax(cur_i)%series(is)%marker = mk
+                ax(cur_i)%series(is)%linestyle = ls
+                if (len_trim(col) > 0) ax(cur_i)%series(is)%color = col
+            end if
+        end if
+        if (present(marker)) ax(cur_i)%series(is)%marker = marker_from_char(marker(1:1))
+        ! width doubles as the cap half-width, in points.
+        ax(cur_i)%series(is)%width = 3.0_dp
+        if (present(capsize)) ax(cur_i)%series(is)%width = capsize
+    end subroutine errorbar
+
+    ! Reference line spanning the full axes.
+    subroutine axhline(y, color, linestyle, lw, label)
+        real(dp), intent(in) :: y
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call add_ref_line(SERIES_HLINE, y, color, linestyle, lw, label)
+    end subroutine axhline
+
+    subroutine axvline(x, color, linestyle, lw, label)
+        real(dp), intent(in) :: x
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call add_ref_line(SERIES_VLINE, x, color, linestyle, lw, label)
+    end subroutine axvline
+
+    subroutine add_ref_line(kd, v, color, linestyle, lw, label)
+        integer, intent(in) :: kd
+        real(dp), intent(in) :: v
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        integer :: is
+
+        call ensure_fig()
+        is = new_shape_series(kd, [v], [v], color, label)
+        if (is < 1) return
+        ! Reference lines default to black, not to the colour cycle.
+        if (.not. present(color)) then
+            ax(cur_i)%series(is)%color = "#000000"
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+        if (present(linestyle)) ax(cur_i)%series(is)%linestyle = linestyle_from_str(linestyle)
+        if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
+    end subroutine add_ref_line
+
+    pure function linestyle_from_str(s) result(ls)
+        character(len=*), intent(in) :: s
+        integer :: ls
+        select case (trim(s))
+        case ("-"); ls = LINE_SOLID
+        case ("--"); ls = LINE_DASHED
+        case (":"); ls = LINE_DOTTED
+        case ("-."); ls = LINE_DASHDOT
+        case ("None", "none", ""); ls = LINE_NONE
+        case default; ls = LINE_SOLID
+        end select
+    end function linestyle_from_str
+
+    ! Text at a point in data coordinates.
+    subroutine text(x, y, s, color, fontsize, ha)
+        real(dp), intent(in) :: x, y
+        character(len=*), intent(in) :: s
+        character(len=*), intent(in), optional :: color, ha
+        real(dp), intent(in), optional :: fontsize
+        call add_text(x, y, s, color, fontsize, ha, .false., 0.0_dp, 0.0_dp)
+    end subroutine text
+
+    ! Text at (xtext, ytext) with an arrow pointing at (x, y).
+    subroutine annotate(s, x, y, xtext, ytext, color, fontsize, ha)
+        character(len=*), intent(in) :: s
+        real(dp), intent(in) :: x, y
+        real(dp), intent(in), optional :: xtext, ytext, fontsize
+        character(len=*), intent(in), optional :: color, ha
+        real(dp) :: xt, yt
+        logical :: arrow
+
+        xt = x
+        yt = y
+        arrow = present(xtext) .or. present(ytext)
+        if (present(xtext)) xt = xtext
+        if (present(ytext)) yt = ytext
+        ! The label sits at the text position; the arrow runs back to (x, y).
+        call add_text(xt, yt, s, color, fontsize, ha, arrow, x, y)
+    end subroutine annotate
+
+    subroutine add_text(x, y, s, color, fontsize, ha, arrow, xarr, yarr)
+        real(dp), intent(in) :: x, y, xarr, yarr
+        character(len=*), intent(in) :: s
+        character(len=*), intent(in), optional :: color, ha
+        real(dp), intent(in), optional :: fontsize
+        logical, intent(in) :: arrow
+        integer :: it
+        character(len=7) :: col
+
+        call ensure_fig()
+        if (ax(cur_i)%n_texts >= MAX_TEXTS) return
+        ax(cur_i)%n_texts = ax(cur_i)%n_texts + 1
+        it = ax(cur_i)%n_texts
+        ax(cur_i)%texts(it)%x = x
+        ax(cur_i)%texts(it)%y = y
+        ax(cur_i)%texts(it)%s = s
+        ax(cur_i)%texts(it)%has_arrow = arrow
+        ax(cur_i)%texts(it)%xtail = xarr
+        ax(cur_i)%texts(it)%ytail = yarr
+        ax(cur_i)%texts(it)%fontsize = 10.0_dp
+        ax(cur_i)%texts(it)%ha = "left"
+        ax(cur_i)%texts(it)%color = "#000000"
+        if (present(fontsize)) ax(cur_i)%texts(it)%fontsize = fontsize
+        if (present(ha)) ax(cur_i)%texts(it)%ha = ha
+        col = resolve_color(color)
+        if (len_trim(col) > 0) ax(cur_i)%texts(it)%color = col
+    end subroutine add_text
 
     subroutine add_series(ia, x, y, fmt, label, lw, color, marker, linestyle)
         integer, intent(in) :: ia
@@ -291,37 +653,19 @@ contains
             if (len_trim(col) > 0) ax(ia)%series(is)%color = col
         end if
 
-        if (present(color)) then
-            if (len_trim(color) > 0) then
-                if (is_hex_color(trim(color))) then
-                    ax(ia)%series(is)%color = color(1:7)
-                else if (len_trim(color) == 1) then
-                    ax(ia)%series(is)%color = color_from_char(color(1:1))
-                else if (len_trim(color) >= 2 .and. color(1:1) == "C") then
-                    read (color(2:2), *) m
-                    ax(ia)%series(is)%color = color_from_C(m)
-                end if
-            end if
-        end if
+        col = resolve_color(color)
+        if (len_trim(col) > 0) ax(ia)%series(is)%color = col
 
         if (present(marker)) then
             select case (trim(marker))
-            case ("o"); ax(ia)%series(is)%marker = MARKER_CIRCLE
-            case ("x"); ax(ia)%series(is)%marker = MARKER_X
-            case ("."); ax(ia)%series(is)%marker = MARKER_POINT
             case ("None", "none", ""); ax(ia)%series(is)%marker = MARKER_NONE
+            case default
+                ax(ia)%series(is)%marker = marker_from_char(marker(1:1))
             end select
         end if
 
-        if (present(linestyle)) then
-            select case (trim(linestyle))
-            case ("-"); ax(ia)%series(is)%linestyle = LINE_SOLID
-            case ("--"); ax(ia)%series(is)%linestyle = LINE_DASHED
-            case (":"); ax(ia)%series(is)%linestyle = LINE_DOTTED
-            case ("-."); ax(ia)%series(is)%linestyle = LINE_DASHDOT
-            case ("None", "none", ""); ax(ia)%series(is)%linestyle = LINE_NONE
-            end select
-        end if
+        if (present(linestyle)) &
+            ax(ia)%series(is)%linestyle = linestyle_from_str(linestyle)
 
         if (present(lw)) ax(ia)%series(is)%linewidth = lw
         if (present(label)) ax(ia)%series(is)%label = label
@@ -343,85 +687,110 @@ contains
         type(axes_t), intent(in) :: a
         real(dp), intent(out) :: xmin, xmax, ymin, ymax
         integer :: i, j
-        real(dp) :: xv, yv, dx, dy
-        logical :: any
+        real(dp) :: xv, yv, ylo, yhi, dx, dy, hw
+        logical :: anyx, anyy, sticky_lo, sticky_hi
+
+        anyx = .false.
+        anyy = .false.
+        sticky_lo = .false.
+        sticky_hi = .false.
+        xmin = huge(1.0_dp)
+        xmax = -huge(1.0_dp)
+        ymin = huge(1.0_dp)
+        ymax = -huge(1.0_dp)
+
+        do i = 1, a%n_series
+            ! Bars occupy a span in x; a hline/vline constrains one axis only.
+            hw = 0.0_dp
+            if (a%series(i)%kind == SERIES_BAR) hw = 0.5_dp * a%series(i)%width
+
+            do j = 1, a%series(i)%n
+                if (a%series(i)%kind /= SERIES_HLINE) then
+                    xv = a%series(i)%x(j)
+                    if (.not. (a%xscale == SCALE_LOG .and. xv - hw <= 0.0_dp)) then
+                        anyx = .true.
+                        xmin = min(xmin, xv - hw)
+                        xmax = max(xmax, xv + hw)
+                    end if
+                end if
+
+                if (a%series(i)%kind /= SERIES_VLINE) then
+                    yv = a%series(i)%y(j)
+                    ylo = yv
+                    yhi = yv
+                    select case (a%series(i)%kind)
+                    case (SERIES_BAR)
+                        ! Bars are drawn from the y=0 baseline.
+                        ylo = min(0.0_dp, yv)
+                        yhi = max(0.0_dp, yv)
+                    case (SERIES_FILL)
+                        ylo = min(yv, a%series(i)%y2(j))
+                        yhi = max(yv, a%series(i)%y2(j))
+                    case (SERIES_ERRORBAR)
+                        ylo = yv - a%series(i)%y2(j)
+                        yhi = yv + a%series(i)%y2(j)
+                    end select
+                    if (.not. (a%yscale == SCALE_LOG .and. yhi <= 0.0_dp)) then
+                        anyy = .true.
+                        ymin = min(ymin, ylo)
+                        ymax = max(ymax, yhi)
+                    end if
+                end if
+            end do
+
+            ! Matplotlib treats the bar baseline as a sticky edge: no margin
+            ! is added on the side the bars grow from.
+            if (a%series(i)%kind == SERIES_BAR .and. a%series(i)%n > 0) then
+                if (ymin >= 0.0_dp) sticky_lo = .true.
+                if (ymax <= 0.0_dp) sticky_hi = .true.
+            end if
+        end do
 
         if (a%xlim_set) then
             xmin = a%xmin_user
             xmax = a%xmax_user
         else
-            any = .false.
-            xmin = huge(1.0_dp)
-            xmax = -huge(1.0_dp)
-            do i = 1, a%n_series
-                do j = 1, a%series(i)%n
-                    xv = a%series(i)%x(j)
-                    if (a%xscale == SCALE_LOG .and. xv <= 0.0_dp) cycle
-                    any = .true.
-                    if (xv < xmin) xmin = xv
-                    if (xv > xmax) xmax = xv
-                end do
-            end do
-            if (.not. any) then
+            if (.not. anyx) then
                 xmin = 0.0_dp
                 xmax = 1.0_dp
             end if
+            call expand_limits(xmin, xmax, a%xscale == SCALE_LOG, .false., .false.)
         end if
 
         if (a%ylim_set) then
             ymin = a%ymin_user
             ymax = a%ymax_user
         else
-            any = .false.
-            ymin = huge(1.0_dp)
-            ymax = -huge(1.0_dp)
-            do i = 1, a%n_series
-                do j = 1, a%series(i)%n
-                    yv = a%series(i)%y(j)
-                    if (a%yscale == SCALE_LOG .and. yv <= 0.0_dp) cycle
-                    any = .true.
-                    if (yv < ymin) ymin = yv
-                    if (yv > ymax) ymax = yv
-                end do
-            end do
-            if (.not. any) then
+            if (.not. anyy) then
                 ymin = 0.0_dp
                 ymax = 1.0_dp
             end if
-        end if
-
-        if (.not. a%xlim_set) then
-            if (a%xscale == SCALE_LOG) then
-                if (xmin <= 0.0_dp) xmin = tiny(1.0_dp)
-                if (xmax <= xmin) xmax = xmin * 10.0_dp
-                dx = log10(xmax / xmin)
-                if (dx <= 0.0_dp) dx = 1.0_dp
-                xmin = xmin / (10.0_dp ** (0.05_dp * dx))
-                xmax = xmax * (10.0_dp ** (0.05_dp * dx))
-            else
-                dx = xmax - xmin
-                if (abs(dx) < 1.0e-30_dp) dx = 1.0_dp
-                xmin = xmin - 0.05_dp * dx
-                xmax = xmax + 0.05_dp * dx
-            end if
-        end if
-
-        if (.not. a%ylim_set) then
-            if (a%yscale == SCALE_LOG) then
-                if (ymin <= 0.0_dp) ymin = tiny(1.0_dp)
-                if (ymax <= ymin) ymax = ymin * 10.0_dp
-                dy = log10(ymax / ymin)
-                if (dy <= 0.0_dp) dy = 1.0_dp
-                ymin = ymin / (10.0_dp ** (0.05_dp * dy))
-                ymax = ymax * (10.0_dp ** (0.05_dp * dy))
-            else
-                dy = ymax - ymin
-                if (abs(dy) < 1.0e-30_dp) dy = 1.0_dp
-                ymin = ymin - 0.05_dp * dy
-                ymax = ymax + 0.05_dp * dy
-            end if
+            call expand_limits(ymin, ymax, a%yscale == SCALE_LOG, sticky_lo, sticky_hi)
         end if
     end subroutine compute_limits
+
+    ! Pad a data range by matplotlib's 5% margin. A sticky edge (the bar
+    ! baseline) is left exactly where it is.
+    subroutine expand_limits(lo, hi, is_log, sticky_lo, sticky_hi)
+        real(dp), intent(inout) :: lo, hi
+        logical, intent(in) :: is_log, sticky_lo, sticky_hi
+        real(dp) :: d, f
+
+        if (is_log) then
+            if (lo <= 0.0_dp) lo = tiny(1.0_dp)
+            if (hi <= lo) hi = lo * 10.0_dp
+            d = log10(hi / lo)
+            if (d <= 0.0_dp) d = 1.0_dp
+            f = 10.0_dp ** (0.05_dp * d)
+            if (.not. sticky_lo) lo = lo / f
+            if (.not. sticky_hi) hi = hi * f
+        else
+            d = hi - lo
+            if (abs(d) < 1.0e-30_dp) d = 1.0_dp
+            if (.not. sticky_lo) lo = lo - 0.05_dp * d
+            if (.not. sticky_hi) hi = hi + 0.05_dp * d
+        end if
+    end subroutine expand_limits
 
     pure function map_x(x, xmin, xmax, ax_l, ax_w, is_log) result(px)
         real(dp), intent(in) :: x, xmin, xmax, ax_l, ax_w
@@ -493,6 +862,402 @@ contains
         end select
     end subroutine append_dash
 
+    ! Emit a stroked open path through the given points, e.g. an "x" or "+".
+    subroutine append_stroke_path(b, px, py, np, color, lw)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: px(:), py(:)
+        integer, intent(in) :: np
+        character(len=*), intent(in) :: color
+        real(dp), intent(in) :: lw
+        integer :: i
+        call builder_append(b, '<path d="')
+        do i = 1, np
+            if (i == 1) then
+                call builder_append(b, "M ")
+            else
+                call builder_append(b, " L ")
+            end if
+            call append_num(b, px(i))
+            call builder_append(b, " ")
+            call append_num(b, py(i))
+        end do
+        call builder_append(b, '" stroke="')
+        call builder_append(b, color)
+        call builder_append(b, '" stroke-width="')
+        call append_num(b, lw)
+        call builder_append(b, '" fill="none"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_stroke_path
+
+    ! Emit a filled closed polygon, used by the shaped markers and by
+    ! fill_between.
+    subroutine append_polygon(b, px, py, np, color, alpha)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: px(:), py(:)
+        integer, intent(in) :: np
+        character(len=*), intent(in) :: color
+        real(dp), intent(in) :: alpha
+        integer :: i
+        call builder_append(b, '<polygon points="')
+        do i = 1, np
+            if (i > 1) call builder_append(b, " ")
+            call append_num(b, px(i))
+            call builder_append(b, ",")
+            call append_num(b, py(i))
+        end do
+        call builder_append(b, '" fill="')
+        call builder_append(b, color)
+        if (alpha < 1.0_dp) then
+            call builder_append(b, '" fill-opacity="')
+            call append_num(b, alpha)
+        end if
+        call builder_append(b, '"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_polygon
+
+    ! Draw one marker of kind mk centred at (cx, cy), sized like a matplotlib
+    ! marker of markersize ms.
+    subroutine append_marker(b, mk, cx, cy, ms, color)
+        type(svg_builder), intent(inout) :: b
+        integer, intent(in) :: mk
+        real(dp), intent(in) :: cx, cy, ms
+        character(len=*), intent(in) :: color
+        real(dp) :: r, xs(11), ys(11)
+        integer :: i
+        real(dp) :: ang
+
+        select case (mk)
+        case (MARKER_CIRCLE, MARKER_POINT)
+            if (mk == MARKER_POINT) then
+                r = 0.5_dp * ms * 0.35_dp
+            else
+                r = 0.5_dp * ms * 0.75_dp
+            end if
+            call builder_append(b, '<circle cx="')
+            call append_num(b, cx)
+            call builder_append(b, '" cy="')
+            call append_num(b, cy)
+            call builder_append(b, '" r="')
+            call append_num(b, r)
+            call builder_append(b, '" fill="')
+            call builder_append(b, color)
+            if (mk == MARKER_CIRCLE) then
+                call builder_append(b, '" stroke="')
+                call builder_append(b, color)
+                call builder_append(b, '" stroke-width="1"/>')
+            else
+                call builder_append(b, '"/>')
+            end if
+            call builder_append(b, new_line("a"))
+        case (MARKER_X)
+            r = 0.5_dp * ms * 0.7_dp
+            call append_stroke_path(b, [cx - r, cx + r], [cy - r, cy + r], 2, color, 1.5_dp)
+            call append_stroke_path(b, [cx - r, cx + r], [cy + r, cy - r], 2, color, 1.5_dp)
+        case (MARKER_PLUS)
+            r = 0.5_dp * ms * 0.75_dp
+            call append_stroke_path(b, [cx - r, cx + r], [cy, cy], 2, color, 1.5_dp)
+            call append_stroke_path(b, [cx, cx], [cy - r, cy + r], 2, color, 1.5_dp)
+        case (MARKER_SQUARE)
+            r = 0.5_dp * ms * 0.75_dp
+            call append_polygon(b, [cx - r, cx + r, cx + r, cx - r], &
+                                [cy - r, cy - r, cy + r, cy + r], 4, color, 1.0_dp)
+        case (MARKER_DIAMOND)
+            r = 0.5_dp * ms * 0.75_dp
+            call append_polygon(b, [cx, cx + r, cx, cx - r], &
+                                [cy - r, cy, cy + r, cy], 4, color, 1.0_dp)
+        case (MARKER_TRI_UP)
+            r = 0.5_dp * ms * 0.85_dp
+            call append_polygon(b, [cx, cx + r, cx - r], &
+                                [cy - r, cy + r, cy + r], 3, color, 1.0_dp)
+        case (MARKER_TRI_DOWN)
+            r = 0.5_dp * ms * 0.85_dp
+            call append_polygon(b, [cx, cx + r, cx - r], &
+                                [cy + r, cy - r, cy - r], 3, color, 1.0_dp)
+        case (MARKER_TRI_LEFT)
+            r = 0.5_dp * ms * 0.85_dp
+            call append_polygon(b, [cx - r, cx + r, cx + r], &
+                                [cy, cy - r, cy + r], 3, color, 1.0_dp)
+        case (MARKER_TRI_RIGHT)
+            r = 0.5_dp * ms * 0.85_dp
+            call append_polygon(b, [cx + r, cx - r, cx - r], &
+                                [cy, cy - r, cy + r], 3, color, 1.0_dp)
+        case (MARKER_STAR)
+            ! Five-pointed star: alternate outer and inner vertices.
+            r = 0.5_dp * ms * 0.95_dp
+            do i = 1, 10
+                ang = -0.5_dp * PI + real(i - 1, dp) * PI / 5.0_dp
+                if (mod(i, 2) == 1) then
+                    xs(i) = cx + r * cos(ang)
+                    ys(i) = cy + r * sin(ang)
+                else
+                    xs(i) = cx + 0.4_dp * r * cos(ang)
+                    ys(i) = cy + 0.4_dp * r * sin(ang)
+                end if
+            end do
+            call append_polygon(b, xs, ys, 10, color, 1.0_dp)
+        end select
+    end subroutine append_marker
+
+    ! Text element. anchor is a matplotlib horizontal alignment
+    ! (left/center/right) or an SVG anchor (start/middle/end).
+    subroutine append_text(b, x, y, s, anchor, fontsize, color, transform)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x, y, fontsize
+        character(len=*), intent(in) :: s, anchor, color
+        character(len=*), intent(in), optional :: transform
+
+        call builder_append(b, '<text x="')
+        call append_num(b, x)
+        call builder_append(b, '" y="')
+        call append_num(b, y)
+        call builder_append(b, '" text-anchor="')
+        select case (anchor)
+        case ("left", "start"); call builder_append(b, "start")
+        case ("right", "end"); call builder_append(b, "end")
+        case default; call builder_append(b, "middle")
+        end select
+        call builder_append(b, '" font-family="DejaVu Sans, sans-serif" font-size="')
+        call append_num(b, fontsize)
+        call builder_append(b, '" fill="')
+        call builder_append(b, color)
+        if (present(transform)) then
+            call builder_append(b, '" transform="')
+            call builder_append(b, transform)
+        end if
+        call builder_append(b, '">')
+        call builder_append(b, s)
+        call builder_append(b, "</text>")
+        call builder_append(b, new_line("a"))
+    end subroutine append_text
+
+    ! Straight line segment in pixel coordinates.
+    subroutine append_line(b, x1, y1, x2, y2, color, lw, ls)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x1, y1, x2, y2, lw
+        character(len=*), intent(in) :: color
+        integer, intent(in) :: ls
+        if (ls == LINE_NONE) return
+        call builder_append(b, '<line x1="')
+        call append_num(b, x1)
+        call builder_append(b, '" y1="')
+        call append_num(b, y1)
+        call builder_append(b, '" x2="')
+        call append_num(b, x2)
+        call builder_append(b, '" y2="')
+        call append_num(b, y2)
+        call builder_append(b, '" stroke="')
+        call builder_append(b, color)
+        call builder_append(b, '" stroke-width="')
+        call append_num(b, lw)
+        call builder_append(b, '"')
+        call append_dash(b, ls)
+        call builder_append(b, "/>")
+        call builder_append(b, new_line("a"))
+    end subroutine append_line
+
+    ! One bar of a bar/hist series, drawn from the y = 0 baseline.
+    subroutine append_bar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        real(dp) :: xa, xb, ya, yb, hw
+
+        hw = 0.5_dp * s%width
+        xa = map_x(s%x(j) - hw, xmin, xmax, ax_l, ax_w, xlog)
+        xb = map_x(s%x(j) + hw, xmin, xmax, ax_l, ax_w, xlog)
+        ya = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ylog)
+        yb = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog)
+
+        call builder_append(b, '<rect x="')
+        call append_num(b, min(xa, xb))
+        call builder_append(b, '" y="')
+        call append_num(b, min(ya, yb))
+        call builder_append(b, '" width="')
+        call append_num(b, abs(xb - xa))
+        call builder_append(b, '" height="')
+        call append_num(b, abs(yb - ya))
+        call builder_append(b, '" fill="')
+        call builder_append(b, trim(s%color))
+        if (s%alpha < 1.0_dp) then
+            call builder_append(b, '" fill-opacity="')
+            call append_num(b, s%alpha)
+        end if
+        call builder_append(b, '" stroke="#ffffff" stroke-width="0.5"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_bar
+
+    ! Shaded region between y and y2, as a single closed polygon.
+    subroutine append_fill(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        integer :: j, np
+        real(dp), allocatable :: px(:), py(:)
+
+        np = 2 * s%n
+        allocate (px(np), py(np))
+        do j = 1, s%n
+            px(j) = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xlog)
+            py(j) = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog)
+        end do
+        ! Return along the lower edge to close the band.
+        do j = 1, s%n
+            px(s%n + j) = map_x(s%x(s%n - j + 1), xmin, xmax, ax_l, ax_w, xlog)
+            py(s%n + j) = map_y(s%y2(s%n - j + 1), ymin, ymax, ax_b, ax_h, ylog)
+        end do
+        call append_polygon(b, px, py, np, trim(s%color), s%alpha)
+    end subroutine append_fill
+
+    ! Vertical error bar with caps for point j.
+    subroutine append_errorbar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        real(dp) :: px, plo, phi, cap
+
+        px = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xlog)
+        plo = map_y(s%y(j) - s%y2(j), ymin, ymax, ax_b, ax_h, ylog)
+        phi = map_y(s%y(j) + s%y2(j), ymin, ymax, ax_b, ax_h, ylog)
+        call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID)
+
+        cap = s%width
+        if (cap > 0.0_dp) then
+            call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), 1.0_dp, LINE_SOLID)
+            call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), 1.0_dp, LINE_SOLID)
+        end if
+    end subroutine append_errorbar
+
+    ! User-set tick positions win over the automatic locator.
+    subroutine axis_ticks(n_user, user_pos, vmin, vmax, is_log, t, nt)
+        integer, intent(in) :: n_user
+        real(dp), intent(in) :: user_pos(MAX_TICKS), vmin, vmax
+        logical, intent(in) :: is_log
+        real(dp), intent(out) :: t(MAX_TICKS)
+        integer, intent(out) :: nt
+        if (n_user > 0) then
+            nt = n_user
+            t(1:nt) = user_pos(1:nt)
+        else if (is_log) then
+            call log_ticks(vmin, vmax, t, nt)
+        else
+            call linear_ticks(vmin, vmax, 6, t, nt)
+        end if
+    end subroutine axis_ticks
+
+    ! Minor ticks subdivide each major interval; a log axis already places its
+    ! majors one decade apart, so the 2..9 multiples are what belong between.
+    subroutine minor_positions(t, nt, vmin, vmax, is_log, m, nm)
+        real(dp), intent(in) :: t(MAX_TICKS), vmin, vmax
+        integer, intent(in) :: nt
+        logical, intent(in) :: is_log
+        real(dp), intent(out) :: m(MAX_MINOR)
+        integer, intent(out) :: nm
+        integer :: i, k
+        real(dp) :: step, v
+
+        nm = 0
+        if (nt < 2) return
+        do i = 1, nt - 1
+            if (is_log) then
+                do k = 2, 9
+                    v = t(i) * real(k, dp)
+                    if (v > t(i + 1)) exit
+                    call push_minor(m, nm, v, vmin, vmax)
+                end do
+            else
+                step = (t(i + 1) - t(i)) / 5.0_dp
+                do k = 1, 4
+                    call push_minor(m, nm, t(i) + real(k, dp) * step, vmin, vmax)
+                end do
+            end if
+        end do
+    end subroutine minor_positions
+
+    subroutine push_minor(m, nm, v, vmin, vmax)
+        real(dp), intent(inout) :: m(MAX_MINOR)
+        integer, intent(inout) :: nm
+        real(dp), intent(in) :: v, vmin, vmax
+        if (v < vmin .or. v > vmax) return
+        if (nm >= MAX_MINOR) return
+        nm = nm + 1
+        m(nm) = v
+    end subroutine push_minor
+
+    ! matplotlib's "best" needs a data-overlap search; upper right is the
+    ! placement it picks for the common case, so we use it as the fallback.
+    subroutine legend_origin(loc, ax_l, ax_r, ax_t, ax_b, leg_w, leg_h, leg_x, leg_y)
+        character(len=*), intent(in) :: loc
+        real(dp), intent(in) :: ax_l, ax_r, ax_t, ax_b, leg_w, leg_h
+        real(dp), intent(out) :: leg_x, leg_y
+        real(dp), parameter :: pad = 8.0_dp
+
+        select case (trim(loc))
+        case ("upper left", "left")
+            leg_x = ax_l + pad
+            leg_y = ax_t + pad
+        case ("lower left")
+            leg_x = ax_l + pad
+            leg_y = ax_b - leg_h - pad
+        case ("lower right")
+            leg_x = ax_r - leg_w - pad
+            leg_y = ax_b - leg_h - pad
+        case ("lower center", "lower")
+            leg_x = 0.5_dp * (ax_l + ax_r - leg_w)
+            leg_y = ax_b - leg_h - pad
+        case ("upper center", "upper")
+            leg_x = 0.5_dp * (ax_l + ax_r - leg_w)
+            leg_y = ax_t + pad
+        case ("center")
+            leg_x = 0.5_dp * (ax_l + ax_r - leg_w)
+            leg_y = 0.5_dp * (ax_t + ax_b - leg_h)
+        case ("center left")
+            leg_x = ax_l + pad
+            leg_y = 0.5_dp * (ax_t + ax_b - leg_h)
+        case ("center right", "right")
+            leg_x = ax_r - leg_w - pad
+            leg_y = 0.5_dp * (ax_t + ax_b - leg_h)
+        case default
+            leg_x = ax_r - leg_w - pad
+            leg_y = ax_t + pad
+        end select
+    end subroutine legend_origin
+
+    subroutine append_tick(b, x1, y1, x2, y2)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x1, y1, x2, y2
+        call builder_append(b, '<line x1="')
+        call append_num(b, x1)
+        call builder_append(b, '" y1="')
+        call append_num(b, y1)
+        call builder_append(b, '" x2="')
+        call append_num(b, x2)
+        call builder_append(b, '" y2="')
+        call append_num(b, y2)
+        call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_tick
+
+    subroutine tick_label(labeled, lab, i, v, is_log, out, n)
+        logical, intent(in) :: labeled
+        character(len=24), intent(in) :: lab(MAX_TICKS)
+        integer, intent(in) :: i
+        real(dp), intent(in) :: v
+        logical, intent(in) :: is_log
+        character(len=*), intent(out) :: out
+        integer, intent(out) :: n
+        if (labeled) then
+            n = len_trim(lab(i))
+            out(1:n) = trim(lab(i))
+        else
+            call format_tick_to(v, is_log, out, n)
+        end if
+    end subroutine tick_label
+
     subroutine render_axes(b, a, idx, W, H)
         type(svg_builder), intent(inout) :: b
         type(axes_t), intent(in) :: a
@@ -501,9 +1266,12 @@ contains
         real(dp) :: ax_l, ax_r, ax_b, ax_t, ax_w, ax_h
         real(dp) :: xmin, xmax, ymin, ymax
         real(dp) :: xticks(MAX_TICKS), yticks(MAX_TICKS)
-        integer :: nxt, nyt, i, j, n, nl
+        real(dp) :: xminor(MAX_MINOR), yminor(MAX_MINOR)
+        integer :: nxt, nyt, nxm, nym, i, j, n, nl
         real(dp) :: px, py, ms, r, mid
         character(len=64) :: lbl
+        character(len=64) :: tx, ty
+        integer :: tn, tyn
         character(len=512) :: esc
         integer :: ln, en
         logical :: xlog, ylog
@@ -521,15 +1289,14 @@ contains
         xlog = a%xscale == SCALE_LOG
         ylog = a%yscale == SCALE_LOG
 
-        if (xlog) then
-            call log_ticks(xmin, xmax, xticks, nxt)
+        call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xlog, xticks, nxt)
+        call axis_ticks(a%n_yticks, a%ytick_pos, ymin, ymax, ylog, yticks, nyt)
+        if (a%minor_ticks) then
+            call minor_positions(xticks, nxt, xmin, xmax, xlog, xminor, nxm)
+            call minor_positions(yticks, nyt, ymin, ymax, ylog, yminor, nym)
         else
-            call linear_ticks(xmin, xmax, 6, xticks, nxt)
-        end if
-        if (ylog) then
-            call log_ticks(ymin, ymax, yticks, nyt)
-        else
-            call linear_ticks(ymin, ymax, 6, yticks, nyt)
+            nxm = 0
+            nym = 0
         end if
 
         ! clip path for this axes' data
@@ -597,6 +1364,36 @@ contains
             n = a%series(i)%n
             if (n <= 0) cycle
 
+            select case (a%series(i)%kind)
+            case (SERIES_BAR)
+                do j = 1, n
+                    call append_bar(b, a%series(i), j, xmin, xmax, ymin, ymax, &
+                                    ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                end do
+                cycle
+            case (SERIES_FILL)
+                call append_fill(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                 ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                cycle
+            case (SERIES_HLINE)
+                py = map_y(a%series(i)%y(1), ymin, ymax, ax_b, ax_h, ylog)
+                call append_line(b, ax_l, py, ax_l + ax_w, py, &
+                                 trim(a%series(i)%color), a%series(i)%linewidth, &
+                                 a%series(i)%linestyle)
+                cycle
+            case (SERIES_VLINE)
+                px = map_x(a%series(i)%x(1), xmin, xmax, ax_l, ax_w, xlog)
+                call append_line(b, px, ax_b, px, ax_b - ax_h, &
+                                 trim(a%series(i)%color), a%series(i)%linewidth, &
+                                 a%series(i)%linestyle)
+                cycle
+            case (SERIES_ERRORBAR)
+                do j = 1, n
+                    call append_errorbar(b, a%series(i), j, xmin, xmax, ymin, ymax, &
+                                         ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                end do
+            end select
+
             if (a%series(i)%linestyle /= LINE_NONE .and. n >= 2) then
                 call builder_append(b, '<polyline fill="none" stroke="')
                 call builder_append(b, trim(a%series(i)%color))
@@ -628,59 +1425,27 @@ contains
                     if (a%yscale == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
                     px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
                     py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog)
-                    select case (a%series(i)%marker)
-                    case (MARKER_CIRCLE)
-                        r = 0.5_dp * ms * 0.75_dp
-                        call builder_append(b, '<circle cx="')
-                        call append_num(b, px)
-                        call builder_append(b, '" cy="')
-                        call append_num(b, py)
-                        call builder_append(b, '" r="')
-                        call append_num(b, r)
-                        call builder_append(b, '" fill="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '" stroke="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '" stroke-width="1"/>')
-                        call builder_append(b, new_line("a"))
-                    case (MARKER_POINT)
-                        r = 0.5_dp * ms * 0.35_dp
-                        call builder_append(b, '<circle cx="')
-                        call append_num(b, px)
-                        call builder_append(b, '" cy="')
-                        call append_num(b, py)
-                        call builder_append(b, '" r="')
-                        call append_num(b, r)
-                        call builder_append(b, '" fill="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '"/>')
-                        call builder_append(b, new_line("a"))
-                    case (MARKER_X)
-                        r = 0.5_dp * ms * 0.7_dp
-                        call builder_append(b, '<path d="M ')
-                        call append_num(b, px - r)
-                        call builder_append(b, " ")
-                        call append_num(b, py - r)
-                        call builder_append(b, " L ")
-                        call append_num(b, px + r)
-                        call builder_append(b, " ")
-                        call append_num(b, py + r)
-                        call builder_append(b, " M ")
-                        call append_num(b, px - r)
-                        call builder_append(b, " ")
-                        call append_num(b, py + r)
-                        call builder_append(b, " L ")
-                        call append_num(b, px + r)
-                        call builder_append(b, " ")
-                        call append_num(b, py - r)
-                        call builder_append(b, '" stroke="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '" stroke-width="1.5" fill="none"/>')
-                        call builder_append(b, new_line("a"))
-                    end select
+                    call append_marker(b, a%series(i)%marker, px, py, ms, &
+                                       trim(a%series(i)%color))
                 end do
             end if
         end do
+        ! annotations, in data coordinates
+        do i = 1, a%n_texts
+            px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xlog)
+            py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ylog)
+            if (a%texts(i)%has_arrow) then
+                call append_line(b, px, py, &
+                                 map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xlog), &
+                                 map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ylog), &
+                                 trim(a%texts(i)%color), 1.0_dp, LINE_SOLID)
+            end if
+            call xml_escape_to(a%texts(i)%s, esc, en)
+            call append_text(b, px, py + 3.5_dp, esc(1:en), &
+                             trim(a%texts(i)%ha), a%texts(i)%fontsize, &
+                             trim(a%texts(i)%color))
+        end do
+
         call builder_append(b, "</g>")
         call builder_append(b, new_line("a"))
 
@@ -699,95 +1464,47 @@ contains
         ! x ticks
         do i = 1, nxt
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xlog)
-            call builder_append(b, '<line x1="')
-            call append_num(b, px)
-            call builder_append(b, '" y1="')
-            call append_num(b, ax_b)
-            call builder_append(b, '" x2="')
-            call append_num(b, px)
-            call builder_append(b, '" y2="')
-            call append_num(b, ax_b + 3.5_dp)
-            call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
-            call builder_append(b, new_line("a"))
-            call format_tick_to(xticks(i), xlog, lbl, ln)
-            call builder_append(b, '<text x="')
-            call append_num(b, px)
-            call builder_append(b, '" y="')
-            call append_num(b, ax_b + 16.0_dp)
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="10" fill="#000000">')
-            call builder_append(b, lbl(1:ln))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_tick(b, px, ax_b, px, ax_b + 3.5_dp)
+            call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xlog, lbl, ln)
+            call append_text(b, px, ax_b + 16.0_dp, lbl(1:ln), "center", 10.0_dp, "#000000")
+        end do
+        do i = 1, nxm
+            px = map_x(xminor(i), xmin, xmax, ax_l, ax_w, xlog)
+            call append_tick(b, px, ax_b, px, ax_b + 2.0_dp)
         end do
 
         ! y ticks
         do i = 1, nyt
             py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ylog)
-            call builder_append(b, '<line x1="')
-            call append_num(b, ax_l)
-            call builder_append(b, '" y1="')
-            call append_num(b, py)
-            call builder_append(b, '" x2="')
-            call append_num(b, ax_l - 3.5_dp)
-            call builder_append(b, '" y2="')
-            call append_num(b, py)
-            call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
-            call builder_append(b, new_line("a"))
-            call format_tick_to(yticks(i), ylog, lbl, ln)
-            call builder_append(b, '<text x="')
-            call append_num(b, ax_l - 7.0_dp)
-            call builder_append(b, '" y="')
-            call append_num(b, py + 3.5_dp)
-            call builder_append(b, '" text-anchor="end" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="10" fill="#000000">')
-            call builder_append(b, lbl(1:ln))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_tick(b, ax_l, py, ax_l - 3.5_dp, py)
+            call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ylog, lbl, ln)
+            call append_text(b, ax_l - 7.0_dp, py + 3.5_dp, lbl(1:ln), "right", 10.0_dp, "#000000")
+        end do
+        do i = 1, nym
+            py = map_y(yminor(i), ymin, ymax, ax_b, ax_h, ylog)
+            call append_tick(b, ax_l, py, ax_l - 2.0_dp, py)
         end do
 
         if (len_trim(a%xlabel) > 0) then
             call xml_escape_to(a%xlabel, esc, en)
-            call builder_append(b, '<text x="')
-            call append_num(b, 0.5_dp * (ax_l + ax_r))
-            call builder_append(b, '" y="')
-            call append_num(b, ax_b + 28.6_dp)
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="11" fill="#000000">')
-            call builder_append(b, esc(1:en))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_text(b, 0.5_dp * (ax_l + ax_r), ax_b + 28.6_dp, esc(1:en), &
+                             "center", 11.0_dp, "#000000")
         end if
 
         if (len_trim(a%ylabel) > 0) then
             call xml_escape_to(a%ylabel, esc, en)
-            call builder_append(b, '<text x="')
-            call append_num(b, ax_l - 34.0_dp)
-            call builder_append(b, '" y="')
-            call append_num(b, 0.5_dp * (ax_t + ax_b))
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="11" fill="#000000" transform="rotate(-90 ')
-            call append_num(b, ax_l - 34.0_dp)
-            call builder_append(b, " ")
-            call append_num(b, 0.5_dp * (ax_t + ax_b))
-            call builder_append(b, ')">')
-            call builder_append(b, esc(1:en))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call fmt_num(ax_l - 34.0_dp, tx, tn)
+            call fmt_num(0.5_dp * (ax_t + ax_b), ty, tyn)
+            call append_text(b, ax_l - 34.0_dp, 0.5_dp * (ax_t + ax_b), esc(1:en), &
+                             "center", 11.0_dp, "#000000", &
+                             "rotate(-90 " // tx(1:tn) // " " // ty(1:tyn) // ")")
         end if
 
         ! title
         if (len_trim(a%title) > 0) then
             call xml_escape_to(a%title, esc, en)
-            call builder_append(b, '<text x="')
-            call append_num(b, 0.5_dp * (ax_l + ax_r))
-            call builder_append(b, '" y="')
-            call append_num(b, ax_t - 6.0_dp)
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="12" fill="#000000">')
-            call builder_append(b, esc(1:en))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_text(b, 0.5_dp * (ax_l + ax_r), ax_t - 6.0_dp, esc(1:en), &
+                             "center", 12.0_dp, "#000000")
         end if
 
         ! legend
@@ -807,8 +1524,8 @@ contains
                 leg_w = 34.0_dp + real(max_lbl, dp) * LEGEND_CHAR_W + 8.0_dp
                 leg_w = min(leg_w, ax_w - 16.0_dp)
                 leg_h = 8.0_dp + real(n_leg, dp) * row_h
-                leg_x = ax_r - leg_w - 8.0_dp
-                leg_y = ax_t + 8.0_dp
+                call legend_origin(a%legend_loc, ax_l, ax_r, ax_t, ax_b, &
+                                   leg_w, leg_h, leg_x, leg_y)
                 call builder_append(b, '<rect x="')
                 call append_num(b, leg_x)
                 call builder_append(b, '" y="')
@@ -843,56 +1560,14 @@ contains
                         call builder_append(b, new_line("a"))
                     end if
                     mid = leg_x + 18.0_dp
-                    if (a%series(i)%marker == MARKER_CIRCLE) then
-                        call builder_append(b, '<circle cx="')
-                        call append_num(b, mid)
-                        call builder_append(b, '" cy="')
-                        call append_num(b, py)
-                        call builder_append(b, '" r="3" fill="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '"/>')
-                        call builder_append(b, new_line("a"))
-                    else if (a%series(i)%marker == MARKER_POINT) then
-                        call builder_append(b, '<circle cx="')
-                        call append_num(b, mid)
-                        call builder_append(b, '" cy="')
-                        call append_num(b, py)
-                        call builder_append(b, '" r="1.5" fill="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '"/>')
-                        call builder_append(b, new_line("a"))
-                    else if (a%series(i)%marker == MARKER_X) then
-                        r = 3.0_dp
-                        call builder_append(b, '<path d="M ')
-                        call append_num(b, mid - r)
-                        call builder_append(b, " ")
-                        call append_num(b, py - r)
-                        call builder_append(b, " L ")
-                        call append_num(b, mid + r)
-                        call builder_append(b, " ")
-                        call append_num(b, py + r)
-                        call builder_append(b, " M ")
-                        call append_num(b, mid - r)
-                        call builder_append(b, " ")
-                        call append_num(b, py + r)
-                        call builder_append(b, " L ")
-                        call append_num(b, mid + r)
-                        call builder_append(b, " ")
-                        call append_num(b, py - r)
-                        call builder_append(b, '" stroke="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '" stroke-width="1.5" fill="none"/>')
-                        call builder_append(b, new_line("a"))
+                    if (a%series(i)%marker /= MARKER_NONE) then
+                        call append_marker(b, a%series(i)%marker, mid, py, &
+                                           a%series(i)%markersize, &
+                                           trim(a%series(i)%color))
                     end if
                     call xml_escape_to(a%series(i)%label, esc, en)
-                    call builder_append(b, '<text x="')
-                    call append_num(b, leg_x + 34.0_dp)
-                    call builder_append(b, '" y="')
-                    call append_num(b, py + 3.5_dp)
-                    call builder_append(b, '" font-family="DejaVu Sans, sans-serif" font-size="10" fill="#000000">')
-                    call builder_append(b, esc(1:en))
-                    call builder_append(b, "</text>")
-                    call builder_append(b, new_line("a"))
+                    call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, esc(1:en), &
+                                     "left", 10.0_dp, "#000000")
                 end do
             end if
         end if
@@ -941,15 +1616,8 @@ contains
         ! suptitle (figure-level, above all axes)
         if (len_trim(fig_suptitle) > 0) then
             call xml_escape_to(fig_suptitle, esc, en)
-            call builder_append(b, '<text x="')
-            call append_num(b, 0.5_dp * W)
-            call builder_append(b, '" y="')
-            call append_num(b, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp)
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="12" fill="#000000">')
-            call builder_append(b, esc(1:en))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_text(b, 0.5_dp * W, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp, &
+                             esc(1:en), "center", 12.0_dp, "#000000")
         end if
 
         call builder_append(b, "</svg>")

@@ -22,6 +22,15 @@ OUT_NAMES = [
     "loglog",
     "subplots_2x1",
     "subplots_2x2",
+    "markers_gallery",
+    "scatter",
+    "bar",
+    "hist",
+    "fill_between",
+    "errorbar",
+    "hv_lines",
+    "text_annotate",
+    "ticks_legend",
 ]
 
 
@@ -165,6 +174,115 @@ def main() -> None:
 
     fig.suptitle("fplot 2x2 subplots")
     save(fig, "subplots_2x2")
+
+    # 9 markers_gallery
+    codes = ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
+    xm = np.arange(1.0, 7.0)
+    fig, ax = setup_fig()
+    for i, code in enumerate(codes, start=1):
+        ax.plot(xm, np.full_like(xm, float(i)), marker=code, linestyle="None",
+                label=code)
+    ax.set_title("Markers")
+    ax.set_xlim(0.0, 7.0)
+    ax.set_ylim(0.0, len(codes) + 1.0)
+    save(fig, "markers_gallery")
+
+    # 10 scatter
+    xs = np.linspace(0.0, 10.0, 30)
+    ys = np.sin(xs) + 0.1 * xs
+    fig, ax = setup_fig()
+    ax.scatter(xs, ys, label="points")
+    ax.set_title("Scatter")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    ax.legend()
+    save(fig, "scatter")
+
+    # 11 bar
+    xb = np.arange(1.0, 7.0)
+    hb = np.array([3.0, 5.0, 2.0, 7.0, 4.0, 6.0])
+    fig, ax = setup_fig()
+    ax.bar(xb, hb, label="counts")
+    ax.set_title("Bar")
+    ax.set_xlabel("category")
+    ax.set_ylabel("value")
+    ax.legend()
+    save(fig, "bar")
+
+    # 12 hist
+    xh = np.array([
+        0.2, 0.5, 0.7, 1.1, 1.3, 1.4, 1.8, 2.0, 2.1, 2.3,
+        2.4, 2.6, 2.9, 3.0, 3.2, 3.3, 3.7, 4.0, 4.4, 4.9,
+    ])
+    fig, ax = setup_fig()
+    ax.hist(xh, bins=8, label="samples")
+    ax.set_title("Histogram")
+    ax.set_xlabel("value")
+    ax.set_ylabel("count")
+    ax.legend()
+    save(fig, "hist")
+
+    # 13 fill_between
+    fig, ax = setup_fig()
+    ax.fill_between(x, y, y3, alpha=0.5, label="band")
+    ax.plot(x, y, "b-", label="sin")
+    ax.set_title("Fill between")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    ax.legend()
+    save(fig, "fill_between")
+
+    # 14 errorbar
+    xe = np.arange(1.0, 9.0)
+    ye = np.sqrt(xe)
+    ee = 0.15 * ye
+    fig, ax = setup_fig()
+    ax.errorbar(xe, ye, yerr=ee, fmt="o-", capsize=3.0, label="meas")
+    ax.set_title("Errorbar")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    ax.legend()
+    save(fig, "errorbar")
+
+    # 15 hv_lines
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-", label="sin")
+    ax.axhline(0.0, color="k", linestyle="--")
+    ax.axvline(np.pi, color="r", linestyle=":")
+    ax.set_title("Reference lines")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    ax.legend()
+    save(fig, "hv_lines")
+
+    # 16 text_annotate
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-", label="sin")
+    ax.text(1.0, 0.8, "peak region", color="k")
+    ax.annotate("minimum", xy=(4.712, -1.0), xytext=(2.2, -0.55), color="r")
+    ax.set_title("Text and annotate")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    save(fig, "text_annotate")
+
+    # 17 ticks_legend
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-", label="sin")
+    ax.plot(x, np.cos(x), "r--", label="cos")
+    ax.set_xticks([0.0, 1.5708, 3.1416, 4.7124, 6.2832],
+                  ["0", "pi/2", "pi", "3pi/2", "2pi"])
+    ax.set_yticks([-1.0, 0.0, 1.0])
+    ax.minorticks_on()
+    ax.legend(loc="lower left")
+    ax.set_title("Ticks and legend placement")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "ticks_legend")
 
     print("All matplotlib references written.")
 

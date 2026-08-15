@@ -4,8 +4,24 @@ program test_plots
 
     integer, parameter :: n = 100
     integer, parameter :: m = 20
+    integer, parameter :: mk = 6
+    integer, parameter :: n_marks = 11
+    integer, parameter :: ns = 30
+    integer, parameter :: nb = 6
+    integer, parameter :: nh = 20
+    integer, parameter :: ne = 8
     real(dp) :: x(n), y(n), y2(n), y3(n)
     real(dp) :: xl(m), yl(m), yl2(m)
+    real(dp) :: xm(mk), ym(mk)
+    real(dp) :: xs(ns), ys(ns)
+    real(dp) :: xe(ne), ye(ne), ee(ne)
+    real(dp), parameter :: xb(nb) = [1.0_dp, 2.0_dp, 3.0_dp, 4.0_dp, 5.0_dp, 6.0_dp]
+    real(dp), parameter :: hb(nb) = [3.0_dp, 5.0_dp, 2.0_dp, 7.0_dp, 4.0_dp, 6.0_dp]
+    real(dp), parameter :: xh(nh) = [ &
+        0.2_dp, 0.5_dp, 0.7_dp, 1.1_dp, 1.3_dp, 1.4_dp, 1.8_dp, 2.0_dp, 2.1_dp, 2.3_dp, &
+        2.4_dp, 2.6_dp, 2.9_dp, 3.0_dp, 3.2_dp, 3.3_dp, 3.7_dp, 4.0_dp, 4.4_dp, 4.9_dp]
+    character(len=1), parameter :: mark_codes(n_marks) = &
+        ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
     integer :: i
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
@@ -152,6 +168,125 @@ program test_plots
     call suptitle("fplot 2x2 subplots")
     call savefig("tests/out/subplots_2x2.svg")
     print *, "wrote tests/out/subplots_2x2.svg"
+
+    ! 9) markers gallery (one row per marker code)
+    call clf()
+    do i = 1, mk
+        xm(i) = real(i, dp)
+        ym(i) = 1.0_dp
+    end do
+    do i = 1, n_marks
+        call plot(xm, ym * real(i, dp), marker=mark_codes(i), linestyle="None", &
+                  label=mark_codes(i))
+    end do
+    call title("Markers")
+    call xlim(0.0_dp, real(mk + 1, dp))
+    call ylim(0.0_dp, real(n_marks + 1, dp))
+    call savefig("tests/out/markers_gallery.svg")
+    print *, "wrote tests/out/markers_gallery.svg"
+
+    ! 10) scatter
+    call clf()
+    do i = 1, ns
+        xs(i) = 10.0_dp * real(i - 1, dp) / real(ns - 1, dp)
+        ys(i) = sin(xs(i)) + 0.1_dp * xs(i)
+    end do
+    call scatter(xs, ys, label="points")
+    call title("Scatter")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call legend()
+    call savefig("tests/out/scatter.svg")
+    print *, "wrote tests/out/scatter.svg"
+
+    ! 11) bar
+    call clf()
+    call bar(xb, hb, label="counts")
+    call title("Bar")
+    call xlabel("category")
+    call ylabel("value")
+    call legend()
+    call savefig("tests/out/bar.svg")
+    print *, "wrote tests/out/bar.svg"
+
+    ! 12) hist
+    call clf()
+    call hist(xh, bins=8, label="samples")
+    call title("Histogram")
+    call xlabel("value")
+    call ylabel("count")
+    call legend()
+    call savefig("tests/out/hist.svg")
+    print *, "wrote tests/out/hist.svg"
+
+    ! 13) fill_between
+    call clf()
+    call fill_between(x, y, y3, alpha=0.5_dp, label="band")
+    call plot(x, y, "b-", label="sin")
+    call title("Fill between")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call legend()
+    call savefig("tests/out/fill_between.svg")
+    print *, "wrote tests/out/fill_between.svg"
+
+    ! 14) errorbar
+    call clf()
+    do i = 1, ne
+        xe(i) = real(i, dp)
+        ye(i) = sqrt(xe(i))
+        ee(i) = 0.15_dp * ye(i)
+    end do
+    call errorbar(xe, ye, ee, fmt="o-", capsize=3.0_dp, label="meas")
+    call title("Errorbar")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call legend()
+    call savefig("tests/out/errorbar.svg")
+    print *, "wrote tests/out/errorbar.svg"
+
+    ! 15) hv_lines
+    call clf()
+    call plot(x, y, "b-", label="sin")
+    call axhline(0.0_dp, color="k", linestyle="--")
+    call axvline(pi, color="r", linestyle=":")
+    call title("Reference lines")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call legend()
+    call savefig("tests/out/hv_lines.svg")
+    print *, "wrote tests/out/hv_lines.svg"
+
+    ! 16) text and annotate
+    call clf()
+    call plot(x, y, "b-", label="sin")
+    call text(1.0_dp, 0.8_dp, "peak region", color="k")
+    call annotate("minimum", 4.712_dp, -1.0_dp, xtext=2.2_dp, ytext=-0.55_dp, color="r")
+    call title("Text and annotate")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call savefig("tests/out/text_annotate.svg")
+    print *, "wrote tests/out/text_annotate.svg"
+
+    ! 17) custom ticks, minor ticks and legend placement
+    call clf()
+    call plot(x, y, "b-", label="sin")
+    call plot(x, cos(x), "r--", label="cos")
+    call xticks([0.0_dp, 1.5708_dp, 3.1416_dp, 4.7124_dp, 6.2832_dp], &
+                ["0    ", "pi/2 ", "pi   ", "3pi/2", "2pi  "])
+    call yticks([-1.0_dp, 0.0_dp, 1.0_dp])
+    call minorticks_on()
+    call legend(loc="lower left")
+    call title("Ticks and legend placement")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/ticks_legend.svg")
+    print *, "wrote tests/out/ticks_legend.svg"
 
     print *, "All test plots written."
 end program test_plots

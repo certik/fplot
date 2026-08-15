@@ -28,10 +28,14 @@ call suptitle("figure title")
 
 ## Features (MVP)
 
-- `plot`, `semilogx`, `semilogy`, `loglog`
-- Format strings: colors `bgrcmykw` / `C0`–`C9`, markers `ox.`, linestyles `-` `--` `:` `-.`
-- Optional `label=`, `lw=`, `color=`
-- Title, axis labels, grid, legend, `xlim` / `ylim`, `clf` / `figure`
+- `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
+- `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`
+- `text` and `annotate` (with a leader line to the annotated point)
+- Format strings: colors `bgrcmykw` / `C0`–`C9`, linestyles `-` `--` `:` `-.`,
+  markers `o x . s ^ v < > * + D`
+- Optional `label=`, `lw=`, `color=`, `marker=`
+- Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure`
+- `legend(loc=...)`, `xticks` / `yticks` with optional labels, `minorticks_on`
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing

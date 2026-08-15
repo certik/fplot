@@ -9,6 +9,14 @@ module fplot_style
     integer, parameter, public :: MARKER_CIRCLE = 1
     integer, parameter, public :: MARKER_X = 2
     integer, parameter, public :: MARKER_POINT = 3
+    integer, parameter, public :: MARKER_SQUARE = 4
+    integer, parameter, public :: MARKER_TRI_UP = 5
+    integer, parameter, public :: MARKER_TRI_DOWN = 6
+    integer, parameter, public :: MARKER_TRI_LEFT = 7
+    integer, parameter, public :: MARKER_TRI_RIGHT = 8
+    integer, parameter, public :: MARKER_STAR = 9
+    integer, parameter, public :: MARKER_PLUS = 10
+    integer, parameter, public :: MARKER_DIAMOND = 11
 
     integer, parameter, public :: LINE_NONE = 0
     integer, parameter, public :: LINE_SOLID = 1
@@ -24,6 +32,7 @@ module fplot_style
     public :: parse_fmt
     public :: color_from_char
     public :: color_from_C
+    public :: marker_from_char
     public :: is_hex_color
     public :: default_linewidth
     public :: default_markersize
@@ -65,6 +74,27 @@ contains
         if (i < 0) i = i + N_TAB10
         col = TAB10(i + 1)
     end function color_from_C
+
+    ! Matplotlib's single-character marker codes. MARKER_NONE means "not a
+    ! marker character".
+    pure function marker_from_char(c) result(mk)
+        character(len=1), intent(in) :: c
+        integer :: mk
+        select case (c)
+        case ("o"); mk = MARKER_CIRCLE
+        case ("x"); mk = MARKER_X
+        case ("."); mk = MARKER_POINT
+        case ("s"); mk = MARKER_SQUARE
+        case ("^"); mk = MARKER_TRI_UP
+        case ("v"); mk = MARKER_TRI_DOWN
+        case ("<"); mk = MARKER_TRI_LEFT
+        case (">"); mk = MARKER_TRI_RIGHT
+        case ("*"); mk = MARKER_STAR
+        case ("+"); mk = MARKER_PLUS
+        case ("D"); mk = MARKER_DIAMOND
+        case default; mk = MARKER_NONE
+        end select
+    end function marker_from_char
 
     subroutine parse_fmt(fmt, color, marker, linestyle)
         ! Parse a matplotlib-like format string (color + marker + linestyle).
@@ -115,23 +145,13 @@ contains
 
             ! markers
             if (.not. got_marker) then
-                select case (c)
-                case ("o")
-                    marker = MARKER_CIRCLE
+                m = marker_from_char(c)
+                if (m /= MARKER_NONE) then
+                    marker = m
                     got_marker = .true.
                     i = i + 1
                     cycle
-                case ("x")
-                    marker = MARKER_X
-                    got_marker = .true.
-                    i = i + 1
-                    cycle
-                case (".")
-                    marker = MARKER_POINT
-                    got_marker = .true.
-                    i = i + 1
-                    cycle
-                end select
+                end if
             end if
 
             ! linestyles: --, -., -, :
