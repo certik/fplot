@@ -72,9 +72,15 @@ contains
         integer :: rgb(3), wpx, hpx
         real(dp) :: alpha, s
 
+        ! No background colour means no figure patch at all, which is how
+        ! transparent=True reaches the backend. The vector formats express
+        ! that by drawing nothing; a raster has to say it, as alpha zero.
         rgb = [255, 255, 255]
-        alpha = 1.0_dp
-        if (present(bg_rgb)) rgb = bg_rgb
+        alpha = 0.0_dp
+        if (present(bg_rgb)) then
+            rgb = bg_rgb
+            alpha = 1.0_dp
+        end if
         if (present(bg_alpha)) alpha = bg_alpha
         self%ox = 0.0_dp
         self%oy = 0.0_dp

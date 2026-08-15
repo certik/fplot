@@ -3757,7 +3757,11 @@ contains
         real(dp), intent(in), optional :: dpi, pad_inches
         character(len=:), allocatable :: svg
         integer :: u, ios, n
+        real(dp) :: saved_dpi
 
+        ! dpi given here applies to this file only, as it does in matplotlib;
+        ! the figure's own dpi is what figure(dpi=) set and outlives the call.
+        saved_dpi = fig_dpi
         if (present(dpi)) then
             if (dpi <= 0.0_dp) error stop "fplot: savefig dpi must be positive"
             fig_dpi = dpi
@@ -3773,6 +3777,7 @@ contains
             call reject_ext(filename)
             return
         end select
+        fig_dpi = saved_dpi
         n = len(svg)
         open (newunit=u, file=trim(filename), status="replace", action="write", &
               form="unformatted", access="stream", iostat=ios)
