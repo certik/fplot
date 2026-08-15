@@ -53,6 +53,8 @@ call suptitle("figure title")
   subplot spacing
 - `subplots_adjust` and `tight_layout`
 - `twinx` and `twiny` for a second y or x axis on the same plot
+- Colours as CSS4/X11 names, `tab:` names, `#rgb`, `#rrggbb`, `#rrggbbaa`,
+  single letters, `C0`-`C9`, or a greyscale fraction such as `"0.5"`
 - SVG defaults aligned with matplotlib (6.4×4.8 in, tab10 colors, subplot margins)
 
 ## Build

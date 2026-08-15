@@ -50,6 +50,7 @@ CASES = [
     "tight_layout",
     "subplots_adjust",
     "twinx",
+    "colors",
 ]
 
 

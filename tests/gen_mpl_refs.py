@@ -52,6 +52,7 @@ OUT_NAMES = [
     "tight_layout",
     "subplots_adjust",
     "twinx",
+    "colors",
 ]
 
 
@@ -480,6 +481,16 @@ def main() -> None:
     ax2.set_ylabel("right")
     ax.set_title("twinx")
     save(fig, "twinx")
+
+    # 39 colour spellings
+    fig, ax = setup_fig()
+    xsm = [0.0, 1.0]
+    for i, c in enumerate(
+        ["red", "tab:orange", "steelblue", "#0f0", "0.5", "#8c564bcc"], start=1
+    ):
+        ax.plot(xsm, [float(i)] * 2, color=c, lw=3.0)
+    ax.set_title("colour names")
+    save(fig, "colors")
 
     print("All matplotlib references written.")
 

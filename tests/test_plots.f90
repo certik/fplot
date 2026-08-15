@@ -18,6 +18,8 @@ program test_plots
     real(dp) :: dist1(nd), dist2(nd)
     integer, parameter :: nsym = 201
     real(dp) :: xsym(nsym)
+    integer, parameter :: nsm = 2
+    real(dp) :: xsm(nsm) = [0.0_dp, 1.0_dp], ysm(nsm)
     real(dp) :: xe(ne), ye(ne), ee(ne)
     real(dp), parameter :: xb(nb) = [1.0_dp, 2.0_dp, 3.0_dp, 4.0_dp, 5.0_dp, 6.0_dp]
     real(dp), parameter :: hb(nb) = [3.0_dp, 5.0_dp, 2.0_dp, 7.0_dp, 4.0_dp, 6.0_dp]
@@ -511,6 +513,23 @@ program test_plots
     call title("twinx")
     call savefig("tests/out/twinx.svg")
     print *, "wrote tests/out/twinx.svg"
+
+    ! 39) colour spellings
+    call figure()
+    do i = 1, 6
+        ysm = real(i, dp) + 0.0_dp * xsm
+        select case (i)
+        case (1); call plot(xsm, ysm, color="red", lw=3.0_dp)
+        case (2); call plot(xsm, ysm, color="tab:orange", lw=3.0_dp)
+        case (3); call plot(xsm, ysm, color="steelblue", lw=3.0_dp)
+        case (4); call plot(xsm, ysm, color="#0f0", lw=3.0_dp)
+        case (5); call plot(xsm, ysm, color="0.5", lw=3.0_dp)
+        case (6); call plot(xsm, ysm, color="#8c564bcc", lw=3.0_dp)
+        end select
+    end do
+    call title("colour names")
+    call savefig("tests/out/colors.svg")
+    print *, "wrote tests/out/colors.svg"
 
     print *, "All test plots written."
 end program test_plots

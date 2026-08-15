@@ -1,5 +1,6 @@
 ! fplot — pure Fortran pylab-style SVG plotting library.
 module fplot
+    use fplot_colors
     use fplot_style
     use fplot_scale
     use fplot_cmap
@@ -749,6 +750,7 @@ contains
         character(len=*), intent(in), optional :: color, label
         real(dp), intent(in), optional :: alpha
         integer :: is, n
+        real(dp) :: ca
 
         is = 0
         n = min(size(x), size(y))
@@ -767,31 +769,102 @@ contains
         if (present(label)) ax(cur_i)%series(is)%label = label
         if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
 
-        ax(cur_i)%series(is)%color = resolve_color(color)
+        ax(cur_i)%series(is)%color = resolve_color(color, ca)
+        if (ca >= 0.0_dp .and. .not. present(alpha)) ax(cur_i)%series(is)%alpha = ca
         if (len_trim(ax(cur_i)%series(is)%color) == 0) then
             ax(cur_i)%series(is)%color = color_from_C(ax(cur_i)%color_cycle)
             ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
         end if
     end function new_shape_series
 
-    ! Accept "#rrggbb", a single-letter name, or a "C<n>" cycle index.
-    function resolve_color(color) result(col)
+    ! Every spelling of a colour matplotlib accepts: "#rgb", "#rrggbb",
+    ! "#rrggbbaa", a CSS4/X11 or "tab:" name, a single-letter code, a "C<n>"
+    ! cycle index, or a greyscale fraction such as "0.5". Returns an empty
+    ! string if the colour is not recognised, which lets callers fall back to
+    ! the cycle. An "#rrggbbaa" alpha comes back through alpha_out.
+    function resolve_color(color, alpha_out) result(col)
         character(len=*), intent(in), optional :: color
+        real(dp), intent(out), optional :: alpha_out
         character(len=7) :: col
-        integer :: m
+        character(len=:), allocatable :: c
+        integer :: m, n, ios
+        real(dp) :: g
 
         col = ""
+        if (present(alpha_out)) alpha_out = -1.0_dp
         if (.not. present(color)) return
         if (len_trim(color) == 0) return
-        if (is_hex_color(trim(color))) then
-            col = color(1:7)
-        else if (len_trim(color) == 1) then
-            col = color_from_char(color(1:1))
-        else if (len_trim(color) >= 2 .and. color(1:1) == "C") then
-            read (color(2:2), *) m
-            col = color_from_C(m)
+        c = trim(adjustl(color))
+        n = len(c)
+
+        if (c(1:1) == "#") then
+            select case (n)
+            case (4)
+                ! "#rgb" is shorthand for "#rrggbb" with each digit doubled.
+                col = "#" // c(2:2) // c(2:2) // c(3:3) // c(3:3) // c(4:4) // c(4:4)
+            case (7)
+                col = c
+            case (9)
+                col = c(1:7)
+                if (present(alpha_out)) alpha_out = real(hex_byte(c(8:9)), dp) / 255.0_dp
+            end select
+            return
+        end if
+
+        if (n >= 2 .and. c(1:1) == "C") then
+            m = -1
+            read (c(2:n), *, iostat=ios) m
+            if (ios == 0 .and. m >= 0) then
+                col = color_from_C(m)
+                return
+            end if
+        end if
+
+        if (n == 1) then
+            col = color_from_char(c(1:1))
+            if (len_trim(col) > 0) return
+        end if
+
+        col = color_from_name(c)
+        if (len_trim(col) > 0) return
+
+        ! A bare number is a shade of grey, "0" black through "1" white.
+        read (c, *, iostat=ios) g
+        if (ios == 0 .and. g >= 0.0_dp .and. g <= 1.0_dp) then
+            m = nint(g * 255.0_dp)
+            col = "#" // hex_pair(m) // hex_pair(m) // hex_pair(m)
         end if
     end function resolve_color
+
+    pure function hex_byte(s) result(v)
+        character(len=2), intent(in) :: s
+        integer :: v
+        v = 16 * hex_digit(s(1:1)) + hex_digit(s(2:2))
+    end function hex_byte
+
+    pure function hex_digit(c) result(v)
+        character(len=1), intent(in) :: c
+        integer :: v, k
+        k = iachar(c)
+        if (k >= 48 .and. k <= 57) then
+            v = k - 48
+        else if (k >= 97 .and. k <= 102) then
+            v = k - 87
+        else if (k >= 65 .and. k <= 70) then
+            v = k - 55
+        else
+            v = 0
+        end if
+    end function hex_digit
+
+    pure function hex_pair(v) result(s)
+        integer, intent(in) :: v
+        character(len=2) :: s
+        character(len=16), parameter :: D = "0123456789abcdef"
+        integer :: w
+        w = max(0, min(255, v))
+        s = D(w / 16 + 1:w / 16 + 1) // D(mod(w, 16) + 1:mod(w, 16) + 1)
+    end function hex_pair
 
     ! Draw z as an image. z is indexed (row, column) and, with the default
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
@@ -1456,6 +1529,7 @@ contains
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
         real(dp), intent(in), optional :: lw, alpha
         integer :: n, is, m, ls
+        real(dp) :: ca
         character(len=7) :: col
         character(len=32) :: f
         logical :: have_fmt
@@ -1500,8 +1574,11 @@ contains
             if (len_trim(col) > 0) ax(ia)%series(is)%color = col
         end if
 
-        col = resolve_color(color)
+        col = resolve_color(color, ca)
         if (len_trim(col) > 0) ax(ia)%series(is)%color = col
+        ! An "#rrggbbaa" spelling carries its own alpha; an explicit alpha=
+        ! argument still wins, matching matplotlib.
+        if (ca >= 0.0_dp) ax(ia)%series(is)%alpha = ca
 
         if (present(marker)) then
             select case (trim(marker))
