@@ -18,6 +18,7 @@ module fplot
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
+    public :: axhspan, axvspan, hlines, vlines
     public :: step, stem, pie, boxplot, violinplot
     public :: axis, set_aspect, tick_params, spines
     public :: text, annotate
@@ -95,6 +96,13 @@ module fplot
     integer, parameter :: SERIES_PIE = 8
     integer, parameter :: SERIES_BOX = 9
     integer, parameter :: SERIES_VIOLIN = 10
+    ! HLINES/VLINES: y (x) holds the position of each line and x, y2 its two
+    ! ends. HSPAN/VSPAN: two points, one pair in data coordinates and the
+    ! other in axes fractions.
+    integer, parameter :: SERIES_HLINES = 11
+    integer, parameter :: SERIES_VLINES = 12
+    integer, parameter :: SERIES_HSPAN = 13
+    integer, parameter :: SERIES_VSPAN = 14
 
     type :: series_t
         integer :: kind = SERIES_LINE
@@ -239,6 +247,10 @@ module fplot
         procedure :: colorbar => ax_colorbar
         procedure :: axhline => ax_axhline
         procedure :: axvline => ax_axvline
+        procedure :: axhspan => ax_axhspan
+        procedure :: axvspan => ax_axvspan
+        procedure :: hlines => ax_hlines
+        procedure :: vlines => ax_vlines
         procedure :: text => ax_text
         procedure :: annotate => ax_annotate
         procedure :: set_title => ax_set_title
@@ -1192,6 +1204,42 @@ contains
         call ax_sca(self)
         call axhline(y, color, linestyle, lw, label)
     end subroutine ax_axhline
+
+    subroutine ax_axhspan(self, ymin, ymax, xmin, xmax, color, alpha, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: ymin, ymax
+        real(dp), intent(in), optional :: xmin, xmax, alpha
+        character(len=*), intent(in), optional :: color, label
+        call ax_sca(self)
+        call axhspan(ymin, ymax, xmin, xmax, color, alpha, label)
+    end subroutine ax_axhspan
+
+    subroutine ax_axvspan(self, xmin, xmax, ymin, ymax, color, alpha, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xmin, xmax
+        real(dp), intent(in), optional :: ymin, ymax, alpha
+        character(len=*), intent(in), optional :: color, label
+        call ax_sca(self)
+        call axvspan(xmin, xmax, ymin, ymax, color, alpha, label)
+    end subroutine ax_axvspan
+
+    subroutine ax_hlines(self, y, xmin, xmax, color, linestyle, lw, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y(:), xmin, xmax
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call hlines(y, xmin, xmax, color, linestyle, lw, label)
+    end subroutine ax_hlines
+
+    subroutine ax_vlines(self, x, ymin, ymax, color, linestyle, lw, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), ymin, ymax
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call vlines(x, ymin, ymax, color, linestyle, lw, label)
+    end subroutine ax_vlines
 
     subroutine ax_axvline(self, x, color, linestyle, lw, label)
         class(axes), intent(in) :: self
@@ -2393,6 +2441,92 @@ contains
         if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
     end subroutine add_ref_line
 
+    ! A run of horizontal lines, each from xmin to xmax in data coordinates.
+    subroutine hlines(y, xmin, xmax, color, linestyle, lw, label)
+        real(dp), intent(in) :: y(:), xmin, xmax
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call add_lines(SERIES_HLINES, y, xmin, xmax, color, linestyle, lw, label)
+    end subroutine hlines
+
+    subroutine vlines(x, ymin, ymax, color, linestyle, lw, label)
+        real(dp), intent(in) :: x(:), ymin, ymax
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call add_lines(SERIES_VLINES, x, ymin, ymax, color, linestyle, lw, label)
+    end subroutine vlines
+
+    subroutine add_lines(kd, v, lo, hi, color, linestyle, lw, label)
+        integer, intent(in) :: kd
+        real(dp), intent(in) :: v(:), lo, hi
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        integer :: is, n
+
+        call ensure_fig()
+        n = size(v)
+        if (n < 1) return
+        is = new_shape_series(kd, spread(lo, 1, n), v, color, label)
+        if (is < 1) return
+        allocate (ax(cur_i)%series(is)%y2(n))
+        ax(cur_i)%series(is)%y2 = hi
+        if (kd == SERIES_VLINES) then
+            ! x carries the positions and y the two ends for a vertical run.
+            ax(cur_i)%series(is)%x = v
+            ax(cur_i)%series(is)%y = lo
+        end if
+        if (.not. present(color)) then
+            ax(cur_i)%series(is)%color = "#000000"
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+        if (present(linestyle)) ax(cur_i)%series(is)%linestyle = linestyle_from_str(linestyle)
+        if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
+    end subroutine add_lines
+
+    ! A shaded band. The span runs the full width (height) of the axes unless
+    ! the cross-axis limits are given, and those are axes fractions, not data,
+    ! exactly as in matplotlib.
+    subroutine axhspan(ymin, ymax, xmin, xmax, color, alpha, label)
+        real(dp), intent(in) :: ymin, ymax
+        real(dp), intent(in), optional :: xmin, xmax, alpha
+        character(len=*), intent(in), optional :: color, label
+        call add_span(SERIES_HSPAN, ymin, ymax, xmin, xmax, color, alpha, label)
+    end subroutine axhspan
+
+    subroutine axvspan(xmin, xmax, ymin, ymax, color, alpha, label)
+        real(dp), intent(in) :: xmin, xmax
+        real(dp), intent(in), optional :: ymin, ymax, alpha
+        character(len=*), intent(in), optional :: color, label
+        call add_span(SERIES_VSPAN, xmin, xmax, ymin, ymax, color, alpha, label)
+    end subroutine axvspan
+
+    subroutine add_span(kd, lo, hi, flo, fhi, color, alpha, label)
+        integer, intent(in) :: kd
+        real(dp), intent(in) :: lo, hi
+        real(dp), intent(in), optional :: flo, fhi, alpha
+        character(len=*), intent(in), optional :: color, label
+        real(dp) :: f0, f1
+        integer :: is
+
+        call ensure_fig()
+        f0 = 0.0_dp
+        f1 = 1.0_dp
+        if (present(flo)) f0 = flo
+        if (present(fhi)) f1 = fhi
+        if (kd == SERIES_HSPAN) then
+            is = new_shape_series(kd, [f0, f1], [lo, hi], color, label, alpha)
+        else
+            is = new_shape_series(kd, [lo, hi], [f0, f1], color, label, alpha)
+        end if
+        if (is < 1) return
+        ! A patch takes matplotlib's default patch color rather than the next
+        ! color of the line cycle.
+        if (.not. present(color)) then
+            ax(cur_i)%series(is)%color = cycle_color(0)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+    end subroutine add_span
+
     pure function linestyle_from_str(s) result(ls)
         character(len=*), intent(in) :: s
         integer :: ls
@@ -2589,6 +2723,39 @@ contains
                     anyy = .true.
                     ymin = min(ymin, a%series(i)%y(j))
                     ymax = max(ymax, a%series(i)%y(j))
+                end do
+                cycle
+            end if
+            ! A span constrains only its own axis; the other pair is a
+            ! fraction of the axes, which cannot ask for any data room.
+            if (a%series(i)%kind == SERIES_HSPAN) then
+                anyy = .true.
+                ymin = min(ymin, a%series(i)%y(1), a%series(i)%y(2))
+                ymax = max(ymax, a%series(i)%y(1), a%series(i)%y(2))
+                cycle
+            end if
+            if (a%series(i)%kind == SERIES_VSPAN) then
+                anyx = .true.
+                xmin = min(xmin, a%series(i)%x(1), a%series(i)%x(2))
+                xmax = max(xmax, a%series(i)%x(1), a%series(i)%x(2))
+                cycle
+            end if
+            if (a%series(i)%kind == SERIES_HLINES .or. &
+                a%series(i)%kind == SERIES_VLINES) then
+                do j = 1, a%series(i)%n
+                    anyx = .true.
+                    anyy = .true.
+                    xmin = min(xmin, a%series(i)%x(j))
+                    xmax = max(xmax, a%series(i)%x(j))
+                    ymin = min(ymin, a%series(i)%y(j))
+                    ymax = max(ymax, a%series(i)%y(j))
+                    if (a%series(i)%kind == SERIES_HLINES) then
+                        xmin = min(xmin, a%series(i)%y2(j))
+                        xmax = max(xmax, a%series(i)%y2(j))
+                    else
+                        ymin = min(ymin, a%series(i)%y2(j))
+                        ymax = max(ymax, a%series(i)%y2(j))
+                    end if
                 end do
                 cycle
             end if
@@ -3175,6 +3342,30 @@ contains
         end if
         call b%draw_rect(x, y, w, h, p)
     end subroutine append_rect
+
+    ! A shaded band: one pair of coordinates is data, the other a fraction
+    ! of the axes box.
+    subroutine append_span(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp) :: xa, xb, ya, yb
+
+        if (s%kind == SERIES_HSPAN) then
+            xa = ax_l + s%x(1)*ax_w
+            xb = ax_l + s%x(2)*ax_w
+            ya = map_y(s%y(1), ymin, ymax, ax_b, ax_h, ysc)
+            yb = map_y(s%y(2), ymin, ymax, ax_b, ax_h, ysc)
+        else
+            xa = map_x(s%x(1), xmin, xmax, ax_l, ax_w, xsc)
+            xb = map_x(s%x(2), xmin, xmax, ax_l, ax_w, xsc)
+            ya = ax_b - s%y(1)*ax_h
+            yb = ax_b - s%y(2)*ax_h
+        end if
+        call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
+                         abs(yb - ya), trim(s%color), s%alpha)
+    end subroutine append_span
 
     ! One bar of a bar/hist series, drawn from the y = 0 baseline.
     subroutine append_bar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
@@ -4085,6 +4276,30 @@ contains
                 call append_line(b, px, ax_b, px, ax_b - ax_h, &
                                  trim(a%series(i)%color), a%series(i)%linewidth, &
                                  a%series(i)%linestyle, a%series(i)%alpha)
+                cycle
+            case (SERIES_HLINES)
+                do j = 1, n
+                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc)
+                    call append_line(b, &
+                        map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc), py, &
+                        map_x(a%series(i)%y2(j), xmin, xmax, ax_l, ax_w, xsc), py, &
+                        trim(a%series(i)%color), a%series(i)%linewidth, &
+                        a%series(i)%linestyle, a%series(i)%alpha)
+                end do
+                cycle
+            case (SERIES_VLINES)
+                do j = 1, n
+                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
+                    call append_line(b, px, &
+                        map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc), px, &
+                        map_y(a%series(i)%y2(j), ymin, ymax, ax_b, ax_h, ysc), &
+                        trim(a%series(i)%color), a%series(i)%linewidth, &
+                        a%series(i)%linestyle, a%series(i)%alpha)
+                end do
+                cycle
+            case (SERIES_HSPAN, SERIES_VSPAN)
+                call append_span(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                 ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 cycle
             case (SERIES_ERRORBAR)
                 do j = 1, n

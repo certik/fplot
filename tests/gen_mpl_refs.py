@@ -40,6 +40,7 @@ OUT_NAMES = [
     "imshow_log",
     "subplots_shared",
     "style_ggplot",
+    "spans",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -573,6 +574,16 @@ def main() -> None:
         ax.set_ylabel("y")
         ax.legend()
         save(fig, "style_ggplot")
+
+    # 47 spans and line runs
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-")
+    ax.axhspan(-0.5, 0.5, color="orange", alpha=0.3)
+    ax.axvspan(1.0, 2.0, color="green", alpha=0.2)
+    ax.hlines([-1.0, 1.0], 0.0, 3.0, color="red", linestyle="--")
+    ax.vlines([4.0, 5.0], -1.0, 0.0, color="purple")
+    ax.set_title("spans and line runs")
+    save(fig, "spans")
 
     print("All matplotlib references written.")
 

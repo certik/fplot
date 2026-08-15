@@ -569,6 +569,17 @@ program test_plots
     call save_all("style_ggplot")
     call style_use("default")
 
+    ! 47) spans and line runs
+    call style_use("default")
+    call clf()
+    call plot(x, y, "b-")
+    call axhspan(-0.5_dp, 0.5_dp, color="orange", alpha=0.3_dp)
+    call axvspan(1.0_dp, 2.0_dp, color="green", alpha=0.2_dp)
+    call hlines([-1.0_dp, 1.0_dp], 0.0_dp, 3.0_dp, color="red", linestyle="--")
+    call vlines([4.0_dp, 5.0_dp], -1.0_dp, 0.0_dp, color="purple")
+    call title("spans and line runs")
+    call save_all("spans")
+
     print *, "All test plots written."
 
 contains

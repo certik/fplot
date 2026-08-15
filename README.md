@@ -63,6 +63,7 @@ call suptitle("figure title")
   subplot spacing
 - `subplots_adjust` and `tight_layout`
 - `twinx` and `twiny` for a second y or x axis on the same plot
+- `axhspan`/`axvspan` shaded bands and `hlines`/`vlines` line runs
 - `style_use("ggplot")` and friends (`seaborn`, `fivethirtyeight`,
   `dark_background`, `grayscale`, `default`), or `rc(figsize=, dpi=,
   fontsize=, linewidth=, grid=, facecolor=, axes_facecolor=, grid_color=,
