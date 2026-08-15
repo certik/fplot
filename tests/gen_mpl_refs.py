@@ -57,6 +57,7 @@ OUT_NAMES = [
     "pcolormesh",
     "gridspec",
     "dates",
+    "quiver",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -715,6 +716,13 @@ def main() -> None:
     ax.xaxis_date()
     ax.set_title("dates")
     save(fig, "dates")
+
+    # 61 a vector field
+    fig, ax = setup_fig()
+    qy, qx = np.meshgrid(np.arange(8) * 0.5, np.arange(8) * 0.5, indexing="ij")
+    ax.quiver(qx, qy, np.cos(qx), np.sin(qy))
+    ax.set_title("quiver")
+    save(fig, "quiver")
 
     print("All matplotlib references written.")
 

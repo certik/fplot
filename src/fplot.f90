@@ -21,6 +21,7 @@ module fplot
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
     public :: pcolormesh, pcolor
+    public :: quiver
     public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
     public :: axis, set_aspect, tick_params, spines
@@ -110,6 +111,8 @@ module fplot
     integer, parameter :: SERIES_VLINES = 12
     integer, parameter :: SERIES_HSPAN = 13
     integer, parameter :: SERIES_VSPAN = 14
+    ! QUIVER: x, y hold the tails and qu, qv the vectors.
+    integer, parameter :: SERIES_QUIVER = 15
 
     type :: series_t
         integer :: kind = SERIES_LINE
@@ -120,6 +123,11 @@ module fplot
         real(dp), allocatable :: y2(:)
         ! ERRORBAR: the four arms, each already a distance from the point.
         real(dp), allocatable :: eylo(:), eyhi(:), exlo(:), exhi(:)
+        ! QUIVER: the vector at each point, and how it is drawn. A negative
+        ! scale or width means matplotlib's autoscale.
+        real(dp), allocatable :: qu(:), qv(:)
+        real(dp) :: qscale = -1.0_dp
+        real(dp) :: qwidth = -1.0_dp
         ! BOX/VIOLIN: the position on the category axis.
         real(dp) :: pos = 1.0_dp
         character(len=7) :: color = "#1f77b4"
@@ -277,6 +285,7 @@ module fplot
         procedure :: errorbar => ax_errorbar
         procedure :: step => ax_step
         procedure :: stem => ax_stem
+        procedure :: quiver => ax_quiver
         procedure :: imshow => ax_imshow
         procedure :: xaxis_date => ax_xaxis_date
         procedure :: yaxis_date => ax_yaxis_date
@@ -1361,6 +1370,16 @@ contains
         call step(x, y, where, label, color, lw, linestyle, alpha)
     end subroutine ax_step
 
+    subroutine ax_quiver(self, x, y, u, v, color, scale, width, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), u(:), v(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: scale, width
+
+        call ax_sca(self)
+        call quiver(x, y, u, v, color, scale, width, label)
+    end subroutine ax_quiver
+
     subroutine ax_stem(self, x, y, color, label, alpha)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y(:)
@@ -2399,6 +2418,34 @@ contains
         if (is < 1) return
         ax(cur_i)%series(is)%marker = MARKER_CIRCLE
     end subroutine stem
+
+    ! A field of arrows, one per point, pointing along (u, v). Left to
+    ! itself matplotlib sizes the arrows from the field: the shaft is a
+    ! fixed fraction of the axes width and the scale is set so a vector of
+    ! average length draws an arrow of a comfortable size.
+    subroutine quiver(x, y, u, v, color, scale, width, label)
+        real(dp), intent(in) :: x(:), y(:), u(:), v(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: scale, width
+        integer :: is, n
+
+        call ensure_fig()
+        n = min(size(x), size(y), size(u), size(v))
+        if (n <= 0) return
+        is = new_shape_series(SERIES_QUIVER, x(1:n), y(1:n), color, label)
+        if (is == 0) return
+        allocate (ax(cur_i)%series(is)%qu(n), ax(cur_i)%series(is)%qv(n))
+        ax(cur_i)%series(is)%qu(1:n) = u(1:n)
+        ax(cur_i)%series(is)%qv(1:n) = v(1:n)
+        ! Arrows are black unless asked otherwise; they do not take a turn
+        ! of the color cycle in matplotlib either.
+        if (.not. present(color)) then
+            ax(cur_i)%series(is)%color = "#000000"
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+        if (present(scale)) ax(cur_i)%series(is)%qscale = scale
+        if (present(width)) ax(cur_i)%series(is)%qwidth = width
+    end subroutine quiver
 
     ! Pie chart. matplotlib turns the axes into a unit square centred on the
     ! origin and hides the frame, so the wedges are plain data-space geometry.
@@ -4091,6 +4138,65 @@ contains
     end subroutine append_bar_label
 
     ! Shaded region between y and y2, as a single closed polygon.
+    ! One filled polygon per arrow, shaped exactly as matplotlib shapes it:
+    ! a shaft of width w, a head three w wide and five w long whose barbs
+    ! reach back four and a half w. Everything is measured in shaft widths
+    ! and then scaled, which is why the arrows keep their proportions
+    ! however long they are.
+    subroutine append_quiver(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp), parameter :: HEAD_W = 3.0_dp, HEAD_L = 5.0_dp, HEAD_AX = 4.5_dp
+        real(dp) :: w, sc, sn, amean, mag, ln, ct, st, px(8), py(8), qx(8), qy(8)
+        real(dp) :: x0, y0
+        integer :: j, k
+
+        if (s%n <= 0) return
+        amean = 0.0_dp
+        do j = 1, s%n
+            amean = amean + hypot(s%qu(j), s%qv(j))
+        end do
+        amean = amean/real(s%n, dp)
+
+        w = s%qwidth
+        if (w < 0.0_dp) w = 0.06_dp/min(25.0_dp, max(8.0_dp, sqrt(real(s%n, dp))))
+        w = w*ax_w
+        sc = s%qscale
+        if (sc < 0.0_dp) then
+            sn = max(10.0_dp, sqrt(real(s%n, dp)))
+            sc = 1.8_dp*amean*sn
+            if (sc <= 0.0_dp) sc = 1.0_dp
+        end if
+
+        do j = 1, s%n
+            mag = hypot(s%qu(j), s%qv(j))
+            if (mag <= 0.0_dp) cycle
+            ! Arrow length in shaft widths, so the outline below is pure
+            ! geometry and needs no further conditioning.
+            ln = mag*ax_w/(sc*w)
+            ct = s%qu(j)/mag
+            st = s%qv(j)/mag
+            qx = [0.0_dp, ln - HEAD_AX, ln - HEAD_L, ln, ln - HEAD_L, ln - HEAD_AX, 0.0_dp, 0.0_dp]
+            qy = 0.5_dp*[1.0_dp, 1.0_dp, HEAD_W, 0.0_dp, -HEAD_W, -1.0_dp, -1.0_dp, 1.0_dp]
+            ! A vector too short for a shaft is drawn as head alone,
+            ! shrunk to the length it has.
+            if (ln < HEAD_L) then
+                qx = (ln/HEAD_L)*[0.0_dp, HEAD_L - HEAD_AX, HEAD_L - HEAD_L, HEAD_L, &
+                                  HEAD_L - HEAD_L, HEAD_L - HEAD_AX, 0.0_dp, 0.0_dp]
+                qy = (ln/HEAD_L)*qy
+            end if
+            x0 = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+            y0 = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            do k = 1, 8
+                px(k) = x0 + w*(qx(k)*ct - qy(k)*st)
+                py(k) = y0 - w*(qx(k)*st + qy(k)*ct)
+            end do
+            call append_polygon(b, px, py, 7, trim(s%color), s%alpha)
+        end do
+    end subroutine append_quiver
+
     subroutine append_fill(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
@@ -5119,6 +5225,10 @@ contains
                         trim(a%series(i)%color), a%series(i)%linewidth, &
                         a%series(i)%linestyle, a%series(i)%alpha)
                 end do
+                cycle
+            case (SERIES_QUIVER)
+                call append_quiver(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                   ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 cycle
             case (SERIES_HSPAN, SERIES_VSPAN)
                 call append_span(b, a%series(i), xmin, xmax, ymin, ymax, &

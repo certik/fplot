@@ -35,7 +35,7 @@ program test_plots
         2.4_dp, 2.6_dp, 2.9_dp, 3.0_dp, 3.2_dp, 3.3_dp, 3.7_dp, 4.0_dp, 4.4_dp, 4.9_dp]
     character(len=1), parameter :: mark_codes(n_marks) = &
         ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
-    integer :: i, j
+    integer :: i, j, k
     character(len=8), parameter :: fruit(4) = &
         ["apple ", "banana", "cherry", "date  "]
     real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
@@ -45,6 +45,7 @@ program test_plots
         0.0_dp, 0.5_dp, 1.5_dp, 3.0_dp, 5.0_dp, 8.0_dp, 9.0_dp, 10.0_dp, &
         11.0_dp, 12.0_dp, 13.0_dp, 14.0_dp, 15.0_dp, 16.0_dp, 17.0_dp, &
         18.0_dp, 19.0_dp]
+    real(dp) :: qx(64), qy(64), qu(64), qv(64)
     real(dp), parameter :: yedge(nzr + 1) = [ &
         0.0_dp, 1.0_dp, 2.0_dp, 4.0_dp, 6.0_dp, 6.5_dp, 7.0_dp, 8.0_dp, 10.0_dp]
     real(dp) :: svals(ns), cvals(ns)
@@ -704,6 +705,21 @@ program test_plots
     call xaxis_date()
     call title("dates")
     call save_all("dates")
+
+    ! 61) a vector field
+    call clf()
+    do i = 1, 8
+        do j = 1, 8
+            k = (i - 1)*8 + j
+            qx(k) = real(j - 1, dp)*0.5_dp
+            qy(k) = real(i - 1, dp)*0.5_dp
+            qu(k) = cos(qx(k))
+            qv(k) = sin(qy(k))
+        end do
+    end do
+    call quiver(qx, qy, qu, qv)
+    call title("quiver")
+    call save_all("quiver")
 
     print *, "All test plots written."
 
