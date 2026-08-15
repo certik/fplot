@@ -11,6 +11,8 @@ module fplot_ticks
     public :: log_ticks
     public :: symlog_ticks
     public :: format_tick_to
+    public :: tick_decimals
+    public :: format_tick_fixed
 
 contains
 
@@ -53,44 +55,128 @@ contains
         nice = nf * (10.0_dp ** expn)
     end function nice_number
 
-    subroutine linear_ticks(vmin, vmax, max_ticks, ticks, n_ticks)
+    ! matplotlib's MaxNLocator, which is what an axis gets by default.
+    ! The steps it will accept are 1, 2, 2.5, 5 and 10 times a power of
+    ! ten; of those it takes the smallest that covers the range in nbins
+    ! intervals, and then backs off to a larger one only if the smaller
+    ! leaves fewer than two ticks inside the view.
+    subroutine linear_ticks(vmin, vmax, nbins, ticks, n_ticks)
         real(dp), intent(in) :: vmin, vmax
-        integer, intent(in) :: max_ticks
+        integer, intent(in) :: nbins
         real(dp), intent(out) :: ticks(MAX_TICKS)
         integer, intent(out) :: n_ticks
-        real(dp) :: lo, hi, range, step, start, t
-        integer :: i, mt, n
+        ! The steps, one decade below and one above, as matplotlib's
+        ! _staircase builds them.
+        real(dp), parameter :: STEPS(10) = [ &
+            0.1_dp, 0.2_dp, 0.25_dp, 0.5_dp, &
+            1.0_dp, 2.0_dp, 2.5_dp, 5.0_dp, 10.0_dp, 20.0_dp]
+        real(dp) :: lo, hi, scal, off, raw, step, base, t
+        real(dp) :: v0, v1
+        integer :: nb, i, k, first, low, high, n, inside
 
         lo = min(vmin, vmax)
         hi = max(vmin, vmax)
-        if (abs(hi - lo) < 1.0e-30_dp * max(1.0_dp, abs(lo), abs(hi))) then
+        if (abs(hi - lo) < 1.0e-30_dp*max(1.0_dp, abs(lo), abs(hi))) then
             lo = lo - 1.0_dp
             hi = hi + 1.0_dp
         end if
+        nb = max(1, min(nbins, MAX_TICKS - 1))
 
-        mt = max(2, min(max_ticks, MAX_TICKS))
-        range = nice_number(hi - lo, .false.)
-        step = nice_number(range / real(mt - 1, dp), .true.)
-        if (step <= 0.0_dp) step = hi - lo
-        start = ceiling(lo / step - 1.0e-12_dp) * step
+        call scale_range(lo, hi, nb, scal, off)
+        v0 = lo - off
+        v1 = hi - off
+        raw = (v1 - v0)/real(nb, dp)
 
-        n = 0
-        do i = 0, MAX_TICKS - 1
-            t = start + real(i, dp) * step
-            if (t > hi + abs(step) * 1.0e-9_dp) exit
-            if (t >= lo - abs(step) * 1.0e-9_dp) then
-                n = n + 1
-                ticks(n) = t
+        first = size(STEPS)
+        do i = 1, size(STEPS)
+            if (STEPS(i)*scal >= raw) then
+                first = i
+                exit
             end if
         end do
 
-        if (n == 0) then
-            n = 2
+        n = 0
+        do k = first, 1, -1
+            step = STEPS(k)*scal
+            base = floor(v0/step)*step
+            low = edge_le((v0 - base)/step)
+            high = edge_ge((v1 - base)/step)
+            n = 0
+            inside = 0
+            do i = low, high
+                t = real(i, dp)*step + base + off
+                if (n >= MAX_TICKS) exit
+                n = n + 1
+                ticks(n) = t
+                if (t >= lo - 1.0e-10_dp*abs(step) .and. &
+                    t <= hi + 1.0e-10_dp*abs(step)) inside = inside + 1
+            end do
+            ! matplotlib's _min_n_ticks, which is two.
+            if (inside >= 2) exit
+        end do
+
+        ! The locator deliberately runs one tick past each end so that the
+        ! round-numbers limit mode has something to snap to; an axis that
+        ! does not autoscale its limits has no use for those.
+        k = 0
+        do i = 1, n
+            if (ticks(i) >= lo - 1.0e-10_dp*(hi - lo) .and. &
+                ticks(i) <= hi + 1.0e-10_dp*(hi - lo)) then
+                k = k + 1
+                ticks(k) = ticks(i)
+            end if
+        end do
+        if (k == 0) then
+            k = 2
             ticks(1) = lo
             ticks(2) = hi
         end if
-        n_ticks = n
+        n_ticks = k
     end subroutine linear_ticks
+
+    ! matplotlib's scale_range: the power of ten one step is near, and an
+    ! offset for data that sits far from zero relative to its own spread.
+    pure subroutine scale_range(vmin, vmax, n, scal, off)
+        real(dp), intent(in) :: vmin, vmax
+        integer, intent(in) :: n
+        real(dp), intent(out) :: scal, off
+        real(dp) :: dv, maxabs, meanv
+
+        dv = abs(vmax - vmin)
+        maxabs = max(abs(vmin), abs(vmax))
+        if (maxabs == 0.0_dp .or. dv/maxabs < 1.0e-12_dp) then
+            scal = 1.0_dp
+            off = 0.0_dp
+            return
+        end if
+        meanv = 0.5_dp*(vmax + vmin)
+        if (abs(meanv)/dv < 100.0_dp) then
+            off = 0.0_dp
+        else
+            off = sign(10.0_dp**floor(log10(abs(meanv))), meanv)
+        end if
+        scal = 10.0_dp**floor(log10(dv/real(n, dp)))
+    end subroutine scale_range
+
+    ! floor and ceiling in step units, snapping to the integer when the
+    ! value is within rounding distance of it.
+    pure function edge_le(x) result(k)
+        real(dp), intent(in) :: x
+        integer :: k
+        real(dp) :: frac
+        k = floor(x)
+        frac = x - real(k, dp)
+        if (frac > 1.0_dp - 1.0e-10_dp) k = k + 1
+    end function edge_le
+
+    pure function edge_ge(x) result(k)
+        real(dp), intent(in) :: x
+        integer :: k
+        real(dp) :: frac
+        k = floor(x)
+        frac = x - real(k, dp)
+        if (frac > 1.0e-10_dp) k = k + 1
+    end function edge_ge
 
     ! Decades either side of zero, plus zero itself, thinned by a whole
     ! stride when there are more decades than will fit.
@@ -246,5 +332,97 @@ contains
             n = k
         end if
     end subroutine format_tick_to
+
+    ! matplotlib's ScalarFormatter labels every tick on an axis with the
+    ! same number of decimals: as few as still tell the ticks apart. That
+    ! is why an axis running -1 to 1 in quarters reads 1.00 and not 1.
+    pure function tick_decimals(locs, n) result(d)
+        real(dp), intent(in) :: locs(:)
+        integer, intent(in) :: n
+        integer :: d
+        real(dp) :: lo, hi, rng, thresh, err
+        integer :: oom, i
+
+        d = 0
+        if (n < 1) return
+        lo = minval(locs(1:n))
+        hi = maxval(locs(1:n))
+        rng = hi - lo
+        if (rng <= 0.0_dp) rng = maxval(abs(locs(1:n)))
+        if (rng <= 0.0_dp) return
+
+        oom = floor(log10(rng))
+        thresh = 1.0e-3_dp*10.0_dp**oom
+        d = max(0, 3 - oom)
+        do while (d >= 0)
+            err = 0.0_dp
+            do i = 1, n
+                err = max(err, abs(locs(i) - round_to(locs(i), d)))
+            end do
+            if (err < thresh) then
+                d = d - 1
+            else
+                exit
+            end if
+        end do
+        d = d + 1
+    end function tick_decimals
+
+    pure function round_to(v, d) result(r)
+        real(dp), intent(in) :: v
+        integer, intent(in) :: d
+        real(dp) :: r, p
+        p = 10.0_dp**d
+        r = anint(v*p)/p
+    end function round_to
+
+    ! One tick label with a decimal count fixed for the whole axis. Values
+    ! far from one still fall back to the powers of ten, as matplotlib's
+    ! formatter does when it switches to scientific notation.
+    subroutine format_tick_fixed(v, dec, s, n)
+        real(dp), intent(in) :: v
+        integer, intent(in) :: dec
+        character(len=*), intent(out) :: s
+        integer, intent(out) :: n
+        character(len=32) :: tmp
+        character(len=16) :: fmt
+        real(dp) :: av
+        integer :: i
+
+        av = abs(v)
+        if (dec < 0 .or. (av > 0.0_dp .and. (av >= 1.0e4_dp .or. av < 1.0e-3_dp))) then
+            call format_tick_to(v, .false., s, n)
+            return
+        end if
+        if (dec == 0) then
+            write (tmp, "(I0)") nint(v)
+        else
+            write (fmt, "(A,I0,A)") "(F24.", dec, ")"
+            write (tmp, fmt) v
+        end if
+        tmp = adjustl(tmp)
+        n = len_trim(tmp)
+        ! A value below one prints as .5 on some compilers and 0.5 on
+        ! others; matplotlib writes the leading zero, so put it back.
+        if (tmp(1:1) == ".") then
+            s(1:1) = "0"
+            s(2:n + 1) = tmp(1:n)
+            n = n + 1
+        else if (n > 1 .and. tmp(1:2) == "-.") then
+            s(1:2) = "-0"
+            s(3:n + 1) = tmp(2:n)
+            n = n + 1
+        else
+            s(1:n) = tmp(1:n)
+        end if
+        ! Rounding can turn a small negative into "-0.00".
+        do i = 1, n
+            if (s(i:i) /= "-" .and. s(i:i) /= "0" .and. s(i:i) /= ".") return
+        end do
+        if (s(1:1) == "-") then
+            s(1:n - 1) = s(2:n)
+            n = n - 1
+        end if
+    end subroutine format_tick_fixed
 
 end module fplot_ticks

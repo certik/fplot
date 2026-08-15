@@ -65,6 +65,9 @@ call suptitle("figure title")
 - `twinx` and `twiny` for a second y or x axis on the same plot
 - Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
   color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
+- matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
+  same number of ticks for the space available, and one decimal count
+  shared by the whole axis
 - Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$` in any label, laid out
   once and drawn by every backend
 - Categorical axes: `plot`, `bar` and `barh` take a list of names in place

@@ -82,6 +82,9 @@ module fplot
     real(dp), parameter :: DIGIT_W = 0.636_dp
     ! Height of a one-line label including its leading, in font sizes.
     real(dp), parameter :: LABEL_BOX = 1.45_dp
+    ! matplotlib's axes.labelpad, the gap between the tick labels and the
+    ! axis label.
+    real(dp), parameter :: LABEL_PAD = 4.0_dp
     real(dp), parameter :: PI = 3.141592653589793_dp
 
     ! What a series draws. LINE covers plot/scatter/semilog*; the rest are
@@ -919,8 +922,22 @@ contains
         type(axes_t), intent(in) :: a
         real(dp) :: v
         v = TICK_LEN + 2.0_dp + tick_label_width(a)
-        if (len_trim(a%ylabel) > 0) v = v + LABEL_BOX * a%ylabel_size
+        ! The label is drawn a fixed distance out, so with narrow tick
+        ! labels it reaches further than they do and it is what decides
+        ! how much room the axes needs on its left.
+        if (len_trim(a%ylabel) > 0) &
+            v = ylabel_out(a) + 0.24_dp * a%ylabel_size
     end function decor_left
+
+    ! Baseline of the y label, in points outside the axes. matplotlib
+    ! hangs it off the tick labels, so a plot whose ticks read 1 to 7
+    ! carries its label much closer in than one reading -1.00 to 1.00.
+    function ylabel_out(a) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp) :: v
+        v = TICK_LEN + 2.0_dp + tick_label_width(a) + LABEL_PAD &
+            + 0.76_dp * a%ylabel_size
+    end function ylabel_out
 
     function decor_bottom(a) result(v)
         type(axes_t), intent(in) :: a
@@ -999,9 +1016,10 @@ contains
         v = 0.0_dp
         call compute_limits(a, xmin, xmax, ymin, ymax)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        a%ysc, t, nt)
+                        a%ysc, 9, t, nt)
         do i = 1, nt
-            call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, lbl, ln)
+            call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, &
+                            axis_decimals(t, nt, a%ysc), lbl, ln)
             if (math_is(lbl(1:ln))) then
                 v = max(v, math_width(lbl(1:ln), a%ytick_size))
             else
@@ -3940,10 +3958,31 @@ contains
     end function arm
 
     ! User-set tick positions win over the automatic locator.
-    subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, t, nt)
+    ! How many intervals matplotlib would ask its locator for: as many as
+    ! the axis is long enough to label, assuming tick text about three
+    ! times as wide as it is tall, and never more than nine.
+    pure function tick_space(length, size, horizontal) result(n)
+        real(dp), intent(in) :: length, size
+        logical, intent(in) :: horizontal
+        integer :: n
+        real(dp) :: w
+        if (horizontal) then
+            w = 3.0_dp*size
+        else
+            w = 2.0_dp*size
+        end if
+        if (w <= 0.0_dp) then
+            n = 9
+        else
+            n = max(1, min(9, int(length/w)))
+        end if
+    end function tick_space
+
+    subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, nbins, t, nt)
         integer, intent(in) :: n_user
         real(dp), intent(in) :: user_pos(MAX_TICKS), vmin, vmax
         type(scale_t), intent(in) :: sc
+        integer, intent(in) :: nbins
         real(dp), intent(out) :: t(MAX_TICKS)
         integer, intent(out) :: nt
         if (n_user > 0) then
@@ -3956,7 +3995,7 @@ contains
             case (SCALE_SYMLOG)
                 call symlog_ticks(vmin, vmax, t, nt)
             case default
-                call linear_ticks(vmin, vmax, 6, t, nt)
+                call linear_ticks(vmin, vmax, nbins, t, nt)
             end select
         end if
     end subroutine axis_ticks
@@ -4614,21 +4653,40 @@ contains
         call append_text(b, x, y, s, anchor, fontsize, rc_text_color, rot)
     end subroutine append_tick_text
 
-    subroutine tick_label(labeled, lab, i, v, sc, out, n)
+    ! dec is the decimal count the whole axis agreed on, or -1 when the
+    ! scale writes its own labels.
+    subroutine tick_label(labeled, lab, i, v, sc, dec, out, n)
         logical, intent(in) :: labeled
         character(len=24), intent(in) :: lab(MAX_TICKS)
         integer, intent(in) :: i
         real(dp), intent(in) :: v
         type(scale_t), intent(in) :: sc
+        integer, intent(in) :: dec
         character(len=*), intent(out) :: out
         integer, intent(out) :: n
         if (labeled) then
             n = len_trim(lab(i))
             out(1:n) = trim(lab(i))
+        else if (sc%kind == SCALE_LOG) then
+            call format_tick_to(v, .true., out, n)
         else
-            call format_tick_to(v, sc%kind == SCALE_LOG, out, n)
+            call format_tick_fixed(v, dec, out, n)
         end if
     end subroutine tick_label
+
+    ! The decimal count for one axis: none when the scale is not linear,
+    ! since those label themselves.
+    function axis_decimals(t, nt, sc) result(d)
+        real(dp), intent(in) :: t(MAX_TICKS)
+        integer, intent(in) :: nt
+        type(scale_t), intent(in) :: sc
+        integer :: d
+        if (sc%kind /= SCALE_LINEAR) then
+            d = -1
+        else
+            d = tick_decimals(t, nt)
+        end if
+    end function axis_decimals
 
     subroutine render_axes(b, a, idx, W, H, clear)
         class(renderer_t), intent(inout) :: b
@@ -4694,9 +4752,10 @@ contains
         xsc = a%xsc
         ysc = a%ysc
 
-        call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xsc, xticks, nxt)
+        call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xsc, &
+                        tick_space(ax_w, a%xtick_size, .true.), xticks, nxt)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        ysc, yticks, nyt)
+                        ysc, tick_space(ax_h, a%ytick_size, .false.), yticks, nyt)
         if (a%minor_ticks) then
             call minor_positions(xticks, nxt, xmin, xmax, xsc, xminor, nxm)
             call minor_positions(yticks, nyt, ymin, ymax, ysc, yminor, nym)
@@ -4924,7 +4983,8 @@ contains
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
             call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, a%xtick_len)
             if (.not. a%xticklabels_off) then
-                call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, lbl, ln)
+                call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, &
+                                axis_decimals(xticks, nxt, xsc), lbl, ln)
                 call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
                                       merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
                                       a%xtick_size, a%xtick_rot)
@@ -4949,7 +5009,8 @@ contains
             py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
             call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, a%ytick_len)
             if (.not. a%yticklabels_off) then
-                call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, lbl, ln)
+                call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, &
+                                axis_decimals(yticks, nyt, ysc), lbl, ln)
                 call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, lbl(1:ln), &
                                       merge("left ", "right", a%y_right), &
                                       a%ytick_size, a%ytick_rot)
@@ -4971,8 +5032,7 @@ contains
         if (len_trim(a%ylabel) > 0) then
             ! The right-hand label of a twinx faces the other way, so that it
             ! reads from outside the axes just as the left-hand one does.
-            mid = y_edge + y_out * (34.0_dp + 0.76_dp * (a%ylabel_size - LABEL_FONT) &
-                                    + 1.15_dp * (a%ytick_size - TICK_FONT))
+            mid = y_edge + y_out * ylabel_out(a)
             call append_text(b, mid, 0.5_dp*(ax_t + ax_b), trim(a%ylabel), &
                              "center", a%ylabel_size, rc_text_color, &
                              merge(-90.0_dp, 90.0_dp, a%y_right))
