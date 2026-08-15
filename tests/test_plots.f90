@@ -36,7 +36,7 @@ program test_plots
     integer :: i, j
     real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
     integer, parameter :: nzr = 8, nzc = 16
-    real(dp) :: zimg(nzr, nzc)
+    real(dp) :: zimg(nzr, nzc), zlog(nzr, nzc)
     real(dp) :: svals(ns), cvals(ns)
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
@@ -330,6 +330,7 @@ program test_plots
     do i = 1, nzr
         do j = 1, nzc
             zimg(i, j) = sin(0.4_dp * real(j, dp)) + cos(0.5_dp * real(i, dp))
+            zlog(i, j) = 10.0_dp ** (0.5_dp * real(i + j, dp) / 4.0_dp)
         end do
     end do
 
@@ -633,6 +634,20 @@ program test_plots
     call legend()
     call title("fill_between where")
     call save_all("fill_where")
+
+    ! 54) a reversed colormap
+    call clf()
+    call imshow(zimg, cmap="RdBu_r", aspect="auto")
+    call colorbar()
+    call title("RdBu_r")
+    call save_all("cmap_reversed")
+
+    ! 55) a logarithmic color norm
+    call clf()
+    call imshow(zlog, cmap="magma", norm="log", aspect="auto")
+    call colorbar()
+    call title("log color norm")
+    call save_all("cmap_lognorm")
 
     print *, "All test plots written."
 

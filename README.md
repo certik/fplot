@@ -65,6 +65,8 @@ call suptitle("figure title")
 - `twinx` and `twiny` for a second y or x axis on the same plot
 - Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
   color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
+- 49 matplotlib colormaps, any of them reversed with a `_r` suffix, and
+  `imshow(norm="log")` for a logarithmic color scale
 - `errorbar` with `xerr=` and asymmetric `yerr_lo=`/`yerr_hi=` arms
 - `fill_between(where=)` to shade only where a condition holds
 - `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled")`

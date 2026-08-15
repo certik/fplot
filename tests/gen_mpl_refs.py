@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent
@@ -47,6 +48,8 @@ OUT_NAMES = [
     "hist_bins",
     "errorbar_xy",
     "fill_where",
+    "cmap_reversed",
+    "cmap_lognorm",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -369,6 +372,8 @@ def main() -> None:
     nzr, nzc = 8, 16
     zimg = np.array([[np.sin(0.4 * (j + 1)) + np.cos(0.5 * (i + 1))
                       for j in range(nzc)] for i in range(nzr)])
+    zlog = np.array([[10.0 ** (0.5 * (i + j + 2) / 4.0)
+                      for j in range(nzc)] for i in range(nzr)])
 
     fig, ax = setup_fig()
     ax.imshow(zimg)
@@ -642,6 +647,20 @@ def main() -> None:
     ax.legend()
     ax.set_title("fill_between where")
     save(fig, "fill_where")
+
+    # 54 a reversed colormap
+    fig, ax = setup_fig()
+    im = ax.imshow(zimg, cmap="RdBu_r", aspect="auto")
+    fig.colorbar(im, ax=ax)
+    ax.set_title("RdBu_r")
+    save(fig, "cmap_reversed")
+
+    # 55 a logarithmic color norm
+    fig, ax = setup_fig()
+    im = ax.imshow(zlog, cmap="magma", norm=LogNorm(), aspect="auto")
+    fig.colorbar(im, ax=ax)
+    ax.set_title("log color norm")
+    save(fig, "cmap_lognorm")
 
     print("All matplotlib references written.")
 

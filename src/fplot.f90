@@ -182,6 +182,9 @@ module fplot
         real(dp), allocatable :: img(:, :)
         integer :: img_cmap = CMAP_VIRIDIS
         real(dp) :: img_vmin = 0.0_dp, img_vmax = 1.0_dp
+        ! How a value is placed on the colormap: linearly, or by its
+        ! logarithm, matplotlib's LogNorm.
+        logical :: img_log_norm = .false.
         real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: img_origin_upper = .true.
         ! Data units per point in y over the same in x. Zero means auto.
@@ -1198,13 +1201,13 @@ contains
         call stem(x, y, color, label, alpha)
     end subroutine ax_stem
 
-    subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect)
+    subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect, norm)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: z(:, :)
-        character(len=*), intent(in), optional :: cmap, origin, aspect
+        character(len=*), intent(in), optional :: cmap, origin, aspect, norm
         real(dp), intent(in), optional :: vmin, vmax, extent(4)
         call ax_sca(self)
-        call imshow(z, cmap, vmin, vmax, extent, origin, aspect)
+        call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm)
     end subroutine ax_imshow
 
     subroutine ax_contour(self, z, levels, cmap, extent)
@@ -1889,9 +1892,9 @@ contains
     ! Draw z as an image. z is indexed (row, column) and, with the default
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
     ! a descending y axis exactly as matplotlib does.
-    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect)
+    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm)
         real(dp), intent(in) :: z(:, :)
-        character(len=*), intent(in), optional :: cmap, origin, aspect
+        character(len=*), intent(in), optional :: cmap, origin, aspect, norm
         real(dp), intent(in), optional :: vmin, vmax, extent(4)
         integer :: nr, nc
         real(dp) :: lo, hi
@@ -1910,8 +1913,19 @@ contains
         ax(cur_i)%img_cmap = CMAP_VIRIDIS
         if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
 
-        lo = minval(z)
-        hi = maxval(z)
+        ax(cur_i)%img_log_norm = .false.
+        if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
+
+        if (ax(cur_i)%img_log_norm) then
+            ! A log scale cannot start at zero, so the smallest positive
+            ! sample sets the bottom of the range.
+            lo = huge(1.0_dp)
+            if (any(z > 0.0_dp)) lo = minval(z, mask=(z > 0.0_dp))
+            hi = maxval(z)
+        else
+            lo = minval(z)
+            hi = maxval(z)
+        end if
         if (present(vmin)) lo = vmin
         if (present(vmax)) hi = vmax
         if (hi <= lo) hi = lo + 1.0_dp
@@ -4177,7 +4191,7 @@ contains
             do j = 1, nc*fx
                 sj = (j - 1)/fx + 1
                 if (flip_x) sj = nc - sj + 1
-                t = (a%img(si, sj) - a%img_vmin) / (a%img_vmax - a%img_vmin)
+                t = cmap_t(a, a%img(si, sj))
                 rgba(1:3, j, i) = hex_rgb(cmap_color(a%img_cmap, t))
                 rgba(4, j, i) = 255
             end do
@@ -4227,7 +4241,7 @@ contains
                 xe1 = xe0 + dxc
                 px0 = map_x(xe0, xmin, xmax, ax_l, ax_w, xsc)
                 px1 = map_x(xe1, xmin, xmax, ax_l, ax_w, xsc)
-                t = (a%img(i, j) - a%img_vmin) / (a%img_vmax - a%img_vmin)
+                t = cmap_t(a, a%img(i, j))
                 call append_cell(b, min(px0, px1), min(py0, py1), &
                                  abs(px1 - px0), abs(py1 - py0), &
                                  cmap_color(a%img_cmap, t))
@@ -4285,13 +4299,17 @@ contains
 
         lo = a%img_vmin
         hi = a%img_vmax
-        call linear_ticks(lo, hi, 6, cb_ticks, nt)
+        if (a%img_log_norm) then
+            call log_ticks(lo, hi, cb_ticks, nt)
+        else
+            call linear_ticks(lo, hi, 6, cb_ticks, nt)
+        end if
         do i = 1, nt
             v = cb_ticks(i)
             if (v < lo .or. v > hi) cycle
-            py = bb - (v - lo) / (hi - lo) * bh
+            py = bb - cmap_t(a, v) * bh
             call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
-            call format_tick_to(v, .false., lbl, ln)
+            call format_tick_to(v, a%img_log_norm, lbl, ln)
             call append_text(b, bx + bw + 7.0_dp, py + 3.5_dp, lbl(1:ln), &
                              "left", a%ytick_size, rc_text_color)
         end do
@@ -4311,6 +4329,26 @@ contains
     end function fmt_pt
 
     ! Per-point color when scatter mapped c values, otherwise the series color.
+    ! Where a value sits on the colormap, in [0, 1].
+    pure function cmap_t(a, v) result(t)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: v
+        real(dp) :: t, lo, hi
+        lo = a%img_vmin
+        hi = a%img_vmax
+        if (a%img_log_norm) then
+            ! Anything at or below zero has no logarithm, so it takes the
+            ! bottom of the map, as matplotlib's LogNorm does.
+            if (v <= 0.0_dp .or. lo <= 0.0_dp .or. hi <= lo) then
+                t = 0.0_dp
+            else
+                t = (log10(v) - log10(lo)) / (log10(hi) - log10(lo))
+            end if
+        else
+            t = (v - lo) / (hi - lo)
+        end if
+    end function cmap_t
+
     ! Series drawn as filled shapes, which take a swatch in the legend.
     pure function is_patch_series(kd) result(v)
         integer, intent(in) :: kd
