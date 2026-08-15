@@ -15,7 +15,7 @@ module fplot_backend_svg
     use fplot_style, only: dp
     use fplot_render
     use fplot_svg, only: svg_builder, builder_init, builder_append, &
-                         builder_get, fmt_num
+                         builder_get, fmt_num, xml_escape_to
     implicit none
     private
 
@@ -425,6 +425,8 @@ contains
         type(paint_t), intent(in) :: paint
         integer, intent(in) :: anchor, baseline
         real(dp), intent(in) :: angle
+        character(len=6*len(s)) :: esc
+        integer :: en
 
         call sync_clip(self, paint%clip)
         call put(self, '<text x="')
@@ -475,8 +477,10 @@ contains
             call put(self, ')"')
         end if
         call put(self, ">")
-        ! Already XML escaped by the caller, which knows the source string.
-        call put(self, s)
+        ! Escaping is the backend's business: the caller hands over the text
+        ! the user asked for, and each format spells it its own way.
+        call xml_escape_to(s, esc, en)
+        call put(self, esc(1:en))
         call put(self, "</text>")
         call put_eol(self)
     end subroutine svg_draw_text

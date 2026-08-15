@@ -3048,8 +3048,7 @@ contains
         end do
 
         if (len_trim(a%cbar_label) > 0) then
-            call xml_escape_to(a%cbar_label, esc, ln)
-            call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), esc(1:ln), &
+            call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), trim(a%cbar_label), &
                              "center", a%ylabel_size, "#000000", 90.0_dp)
         end if
     end subroutine append_colorbar
@@ -3428,8 +3427,7 @@ contains
                                  map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ysc), &
                                  trim(a%texts(i)%color), 1.0_dp, LINE_SOLID, 1.0_dp)
             end if
-            call xml_escape_to(a%texts(i)%s, esc, en)
-            call append_text(b, px, py + 3.5_dp, esc(1:en), &
+            call append_text(b, px, py + 3.5_dp, trim(a%texts(i)%s), &
                              trim(a%texts(i)%ha), a%texts(i)%fontsize, &
                              trim(a%texts(i)%color))
         end do
@@ -3500,29 +3498,26 @@ contains
         end do
 
         if (len_trim(a%xlabel) > 0) then
-            call xml_escape_to(a%xlabel, esc, en)
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_b + xtick_gap(a) + 0.24_dp * a%xtick_size + 1.84_dp &
-                             + 0.76_dp * a%xlabel_size, esc(1:en), &
+                             + 0.76_dp * a%xlabel_size, trim(a%xlabel), &
                              "center", a%xlabel_size, "#000000")
         end if
 
         if (len_trim(a%ylabel) > 0) then
-            call xml_escape_to(a%ylabel, esc, en)
             ! The right-hand label of a twinx faces the other way, so that it
             ! reads from outside the axes just as the left-hand one does.
             mid = y_edge + y_out * (34.0_dp + 0.76_dp * (a%ylabel_size - LABEL_FONT) &
                                     + 1.15_dp * (a%ytick_size - TICK_FONT))
-            call append_text(b, mid, 0.5_dp*(ax_t + ax_b), esc(1:en), &
+            call append_text(b, mid, 0.5_dp*(ax_t + ax_b), trim(a%ylabel), &
                              "center", a%ylabel_size, "#000000", &
                              merge(-90.0_dp, 90.0_dp, a%y_right))
         end if
 
         ! title
         if (len_trim(a%title) > 0) then
-            call xml_escape_to(a%title, esc, en)
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
-                             ax_t - 0.5_dp * a%title_size, esc(1:en), &
+                             ax_t - 0.5_dp * a%title_size, trim(a%title), &
                              "center", a%title_size, "#000000")
         end if
 
@@ -3559,10 +3554,10 @@ contains
                                        leg_w, leg_h, leg_x, leg_y)
                 end if
                 if (len_trim(a%legend_title) > 0) then
-                    call xml_escape_to(a%legend_title, esc, en)
                     call append_text(b, leg_x + 0.5_dp * leg_w, &
                                      leg_y + 4.0_dp + 0.5_dp * row_h + 3.5_dp, &
-                                     esc(1:en), "center", a%legend_size, "#000000")
+                                     trim(a%legend_title), "center", &
+                                     a%legend_size, "#000000")
                 end if
                 if (a%legend_frame) then
                     pnt = brush("#ffffff")
@@ -3592,8 +3587,8 @@ contains
                                            a%series(i)%markersize, &
                                            trim(a%series(i)%color), a%series(i)%alpha)
                     end if
-                    call xml_escape_to(a%series(i)%label, esc, en)
-                    call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, esc(1:en), &
+                    call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, &
+                                     trim(a%series(i)%label), &
                                      "left", a%legend_size, "#000000")
                 end do
             end if
@@ -3669,9 +3664,9 @@ contains
 
         ! suptitle (figure-level, above all axes)
         if (len_trim(fig_suptitle) > 0) then
-            call xml_escape_to(fig_suptitle, esc, en)
             call append_text(b, 0.5_dp*W, (1.0_dp - SUPTITLE_Y)*H + 4.2_dp, &
-                             esc(1:en), "center", fig_suptitle_size, "#000000")
+                             trim(fig_suptitle), "center", fig_suptitle_size, &
+                             "#000000")
         end if
 
         call b%close_canvas()
