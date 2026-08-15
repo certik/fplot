@@ -616,6 +616,24 @@ program test_plots
     call title("uneven bins, cumulative")
     call save_all("hist_bins")
 
+    ! 52) asymmetric errors in both directions
+    call clf()
+    call errorbar(xe, ye, yerr_lo=ee, yerr_hi=0.5_dp*ee, xerr=0.3_dp*ee, &
+                  fmt="o", color="tab:red", capsize=4.0_dp)
+    call title("asymmetric errors")
+    call save_all("errorbar_xy")
+
+    ! 53) fill_between with a condition
+    call clf()
+    call plot(x, y, "k-")
+    call fill_between(x, y, spread(0.0_dp, 1, n), where=(y > 0.0_dp), &
+                      color="tab:green", alpha=0.4_dp, label="positive")
+    call fill_between(x, y, spread(0.0_dp, 1, n), where=(y < 0.0_dp), &
+                      color="tab:red", alpha=0.4_dp, label="negative")
+    call legend()
+    call title("fill_between where")
+    call save_all("fill_where")
+
     print *, "All test plots written."
 
 contains

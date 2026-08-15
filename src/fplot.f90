@@ -109,8 +109,10 @@ module fplot
         integer :: n = 0
         real(dp), allocatable :: x(:)
         real(dp), allocatable :: y(:)
-        ! FILL: lower edge. ERRORBAR: symmetric y error.
+        ! FILL: lower edge. BAR: the baseline it is stacked on.
         real(dp), allocatable :: y2(:)
+        ! ERRORBAR: the four arms, each already a distance from the point.
+        real(dp), allocatable :: eylo(:), eyhi(:), exlo(:), exhi(:)
         ! BOX/VIOLIN: the position on the category axis.
         real(dp) :: pos = 1.0_dp
         character(len=7) :: color = "#1f77b4"
@@ -1153,23 +1155,29 @@ contains
                   cumulative, histtype)
     end subroutine ax_hist
 
-    subroutine ax_fill_between(self, x, y1, y2, color, label, alpha)
+    subroutine ax_fill_between(self, x, y1, y2, color, label, alpha, where)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
         character(len=*), intent(in), optional :: color, label
         real(dp), intent(in), optional :: alpha
+        logical, intent(in), optional :: where(:)
         call ax_sca(self)
-        call fill_between(x, y1, y2, color, label, alpha)
+        call fill_between(x, y1, y2, color, label, alpha, where)
     end subroutine ax_fill_between
 
-    subroutine ax_errorbar(self, x, y, yerr, fmt, color, label, capsize, marker)
+    subroutine ax_errorbar(self, x, y, yerr, fmt, color, label, capsize, &
+                           marker, xerr, yerr_lo, yerr_hi, xerr_lo, xerr_hi)
         class(axes), intent(in) :: self
-        real(dp), intent(in) :: x(:), y(:), yerr(:)
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: yerr(:), xerr(:)
+        real(dp), intent(in), optional :: yerr_lo(:), yerr_hi(:)
+        real(dp), intent(in), optional :: xerr_lo(:), xerr_hi(:)
         character(len=*), intent(in), optional :: fmt, color, label, marker
         real(dp), intent(in), optional :: capsize
         call ax_sca(self)
-        call errorbar(x, y, yerr, fmt, color, label, capsize, marker)
+        call errorbar(x, y, yerr, fmt, color, label, capsize, marker, xerr, &
+                      yerr_lo, yerr_hi, xerr_lo, xerr_hi)
     end subroutine ax_errorbar
 
     subroutine ax_step(self, x, y, where, label, color, lw, linestyle, alpha)
@@ -2525,28 +2533,95 @@ contains
     end function bin_of
 
     ! Shade between y1 and y2 (default 0).
-    subroutine fill_between(x, y1, y2, color, label, alpha)
+    ! where selects the x range to shade. matplotlib fills each run of true
+    ! values as its own polygon, and so does this.
+    subroutine fill_between(x, y1, y2, color, label, alpha, where)
+        real(dp), intent(in) :: x(:), y1(:)
+        real(dp), intent(in), optional :: y2(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        logical, intent(in), optional :: where(:)
+        integer :: n, i, j, k
+        character(len=7) :: col
+        logical :: first
+
+        call ensure_fig()
+        n = min(size(x), size(y1))
+        if (n < 1) return
+        if (.not. present(where)) then
+            call add_fill(x(1:n), y1(1:n), y2, color, label, alpha)
+            return
+        end if
+
+        ! Every run after the first reuses the color of the first, and only
+        ! the first carries the label, so the group is one legend entry.
+        first = .true.
+        col = ""
+        i = 1
+        do while (i <= n)
+            if (.not. where(i)) then
+                i = i + 1
+                cycle
+            end if
+            j = i
+            do while (j < n)
+                if (.not. where(j + 1)) exit
+                j = j + 1
+            end do
+            if (first) then
+                call add_fill(x(i:j), y1(i:j), slice(y2, i, j), color, label, alpha)
+            else
+                call add_fill(x(i:j), y1(i:j), slice(y2, i, j), col, alpha=alpha)
+            end if
+            k = ax(cur_i)%n_series
+            if (first .and. k >= 1) then
+                ! The runs are one artist, so they take one cycle step and
+                ! one legend entry between them.
+                col = ax(cur_i)%series(k)%color
+                first = .false.
+            end if
+            i = j + 1
+        end do
+    end subroutine fill_between
+
+    ! y2(i:j) if it is there at all, which keeps the optional optional.
+    function slice(v, i, j) result(w)
+        real(dp), intent(in), optional :: v(:)
+        integer, intent(in) :: i, j
+        real(dp), allocatable :: w(:)
+        if (present(v)) then
+            w = v(i:j)
+        else
+            allocate (w(0))
+        end if
+    end function slice
+
+    subroutine add_fill(x, y1, y2, color, label, alpha)
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
         character(len=*), intent(in), optional :: color, label
         real(dp), intent(in), optional :: alpha
         integer :: is, n
 
-        call ensure_fig()
         is = new_shape_series(SERIES_FILL, x, y1, color, label, alpha)
         if (is < 1) return
         n = ax(cur_i)%series(is)%n
         allocate (ax(cur_i)%series(is)%y2(n))
+        ax(cur_i)%series(is)%y2(1:n) = 0.0_dp
         if (present(y2)) then
-            ax(cur_i)%series(is)%y2(1:n) = y2(1:n)
-        else
-            ax(cur_i)%series(is)%y2(1:n) = 0.0_dp
+            if (size(y2) >= n) ax(cur_i)%series(is)%y2(1:n) = y2(1:n)
         end if
-    end subroutine fill_between
+    end subroutine add_fill
 
     ! Line plot with symmetric vertical error bars.
-    subroutine errorbar(x, y, yerr, fmt, color, label, capsize, marker)
-        real(dp), intent(in) :: x(:), y(:), yerr(:)
+    ! yerr/xerr are symmetric; the _lo/_hi pairs give an asymmetric error,
+    ! matplotlib's 2xN array written as two arrays.
+    subroutine errorbar(x, y, yerr, fmt, color, label, capsize, marker, &
+                        xerr, yerr_lo, yerr_hi, xerr_lo, xerr_hi)
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: yerr(:), xerr(:)
+        real(dp), intent(in), optional :: yerr_lo(:), yerr_hi(:)
+        real(dp), intent(in), optional :: xerr_lo(:), xerr_hi(:)
         character(len=*), intent(in), optional :: fmt, color, label, marker
         real(dp), intent(in), optional :: capsize
         integer :: is, n, mk, ls
@@ -2556,8 +2631,10 @@ contains
         is = new_shape_series(SERIES_ERRORBAR, x, y, color, label)
         if (is < 1) return
         n = ax(cur_i)%series(is)%n
-        allocate (ax(cur_i)%series(is)%y2(n))
-        ax(cur_i)%series(is)%y2(1:n) = abs(yerr(1:n))
+        call set_arm(ax(cur_i)%series(is)%eylo, n, yerr, yerr_lo)
+        call set_arm(ax(cur_i)%series(is)%eyhi, n, yerr, yerr_hi)
+        call set_arm(ax(cur_i)%series(is)%exlo, n, xerr, xerr_lo)
+        call set_arm(ax(cur_i)%series(is)%exhi, n, xerr, xerr_hi)
 
         if (present(fmt)) then
             if (len_trim(fmt) > 0) then
@@ -2572,6 +2649,21 @@ contains
         ax(cur_i)%series(is)%width = 3.0_dp
         if (present(capsize)) ax(cur_i)%series(is)%width = capsize
     end subroutine errorbar
+
+    ! One arm of the error bars: the asymmetric value if it was given, else
+    ! the symmetric one, else nothing at all.
+    subroutine set_arm(arm, n, sym, side)
+        real(dp), allocatable, intent(out) :: arm(:)
+        integer, intent(in) :: n
+        real(dp), intent(in), optional :: sym(:), side(:)
+        if (present(side)) then
+            allocate (arm(n))
+            arm = abs(side(1:n))
+        else if (present(sym)) then
+            allocate (arm(n))
+            arm = abs(sym(1:n))
+        end if
+    end subroutine set_arm
 
     ! Reference line spanning the full axes.
     subroutine axhline(y, color, linestyle, lw, label)
@@ -2946,10 +3038,16 @@ contains
                 if (a%series(i)%kind /= SERIES_HLINE) then
                     if (a%series(i)%kind == SERIES_BAR) hw = bar_hw(a%series(i), j)
                     xv = a%series(i)%x(j)
-                    if (.not. (a%xsc%kind == SCALE_LOG .and. xv - hw <= 0.0_dp)) then
+                    xlo = xv - hw
+                    xhi = xv + hw
+                    if (a%series(i)%kind == SERIES_ERRORBAR) then
+                        xlo = xv - arm(a%series(i)%exlo, j)
+                        xhi = xv + arm(a%series(i)%exhi, j)
+                    end if
+                    if (.not. (a%xsc%kind == SCALE_LOG .and. xlo <= 0.0_dp)) then
                         anyx = .true.
-                        xmin = min(xmin, xv - hw)
-                        xmax = max(xmax, xv + hw)
+                        xmin = min(xmin, xlo)
+                        xmax = max(xmax, xhi)
                     end if
                 end if
 
@@ -2967,8 +3065,8 @@ contains
                         ylo = min(yv, a%series(i)%y2(j))
                         yhi = max(yv, a%series(i)%y2(j))
                     case (SERIES_ERRORBAR)
-                        ylo = yv - a%series(i)%y2(j)
-                        yhi = yv + a%series(i)%y2(j)
+                        ylo = yv - arm(a%series(i)%eylo, j)
+                        yhi = yv + arm(a%series(i)%eyhi, j)
                     end select
                     if (.not. (a%ysc%kind == SCALE_LOG .and. yhi <= 0.0_dp)) then
                         anyy = .true.
@@ -3646,19 +3744,45 @@ contains
         integer, intent(in) :: j
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
-        real(dp) :: px, plo, phi, cap
+        real(dp) :: px, py, plo, phi, cap
 
         px = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
-        plo = map_y(s%y(j) - s%y2(j), ymin, ymax, ax_b, ax_h, ysc)
-        phi = map_y(s%y(j) + s%y2(j), ymin, ymax, ax_b, ax_h, ysc)
-        call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
-
+        py = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         cap = s%width
-        if (cap > 0.0_dp) then
-            call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
-            call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+
+        if (allocated(s%eylo) .or. allocated(s%eyhi)) then
+            plo = map_y(s%y(j) - arm(s%eylo, j), ymin, ymax, ax_b, ax_h, ysc)
+            phi = map_y(s%y(j) + arm(s%eyhi, j), ymin, ymax, ax_b, ax_h, ysc)
+            call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+            if (cap > 0.0_dp) then
+                call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), &
+                                 1.0_dp, LINE_SOLID, s%alpha)
+                call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), &
+                                 1.0_dp, LINE_SOLID, s%alpha)
+            end if
+        end if
+
+        if (allocated(s%exlo) .or. allocated(s%exhi)) then
+            plo = map_x(s%x(j) - arm(s%exlo, j), xmin, xmax, ax_l, ax_w, xsc)
+            phi = map_x(s%x(j) + arm(s%exhi, j), xmin, xmax, ax_l, ax_w, xsc)
+            call append_line(b, plo, py, phi, py, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+            if (cap > 0.0_dp) then
+                call append_line(b, plo, py - cap, plo, py + cap, trim(s%color), &
+                                 1.0_dp, LINE_SOLID, s%alpha)
+                call append_line(b, phi, py - cap, phi, py + cap, trim(s%color), &
+                                 1.0_dp, LINE_SOLID, s%alpha)
+            end if
         end if
     end subroutine append_errorbar
+
+    ! One error arm, zero where the series has none.
+    pure function arm(e, j) result(v)
+        real(dp), allocatable, intent(in) :: e(:)
+        integer, intent(in) :: j
+        real(dp) :: v
+        v = 0.0_dp
+        if (allocated(e)) v = e(j)
+    end function arm
 
     ! User-set tick positions win over the automatic locator.
     subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, t, nt)

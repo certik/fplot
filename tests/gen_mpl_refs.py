@@ -45,6 +45,8 @@ OUT_NAMES = [
     "bar_colors",
     "hist_opts",
     "hist_bins",
+    "errorbar_xy",
+    "fill_where",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -622,6 +624,24 @@ def main() -> None:
             color="tab:green")
     ax.set_title("uneven bins, cumulative")
     save(fig, "hist_bins")
+
+    # 52 asymmetric errors in both directions
+    fig, ax = setup_fig()
+    ax.errorbar(xe, ye, yerr=[ee, 0.5 * ee], xerr=0.3 * ee, fmt="o",
+                color="tab:red", capsize=4.0)
+    ax.set_title("asymmetric errors")
+    save(fig, "errorbar_xy")
+
+    # 53 fill_between with a condition
+    fig, ax = setup_fig()
+    ax.plot(x, y, "k-")
+    ax.fill_between(x, y, 0.0, where=(y > 0.0), color="tab:green", alpha=0.4,
+                    label="positive")
+    ax.fill_between(x, y, 0.0, where=(y < 0.0), color="tab:red", alpha=0.4,
+                    label="negative")
+    ax.legend()
+    ax.set_title("fill_between where")
+    save(fig, "fill_where")
 
     print("All matplotlib references written.")
 
