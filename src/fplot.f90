@@ -29,6 +29,9 @@ module fplot
     ! Suptitle baseline (matplotlib figure.suptitle default y), in figure
     ! fractions measured from the bottom.
     real(dp), parameter :: SUPTITLE_Y = 0.98_dp
+    ! Mean advance width of DejaVu Sans at the 10 pt legend font size, used
+    ! to size the legend box to its labels.
+    real(dp), parameter :: LEGEND_CHAR_W = 5.6_dp
 
     type :: series_t
         integer :: n = 0
@@ -504,7 +507,7 @@ contains
         character(len=512) :: esc
         integer :: ln, en
         logical :: xlog, ylog
-        integer :: n_leg, k
+        integer :: n_leg, k, max_lbl
         real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h
 
         axl = a%left * W
@@ -790,12 +793,19 @@ contains
         ! legend
         if (a%legend_on) then
             n_leg = 0
+            max_lbl = 0
             do i = 1, a%n_series
-                if (len_trim(a%series(i)%label) > 0) n_leg = n_leg + 1
+                if (len_trim(a%series(i)%label) > 0) then
+                    n_leg = n_leg + 1
+                    max_lbl = max(max_lbl, len_trim(a%series(i)%label))
+                end if
             end do
             if (n_leg > 0) then
                 row_h = 18.0_dp
-                leg_w = 100.0_dp
+                ! Sample line (leg_x+8 .. leg_x+28), gap to the text at
+                ! leg_x+34, the label itself, and a trailing pad.
+                leg_w = 34.0_dp + real(max_lbl, dp) * LEGEND_CHAR_W + 8.0_dp
+                leg_w = min(leg_w, axw - 16.0_dp)
                 leg_h = 8.0_dp + real(n_leg, dp) * row_h
                 leg_x = axr - leg_w - 8.0_dp
                 leg_y = axt + 8.0_dp
