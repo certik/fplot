@@ -65,6 +65,9 @@ call suptitle("figure title")
 - `twinx` and `twiny` for a second y or x axis on the same plot
 - Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
   color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
+- `add_axes` for an axes placed by hand, `inset_axes` for a small axes
+  inside another, and `secondary_xaxis`/`secondary_yaxis` for a second
+  scale along an edge
 - `clabel` to write the level into each contour line, breaking the line
   at its straightest stretch to make room
 - `quiver` for a field of arrows, sized as matplotlib sizes them

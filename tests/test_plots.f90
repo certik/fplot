@@ -728,6 +728,16 @@ program test_plots
     call title("clabel")
     call save_all("clabel")
 
+    ! 63) an inset and a secondary axis
+    call clf()
+    a1 = subplot2grid([1, 1], [0, 0])
+    call a1%plot(x, y)
+    call a1%set_title("inset")
+    a2 = a1%secondary_xaxis(scale=2.0_dp)
+    a3 = a1%inset_axes([0.6_dp, 0.6_dp, 0.35_dp, 0.3_dp])
+    call a3%plot(x, y2)
+    call save_all("inset")
+
     print *, "All test plots written."
 
 contains

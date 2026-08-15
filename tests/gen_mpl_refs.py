@@ -59,6 +59,7 @@ OUT_NAMES = [
     "dates",
     "quiver",
     "clabel",
+    "inset",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -731,6 +732,15 @@ def main() -> None:
     ax.clabel(cs)
     ax.set_title("clabel")
     save(fig, "clabel")
+
+    # 63 an inset and a secondary axis
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.set_title("inset")
+    ax.secondary_xaxis("top", functions=(lambda v: 2.0 * v, lambda v: v / 2.0))
+    axi = ax.inset_axes([0.6, 0.6, 0.35, 0.3])
+    axi.plot(x, y2)
+    save(fig, "inset")
 
     print("All matplotlib references written.")
 

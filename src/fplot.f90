@@ -21,6 +21,7 @@ module fplot
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
     public :: pcolormesh, pcolor
+    public :: add_axes, secondary_xaxis, secondary_yaxis
     public :: quiver
     public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
@@ -238,6 +239,17 @@ module fplot
         ! one's own ticks and label go on. A twin also lets the axes beneath
         ! it show through, so it draws no background.
         integer :: share_x = 0, share_y = 0
+        ! An axes placed by hand rather than in the grid. An inset keeps
+        ! its rectangle in the fractions of the axes it sits in, so it
+        ! follows that axes when the layout moves.
+        logical :: fixed_pos = .false.
+        integer :: inset_of = 0
+        real(dp) :: inset_rect(4) = [0.0_dp, 0.0_dp, 1.0_dp, 1.0_dp]
+        ! A secondary axis carries the limits of the axes it belongs to,
+        ! through v -> sec_scale*v + sec_offset.
+        integer :: sec_of = 0
+        logical :: sec_is_x = .true.
+        real(dp) :: sec_scale = 1.0_dp, sec_offset = 0.0_dp
         ! Shared axes (subplots(sharex=)). Unlike a twin, which borrows the
         ! other axes' limits wholesale, a share group takes the union of what
         ! all its members hold, so every panel shows the same span. link_x is
@@ -277,6 +289,9 @@ module fplot
         integer :: idx = 0
     contains
         procedure :: sca => ax_sca
+        procedure :: inset_axes => ax_inset_axes
+        procedure :: secondary_xaxis => ax_secondary_xaxis
+        procedure :: secondary_yaxis => ax_secondary_yaxis
         procedure, private :: ax_plot, ax_plot_cat
         generic :: plot => ax_plot, ax_plot_cat
         procedure :: scatter => ax_scatter
@@ -826,6 +841,7 @@ contains
         dy = h * (1.0_dp + fig_hspace)
 
         do i = 1, n_ax
+            if (ax(i)%fixed_pos .or. ax(i)%inset_of > 0) cycle
             ! Twins sit exactly on top of the axes they were made from.
             r = max(ax(i)%share_x, ax(i)%share_y)
             if (r >= 1) cycle
@@ -836,6 +852,15 @@ contains
             ax(i)%bottom = fig_bottom + &
                            real(grid_m - r - ax(i)%g_rowspan, dp) * dy
             ax(i)%top = ax(i)%bottom + h + real(ax(i)%g_rowspan - 1, dp) * dy
+        end do
+
+        do i = 1, n_ax
+            r = ax(i)%inset_of
+            if (r < 1) cycle
+            ax(i)%left = ax(r)%left + ax(i)%inset_rect(1)*(ax(r)%right - ax(r)%left)
+            ax(i)%bottom = ax(r)%bottom + ax(i)%inset_rect(2)*(ax(r)%top - ax(r)%bottom)
+            ax(i)%right = ax(i)%left + ax(i)%inset_rect(3)*(ax(r)%right - ax(r)%left)
+            ax(i)%top = ax(i)%bottom + ax(i)%inset_rect(4)*(ax(r)%top - ax(r)%bottom)
         end do
 
         do i = 1, n_ax
@@ -927,6 +952,8 @@ contains
         inner_l = 0.0_dp
         inner_b = 0.0_dp
         do i = 1, n_ax
+            ! An axes the caller placed itself is not the grid's business.
+            if (ax(i)%fixed_pos .or. ax(i)%inset_of > 0) cycle
             need_l = max(need_l, decor_left(ax(i)))
             need_b = max(need_b, decor_bottom(ax(i)))
             need_t = max(need_t, decor_top(ax(i)))
@@ -1106,6 +1133,125 @@ contains
     ! its top left corner at loc, counted from zero as matplotlib counts
     ! it. Cells nobody asks for stay empty, which is how a wide panel over
     ! two narrow ones is built.
+    ! Grow the axes array by one and make the new axes current.
+    subroutine push_axes()
+        type(axes_t), allocatable :: tmp(:)
+
+        call ensure_fig()
+        if (n_ax > 0) then
+            call move_alloc(ax, tmp)
+            allocate (ax(n_ax + 1))
+            ax(1:n_ax) = tmp
+        else
+            if (allocated(ax)) deallocate (ax)
+            allocate (ax(1))
+        end if
+        n_ax = n_ax + 1
+        cur_i = n_ax
+        call apply_font_defaults(ax(cur_i))
+    end subroutine push_axes
+
+    ! An axes at a rectangle of the figure the caller chose, [left, bottom,
+    ! width, height] in figure fractions. The grid never moves it.
+    function add_axes(rect) result(h)
+        real(dp), intent(in) :: rect(4)
+        type(axes) :: h
+
+        call push_axes()
+        ax(cur_i)%fixed_pos = .true.
+        ax(cur_i)%left = rect(1)
+        ax(cur_i)%bottom = rect(2)
+        ax(cur_i)%right = rect(1) + rect(3)
+        ax(cur_i)%top = rect(2) + rect(4)
+        h%idx = cur_i
+    end function add_axes
+
+    ! A small axes inside another one, its rectangle given in the fractions
+    ! of that axes, so it goes on fitting when the layout moves.
+    function ax_inset_axes(self, bounds) result(h)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: bounds(4)
+        type(axes) :: h
+        integer :: parent
+
+        parent = self%idx
+        call push_axes()
+        ax(cur_i)%inset_of = parent
+        ax(cur_i)%inset_rect = bounds
+        call layout_grid()
+        h%idx = cur_i
+    end function ax_inset_axes
+
+    function ax_secondary_xaxis(self, location, scale, offset) result(h)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        h = add_secondary(self%idx, .true., location, scale, offset)
+    end function ax_secondary_xaxis
+
+    function ax_secondary_yaxis(self, location, scale, offset) result(h)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        h = add_secondary(self%idx, .false., location, scale, offset)
+    end function ax_secondary_yaxis
+
+    function secondary_xaxis(location, scale, offset) result(h)
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        call ensure_fig()
+        h = add_secondary(cur_i, .true., location, scale, offset)
+    end function secondary_xaxis
+
+    function secondary_yaxis(location, scale, offset) result(h)
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        call ensure_fig()
+        h = add_secondary(cur_i, .false., location, scale, offset)
+    end function secondary_yaxis
+
+    ! A second axis along one edge, reading the same data in other units.
+    ! matplotlib takes a pair of functions; here the two units are related
+    ! by scale and offset, which is what a change of units amounts to.
+    function add_secondary(parent, is_x, location, scale, offset) result(h)
+        integer, intent(in) :: parent
+        logical, intent(in) :: is_x
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        character(len=8) :: loc
+
+        loc = "top"
+        if (.not. is_x) loc = "right"
+        if (present(location)) loc = location
+
+        call push_axes()
+        ! Sitting on the whole of its parent keeps the two axes registered
+        ! against each other however the layout moves afterwards.
+        ax(cur_i)%inset_of = parent
+        ax(cur_i)%inset_rect = [0.0_dp, 0.0_dp, 1.0_dp, 1.0_dp]
+        ax(cur_i)%patch_off = .true.
+        ax(cur_i)%sec_of = parent
+        ax(cur_i)%sec_is_x = is_x
+        if (present(scale)) ax(cur_i)%sec_scale = scale
+        if (present(offset)) ax(cur_i)%sec_offset = offset
+        if (is_x) then
+            ax(cur_i)%yaxis_off = .true.
+            ax(cur_i)%x_top = loc /= "bottom"
+            ax(cur_i)%xsc = ax(parent)%xsc
+        else
+            ax(cur_i)%xaxis_off = .true.
+            ax(cur_i)%y_right = loc /= "left"
+            ax(cur_i)%ysc = ax(parent)%ysc
+        end if
+        call layout_grid()
+        h%idx = cur_i
+    end function add_secondary
+
     function subplot2grid(shape, loc, rowspan, colspan) result(h)
         integer, intent(in) :: shape(2), loc(2)
         integer, intent(in), optional :: rowspan, colspan
@@ -3557,6 +3703,16 @@ contains
         end if
         ! A twin borrows the shared axis wholesale, so the two sets of data
         ! stay registered against each other.
+        if (a%sec_of > 0) then
+            call compute_limits(ax(a%sec_of), xlo, xhi, ylo, yhi)
+            if (a%sec_is_x) then
+                xmin = a%sec_scale*xlo + a%sec_offset
+                xmax = a%sec_scale*xhi + a%sec_offset
+            else
+                ymin = a%sec_scale*ylo + a%sec_offset
+                ymax = a%sec_scale*yhi + a%sec_offset
+            end if
+        end if
         if (a%share_x > 0) call compute_limits(ax(a%share_x), xmin, xmax, ylo, yhi)
         if (a%share_y > 0) call compute_limits(ax(a%share_y), xlo, xhi, ymin, ymax)
         ! A share group spans everything its members hold, so the panels line
