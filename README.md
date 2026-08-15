@@ -82,19 +82,24 @@ pixi run demo-flang
 pixi run build-lfortran
 pixi run test-lfortran
 
-# Compare against matplotlib reference SVGs
-pixi run compare
+# Compare against matplotlib references
+pixi run compare       # SVG, structurally
+pixi run compare-png   # PNG, pixel by pixel
+pixi run compare-pdf   # PDF, rasterized by pdftoppm
 ```
 
-CI (Linux) runs `pixi run test-flang`, `pixi run test-lfortran` and
-`pixi run compare`.
+The SVG comparison is structural because a viewer, not fplot, decides what an
+SVG looks like. PNG and PDF are compared as pixels, since there fplot decides.
+
+CI (Linux) runs `pixi run test-flang` and `pixi run test-lfortran`, then all
+three comparisons.
 
 ## Layout
 
 ```
 src/           library modules
 examples/      demo.f90
-tests/         Fortran test plots, matplotlib refs, compare script
+tests/         Fortran test plots, matplotlib refs, compare scripts
 scripts/       build_flang.sh, build_lfortran.sh
 ```
 

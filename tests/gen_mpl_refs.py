@@ -73,6 +73,7 @@ def save(fig, name: str, **kw) -> None:
     # matplotlib's own pixels, not against a rasterization of its SVG, which
     # would only tell us how the SVG renderer differs.
     fig.savefig(REF / f"{name}.png", format="png", **kw)
+    fig.savefig(REF / f"{name}.pdf", format="pdf", **kw)
     plt.close(fig)
     print(f"wrote {path}")
 

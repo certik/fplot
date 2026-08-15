@@ -29,3 +29,7 @@ jobs:
         run: pixi run test-lfortran
       - name: Compare against matplotlib references
         run: pixi run compare
+      - name: Compare PNG output against matplotlib
+        run: pixi run compare-png
+      - name: Compare PDF output against matplotlib
+        run: pixi run compare-pdf
