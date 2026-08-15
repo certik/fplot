@@ -7,6 +7,10 @@ module fplot
     use fplot_contour
     use fplot_ticks
     use fplot_svg
+    use fplot_render
+    use fplot_backend_svg
+    use fplot_backend_pdf
+    use fplot_backend_png
     implicit none
     private
 
@@ -21,7 +25,7 @@ module fplot
     public :: imshow, colorbar, contour, contourf
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
-    public :: render_svg
+    public :: render_svg, render_pdf, render_png
     public :: subplot, suptitle, subplots_adjust, tight_layout
     public :: twinx, twiny
     public :: set_fontsize
@@ -218,6 +222,9 @@ module fplot
     real(dp), save :: def_title = TITLE_FONT, def_label = LABEL_FONT
     real(dp), save :: def_tick = TICK_FONT, def_legend = LEGEND_FONT
     real(dp), save :: fig_suptitle_size = SUPTITLE_FONT
+
+    ! Clipping region currently in force. See set_clip.
+    type(clip_t), save :: g_clip
     type(axes_t), allocatable, save :: ax(:)
     integer, save :: n_ax = 0
     integer, save :: cur_i = 0
@@ -2185,15 +2192,6 @@ contains
         end if
     end function axis_frac
 
-    subroutine append_num(b, x)
-        type(svg_builder), intent(inout) :: b
-        real(dp), intent(in) :: x
-        character(len=64) :: s
-        integer :: n
-        call fmt_num(x, s, n)
-        call builder_append(b, s(1:n))
-    end subroutine append_num
-
     pure function int_to_str(i) result(s)
         integer, intent(in) :: i
         character(len=:), allocatable :: s
@@ -2202,243 +2200,354 @@ contains
         s = trim(tmp)
     end function int_to_str
 
-    subroutine append_dash(b, ls)
-        type(svg_builder), intent(inout) :: b
+    ! fplot carries colors as "#rrggbb" because that is what a format string
+    ! and a colormap table both produce; the renderer wants components.
+    pure function hex_rgb(s) result(c)
+        character(len=*), intent(in) :: s
+        integer :: c(3), i
+        c = 0
+        if (len(s) < 7) return
+        do i = 1, 3
+            c(i) = hex_byte(s(2*i:2*i + 1))
+        end do
+    end function hex_rgb
+
+    ! The clip in force for the primitives being emitted now. The rendering
+    ! API is stateless by design, but fplot draws in regions ("everything
+    ! inside the axes box"), so the front end tracks the current region here
+    ! and stamps it into each paint rather than passing it through fifteen
+    ! layers of call.
+    subroutine set_clip(x, y, w, h)
+        real(dp), intent(in) :: x, y, w, h
+        g_clip%on = .true.
+        g_clip%x = x
+        g_clip%y = y
+        g_clip%w = w
+        g_clip%h = h
+    end subroutine set_clip
+
+    subroutine clear_clip()
+        g_clip%on = .false.
+    end subroutine clear_clip
+
+    ! Stroke-only paint.
+    function pen(color, lw, alpha, ls) result(p)
+        character(len=*), intent(in) :: color
+        real(dp), intent(in) :: lw
+        real(dp), intent(in), optional :: alpha
+        integer, intent(in), optional :: ls
+        type(paint_t) :: p
+        p%filled = .false.
+        p%stroked = .true.
+        p%stroke_rgb = hex_rgb(color)
+        p%line_width = lw
+        if (present(alpha)) p%stroke_alpha = alpha
+        if (present(ls)) call set_dash(p, ls)
+        p%clip = g_clip
+    end function pen
+
+    ! Fill-only paint.
+    function brush(color, alpha) result(p)
+        character(len=*), intent(in) :: color
+        real(dp), intent(in), optional :: alpha
+        type(paint_t) :: p
+        p%filled = .true.
+        p%stroked = .false.
+        p%fill_rgb = hex_rgb(color)
+        if (present(alpha)) p%fill_alpha = alpha
+        p%clip = g_clip
+    end function brush
+
+    ! matplotlib's dash patterns, in points, for its four line styles.
+    subroutine set_dash(p, ls)
+        type(paint_t), intent(inout) :: p
         integer, intent(in) :: ls
         select case (ls)
         case (LINE_DASHED)
-            call builder_append(b, ' stroke-dasharray="5.55,2.4"')
+            p%n_dash = 2
+            p%dash(1:2) = [5.55_dp, 2.4_dp]
         case (LINE_DOTTED)
-            call builder_append(b, ' stroke-dasharray="1.5,2.475"')
+            p%n_dash = 2
+            p%dash(1:2) = [1.5_dp, 2.475_dp]
         case (LINE_DASHDOT)
-            call builder_append(b, ' stroke-dasharray="9.9,2.4,1.5,2.4"')
+            p%n_dash = 4
+            p%dash(1:4) = [9.9_dp, 2.4_dp, 1.5_dp, 2.4_dp]
         end select
-    end subroutine append_dash
+    end subroutine set_dash
 
-    ! Emit a stroked open path through the given points, e.g. an "x" or "+".
-    ! matplotlib writes stroke-opacity/fill-opacity per element rather than a
-    ! group opacity; emitting nothing at alpha == 1 keeps the common case terse.
-    subroutine append_opacity(b, attr, alpha)
-        type(svg_builder), intent(inout) :: b
-        character(len=*), intent(in) :: attr
-        real(dp), intent(in) :: alpha
-        if (alpha >= 1.0_dp) return
-        call builder_append(b, '" ')
-        call builder_append(b, attr)
-        call builder_append(b, '="')
-        call append_num(b, alpha)
-    end subroutine append_opacity
+    ! Verbs for an open polyline through np points.
+    pure function line_verbs(np) result(v)
+        integer, intent(in) :: np
+        integer :: v(np), i
+        v(1) = VERB_MOVE
+        do i = 2, np
+            v(i) = VERB_LINE
+        end do
+    end function line_verbs
 
     subroutine append_stroke_path(b, px, py, np, color, lw, alpha)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: px(:), py(:)
         integer, intent(in) :: np
         character(len=*), intent(in) :: color
         real(dp), intent(in) :: lw, alpha
-        integer :: i
-        call builder_append(b, '<path d="')
-        do i = 1, np
-            if (i == 1) then
-                call builder_append(b, "M ")
-            else
-                call builder_append(b, " L ")
-            end if
-            call append_num(b, px(i))
-            call builder_append(b, " ")
-            call append_num(b, py(i))
-        end do
-        call builder_append(b, '" stroke="')
-        call builder_append(b, color)
-        call builder_append(b, '" stroke-width="')
-        call append_num(b, lw)
-        call append_opacity(b, "stroke-opacity", alpha)
-        call builder_append(b, '" fill="none"/>')
-        call builder_append(b, new_line("a"))
+        if (np < 2) return
+        call b%draw_path(px(1:np), py(1:np), line_verbs(np), np, &
+                         pen(color, lw, alpha))
     end subroutine append_stroke_path
 
-    ! Emit a filled closed polygon, used by the shaped markers and by
-    ! fill_between.
+    ! A filled closed polygon, used by the shaped markers and by fill_between.
     subroutine append_polygon(b, px, py, np, color, alpha, seal)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: px(:), py(:)
         integer, intent(in) :: np
         character(len=*), intent(in) :: color
         real(dp), intent(in) :: alpha
         logical, intent(in), optional :: seal
-        integer :: i
-        call builder_append(b, '<polygon points="')
-        do i = 1, np
-            if (i > 1) call builder_append(b, " ")
-            call append_num(b, px(i))
-            call builder_append(b, ",")
-            call append_num(b, py(i))
-        end do
-        call builder_append(b, '" fill="')
-        call builder_append(b, color)
-        call append_opacity(b, "fill-opacity", alpha)
+        type(paint_t) :: p
+        integer :: v(np + 1)
+
+        if (np < 2) return
+        v(1:np) = line_verbs(np)
+        v(np + 1) = VERB_CLOSE
+        p = brush(color, alpha)
         ! Abutting polygons leave a hairline of background showing through
         ! where the renderer antialiases both edges, so seal the seam by
         ! stroking the outline in the fill color.
         if (present(seal)) then
             if (seal) then
-                call builder_append(b, '" stroke="')
-                call builder_append(b, color)
-                call builder_append(b, '" stroke-width="0.5')
+                p%stroked = .true.
+                p%stroke_rgb = p%fill_rgb
+                p%stroke_alpha = alpha
+                p%line_width = 0.5_dp
             end if
         end if
-        call builder_append(b, '"/>')
-        call builder_append(b, new_line("a"))
+        call b%draw_path(px(1:np), py(1:np), v, np + 1, p)
     end subroutine append_polygon
 
-    ! Draw one marker of kind mk centred at (cx, cy), sized like a matplotlib
-    ! marker of markersize ms.
-    subroutine append_marker(b, mk, cx, cy, ms, color, alpha)
-        type(svg_builder), intent(inout) :: b
+    ! The outline of one marker, described about the origin, together with
+    ! how it should be painted. Handing the renderer a shape plus a list of
+    ! positions lets every backend name the outline once and then reference
+    ! it: an SVG <use>, a PDF form XObject, a cached sprite in PNG.
+    subroutine marker_shape(mk, ms, mx, my, mv, nv, np, do_fill, do_stroke, lw)
         integer, intent(in) :: mk
-        real(dp), intent(in) :: cx, cy, ms
-        character(len=*), intent(in) :: color
-        real(dp), intent(in) :: alpha
-        real(dp) :: r, xs(11), ys(11)
+        real(dp), intent(in) :: ms
+        real(dp), intent(out) :: mx(:), my(:)
+        integer, intent(out) :: mv(:), nv, np
+        logical, intent(out) :: do_fill, do_stroke
+        real(dp), intent(out) :: lw
+        real(dp) :: r, k, ang
         integer :: i
-        real(dp) :: ang
+
+        do_fill = .true.
+        do_stroke = .false.
+        lw = 1.0_dp
+        nv = 0
+        np = 0
 
         select case (mk)
         case (MARKER_CIRCLE, MARKER_POINT)
             if (mk == MARKER_POINT) then
-                r = 0.5_dp * ms * 0.35_dp
+                r = 0.5_dp*ms*0.35_dp
             else
-                r = 0.5_dp * ms * 0.75_dp
+                r = 0.5_dp*ms*0.75_dp
+                do_stroke = .true.
             end if
-            call builder_append(b, '<circle cx="')
-            call append_num(b, cx)
-            call builder_append(b, '" cy="')
-            call append_num(b, cy)
-            call builder_append(b, '" r="')
-            call append_num(b, r)
-            call builder_append(b, '" fill="')
-            call builder_append(b, color)
-            call append_opacity(b, "fill-opacity", alpha)
-            if (mk == MARKER_CIRCLE) then
-                call builder_append(b, '" stroke="')
-                call builder_append(b, color)
-                call builder_append(b, '" stroke-width="1')
-                call append_opacity(b, "stroke-opacity", alpha)
-                call builder_append(b, '"/>')
-            else
-                call builder_append(b, '"/>')
-            end if
-            call builder_append(b, new_line("a"))
+            ! Four cubics with the standard offset match a circle to about a
+            ! part in ten thousand, which is far below a pixel here.
+            k = r*0.5522847498307933_dp
+            mx(1) = r;  my(1) = 0.0_dp
+            mx(2) = r;  my(2) = k
+            mx(3) = k;  my(3) = r
+            mx(4) = 0.0_dp; my(4) = r
+            mx(5) = -k; my(5) = r
+            mx(6) = -r; my(6) = k
+            mx(7) = -r; my(7) = 0.0_dp
+            mx(8) = -r; my(8) = -k
+            mx(9) = -k; my(9) = -r
+            mx(10) = 0.0_dp; my(10) = -r
+            mx(11) = k; my(11) = -r
+            mx(12) = r; my(12) = -k
+            mx(13) = r; my(13) = 0.0_dp
+            np = 13
+            mv(1:6) = [VERB_MOVE, VERB_CUBIC, VERB_CUBIC, VERB_CUBIC, &
+                       VERB_CUBIC, VERB_CLOSE]
+            nv = 6
         case (MARKER_X)
-            r = 0.5_dp * ms * 0.7_dp
-            call append_stroke_path(b, [cx - r, cx + r], [cy - r, cy + r], 2, color, 1.5_dp, alpha)
-            call append_stroke_path(b, [cx - r, cx + r], [cy + r, cy - r], 2, color, 1.5_dp, alpha)
+            r = 0.5_dp*ms*0.7_dp
+            mx(1:4) = [-r, r, -r, r]
+            my(1:4) = [-r, r, r, -r]
+            mv(1:4) = [VERB_MOVE, VERB_LINE, VERB_MOVE, VERB_LINE]
+            np = 4
+            nv = 4
+            do_fill = .false.
+            do_stroke = .true.
+            lw = 1.5_dp
         case (MARKER_PLUS)
-            r = 0.5_dp * ms * 0.75_dp
-            call append_stroke_path(b, [cx - r, cx + r], [cy, cy], 2, color, 1.5_dp, alpha)
-            call append_stroke_path(b, [cx, cx], [cy - r, cy + r], 2, color, 1.5_dp, alpha)
+            r = 0.5_dp*ms*0.75_dp
+            mx(1:4) = [-r, r, 0.0_dp, 0.0_dp]
+            my(1:4) = [0.0_dp, 0.0_dp, -r, r]
+            mv(1:4) = [VERB_MOVE, VERB_LINE, VERB_MOVE, VERB_LINE]
+            np = 4
+            nv = 4
+            do_fill = .false.
+            do_stroke = .true.
+            lw = 1.5_dp
         case (MARKER_SQUARE)
-            r = 0.5_dp * ms * 0.75_dp
-            call append_polygon(b, [cx - r, cx + r, cx + r, cx - r], &
-                                [cy - r, cy - r, cy + r, cy + r], 4, color, alpha)
+            r = 0.5_dp*ms*0.75_dp
+            mx(1:4) = [-r, r, r, -r]
+            my(1:4) = [-r, -r, r, r]
+            np = 4
         case (MARKER_DIAMOND)
-            r = 0.5_dp * ms * 0.75_dp
-            call append_polygon(b, [cx, cx + r, cx, cx - r], &
-                                [cy - r, cy, cy + r, cy], 4, color, alpha)
+            r = 0.5_dp*ms*0.75_dp
+            mx(1:4) = [0.0_dp, r, 0.0_dp, -r]
+            my(1:4) = [-r, 0.0_dp, r, 0.0_dp]
+            np = 4
         case (MARKER_TRI_UP)
-            r = 0.5_dp * ms * 0.85_dp
-            call append_polygon(b, [cx, cx + r, cx - r], &
-                                [cy - r, cy + r, cy + r], 3, color, alpha)
+            r = 0.5_dp*ms*0.85_dp
+            mx(1:3) = [0.0_dp, r, -r]
+            my(1:3) = [-r, r, r]
+            np = 3
         case (MARKER_TRI_DOWN)
-            r = 0.5_dp * ms * 0.85_dp
-            call append_polygon(b, [cx, cx + r, cx - r], &
-                                [cy + r, cy - r, cy - r], 3, color, alpha)
+            r = 0.5_dp*ms*0.85_dp
+            mx(1:3) = [0.0_dp, r, -r]
+            my(1:3) = [r, -r, -r]
+            np = 3
         case (MARKER_TRI_LEFT)
-            r = 0.5_dp * ms * 0.85_dp
-            call append_polygon(b, [cx - r, cx + r, cx + r], &
-                                [cy, cy - r, cy + r], 3, color, alpha)
+            r = 0.5_dp*ms*0.85_dp
+            mx(1:3) = [-r, r, r]
+            my(1:3) = [0.0_dp, -r, r]
+            np = 3
         case (MARKER_TRI_RIGHT)
-            r = 0.5_dp * ms * 0.85_dp
-            call append_polygon(b, [cx + r, cx - r, cx - r], &
-                                [cy, cy - r, cy + r], 3, color, alpha)
+            r = 0.5_dp*ms*0.85_dp
+            mx(1:3) = [r, -r, -r]
+            my(1:3) = [0.0_dp, -r, r]
+            np = 3
         case (MARKER_STAR)
             ! Five-pointed star: alternate outer and inner vertices.
-            r = 0.5_dp * ms * 0.95_dp
+            r = 0.5_dp*ms*0.95_dp
             do i = 1, 10
-                ang = -0.5_dp * PI + real(i - 1, dp) * PI / 5.0_dp
+                ang = -0.5_dp*PI + real(i - 1, dp)*PI/5.0_dp
                 if (mod(i, 2) == 1) then
-                    xs(i) = cx + r * cos(ang)
-                    ys(i) = cy + r * sin(ang)
+                    mx(i) = r*cos(ang)
+                    my(i) = r*sin(ang)
                 else
-                    xs(i) = cx + 0.4_dp * r * cos(ang)
-                    ys(i) = cy + 0.4_dp * r * sin(ang)
+                    mx(i) = 0.4_dp*r*cos(ang)
+                    my(i) = 0.4_dp*r*sin(ang)
                 end if
             end do
-            call append_polygon(b, xs, ys, 10, color, alpha)
+            np = 10
         end select
+
+        ! The polygonal markers all share one closed outline.
+        if (nv == 0 .and. np > 0) then
+            mv(1:np) = line_verbs(np)
+            mv(np + 1) = VERB_CLOSE
+            nv = np + 1
+        end if
+    end subroutine marker_shape
+
+    ! Draw the same marker at every point of x/y.
+    subroutine append_markers(b, mk, x, y, n, ms, color, alpha)
+        class(renderer_t), intent(inout) :: b
+        integer, intent(in) :: mk, n
+        real(dp), intent(in) :: x(:), y(:), ms, alpha
+        character(len=*), intent(in) :: color
+        real(dp) :: mx(16), my(16), lw
+        integer :: mv(16), nv, np
+        logical :: do_fill, do_stroke
+        type(paint_t) :: p
+
+        if (mk == MARKER_NONE .or. n <= 0) return
+        call marker_shape(mk, ms, mx, my, mv, nv, np, do_fill, do_stroke, lw)
+        if (nv <= 0) return
+
+        p%filled = do_fill
+        p%stroked = do_stroke
+        p%fill_rgb = hex_rgb(color)
+        p%stroke_rgb = p%fill_rgb
+        p%fill_alpha = alpha
+        p%stroke_alpha = alpha
+        p%line_width = lw
+        p%clip = g_clip
+        call b%draw_markers(x(1:n), y(1:n), mx(1:np), my(1:np), mv(1:nv), nv, p)
+    end subroutine append_markers
+
+    ! One marker, for the legend key and anywhere else a single point is
+    ! drawn on its own.
+    subroutine append_marker(b, mk, cx, cy, ms, color, alpha)
+        class(renderer_t), intent(inout) :: b
+        integer, intent(in) :: mk
+        real(dp), intent(in) :: cx, cy, ms
+        character(len=*), intent(in) :: color
+        real(dp), intent(in) :: alpha
+        call append_markers(b, mk, [cx], [cy], 1, ms, color, alpha)
     end subroutine append_marker
 
     ! Text element. anchor is a matplotlib horizontal alignment
-    ! (left/center/right) or an SVG anchor (start/middle/end).
-    subroutine append_text(b, x, y, s, anchor, fontsize, color, transform)
-        type(svg_builder), intent(inout) :: b
+    ! (left/center/right) or an SVG anchor (start/middle/end). rot is a
+    ! matplotlib rotation, counterclockwise in degrees.
+    subroutine append_text(b, x, y, s, anchor, fontsize, color, rot)
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x, y, fontsize
         character(len=*), intent(in) :: s, anchor, color
-        character(len=*), intent(in), optional :: transform
+        real(dp), intent(in), optional :: rot
+        type(font_t) :: f
+        integer :: an
+        real(dp) :: ang
 
-        call builder_append(b, '<text x="')
-        call append_num(b, x)
-        call builder_append(b, '" y="')
-        call append_num(b, y)
-        call builder_append(b, '" text-anchor="')
         select case (anchor)
-        case ("left", "start"); call builder_append(b, "start")
-        case ("right", "end"); call builder_append(b, "end")
-        case default; call builder_append(b, "middle")
+        case ("left", "start"); an = ANCHOR_START
+        case ("right", "end"); an = ANCHOR_END
+        case default; an = ANCHOR_MIDDLE
         end select
-        call builder_append(b, '" font-family="DejaVu Sans, sans-serif" font-size="')
-        call append_num(b, fontsize)
-        call builder_append(b, '" fill="')
-        call builder_append(b, color)
-        if (present(transform)) then
-            call builder_append(b, '" transform="')
-            call builder_append(b, transform)
-        end if
-        call builder_append(b, '">')
-        call builder_append(b, s)
-        call builder_append(b, "</text>")
-        call builder_append(b, new_line("a"))
+        f%size = fontsize
+        ang = 0.0_dp
+        ! The API turns angles clockwise, matplotlib counterclockwise.
+        if (present(rot)) ang = -rot
+        call b%draw_text(x, y, s, f, brush(color), an, BASE_ALPHABETIC, ang)
     end subroutine append_text
 
     ! Straight line segment in pixel coordinates.
     subroutine append_line(b, x1, y1, x2, y2, color, lw, ls, alpha)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x1, y1, x2, y2, lw
         character(len=*), intent(in) :: color
         integer, intent(in) :: ls
         real(dp), intent(in) :: alpha
         if (ls == LINE_NONE) return
-        call builder_append(b, '<line x1="')
-        call append_num(b, x1)
-        call builder_append(b, '" y1="')
-        call append_num(b, y1)
-        call builder_append(b, '" x2="')
-        call append_num(b, x2)
-        call builder_append(b, '" y2="')
-        call append_num(b, y2)
-        call builder_append(b, '" stroke="')
-        call builder_append(b, color)
-        call builder_append(b, '" stroke-width="')
-        call append_num(b, lw)
-        call append_opacity(b, "stroke-opacity", alpha)
-        call builder_append(b, '"')
-        call append_dash(b, ls)
-        call builder_append(b, "/>")
-        call builder_append(b, new_line("a"))
+        call b%draw_path([x1, x2], [y1, y2], [VERB_MOVE, VERB_LINE], 2, &
+                         pen(color, lw, alpha, ls))
     end subroutine append_line
+
+    ! An axis aligned filled rectangle, optionally outlined.
+    subroutine append_rect(b, x, y, w, h, color, alpha, edge, elw)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: x, y, w, h
+        character(len=*), intent(in) :: color
+        real(dp), intent(in), optional :: alpha
+        character(len=*), intent(in), optional :: edge
+        real(dp), intent(in), optional :: elw
+        type(paint_t) :: p
+
+        p%clip = g_clip
+        if (len_trim(color) > 0) then
+            p%filled = .true.
+            p%fill_rgb = hex_rgb(color)
+            if (present(alpha)) p%fill_alpha = alpha
+        end if
+        if (present(edge)) then
+            p%stroked = .true.
+            p%stroke_rgb = hex_rgb(edge)
+            p%line_width = 1.0_dp
+            if (present(elw)) p%line_width = elw
+        end if
+        call b%draw_rect(x, y, w, h, p)
+    end subroutine append_rect
 
     ! One bar of a bar/hist series, drawn from the y = 0 baseline.
     subroutine append_bar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
         integer, intent(in) :: j
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
@@ -2460,24 +2569,13 @@ contains
             yb = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         end if
 
-        call builder_append(b, '<rect x="')
-        call append_num(b, min(xa, xb))
-        call builder_append(b, '" y="')
-        call append_num(b, min(ya, yb))
-        call builder_append(b, '" width="')
-        call append_num(b, abs(xb - xa))
-        call builder_append(b, '" height="')
-        call append_num(b, abs(yb - ya))
-        call builder_append(b, '" fill="')
-        call builder_append(b, trim(s%color))
-        call append_opacity(b, "fill-opacity", s%alpha)
-        call builder_append(b, '" stroke="#ffffff" stroke-width="0.5"/>')
-        call builder_append(b, new_line("a"))
+        call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
+                         abs(yb - ya), trim(s%color), s%alpha, "#ffffff", 0.5_dp)
     end subroutine append_bar
 
     ! Shaded region between y and y2, as a single closed polygon.
     subroutine append_fill(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
@@ -2500,7 +2598,7 @@ contains
 
     ! Vertical error bar with caps for point j.
     subroutine append_errorbar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
         integer, intent(in) :: j
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
@@ -2583,7 +2681,7 @@ contains
     ! Box, median, whiskers at 1.5 IQR clipped to the data, and the outliers
     ! beyond them as open circles.
     subroutine append_box(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
@@ -2639,25 +2737,16 @@ contains
     end subroutine append_box
 
     subroutine append_open_circle(b, cx, cy, r, color)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: cx, cy, r
         character(len=*), intent(in) :: color
-        call builder_append(b, '<circle cx="')
-        call append_num(b, cx)
-        call builder_append(b, '" cy="')
-        call append_num(b, cy)
-        call builder_append(b, '" r="')
-        call append_num(b, r)
-        call builder_append(b, '" fill="none" stroke="')
-        call builder_append(b, color)
-        call builder_append(b, '" stroke-width="1"/>')
-        call builder_append(b, new_line("a"))
+        call b%draw_circle(cx, cy, r, pen(color, 1.0_dp))
     end subroutine append_open_circle
 
     ! Mirrored Gaussian kernel density estimate, plus the min/max/range bars
     ! matplotlib draws over it.
     subroutine append_violin(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
@@ -2715,7 +2804,7 @@ contains
 
     ! One <path> per wedge: a radius out, the arc, and back to the centre.
     subroutine append_pie(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         integer :: i
@@ -2730,41 +2819,67 @@ contains
         do i = 1, s%n
             a0 = a1
             a1 = a0 + 2.0_dp * PI * s%y(i) / tot
-            call builder_append(b, '<path d="M ')
-            call append_num(b, cx)
-            call builder_append(b, " ")
-            call append_num(b, cy)
-            call builder_append(b, " L ")
-            call append_wedge_point(b, a0, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
-            call builder_append(b, " A ")
-            call append_num(b, 0.5_dp * ax_w / (xmax - xmin) * 2.0_dp)
-            call builder_append(b, " ")
-            call append_num(b, 0.5_dp * ax_h / (ymax - ymin) * 2.0_dp)
-            call builder_append(b, " 0 ")
-            ! The large-arc flag turns on past half a turn; the sweep flag is
-            ! 0 because SVG y grows downwards, inverting the sense of rotation.
-            call builder_append(b, merge("1", "0", a1 - a0 > PI))
-            call builder_append(b, " 0 ")
-            call append_wedge_point(b, a1, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
-            call builder_append(b, ' Z" fill="')
-            call builder_append(b, trim(s%pcolor(i)))
-            call append_opacity(b, "fill-opacity", s%alpha)
-            call builder_append(b, '" stroke="#ffffff" stroke-width="1"/>')
-            call builder_append(b, new_line("a"))
+            call append_wedge(b, cx, cy, ax_w/(xmax - xmin), ax_h/(ymax - ymin), &
+                              a0, a1, trim(s%pcolor(i)), s%alpha)
         end do
     end subroutine append_pie
 
-    subroutine append_wedge_point(b, ang, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
-        type(svg_builder), intent(inout) :: b
-        real(dp), intent(in) :: ang, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
-        call append_num(b, map_x(cos(ang), xmin, xmax, ax_l, ax_w, linear_scale))
-        call builder_append(b, " ")
-        call append_num(b, map_y(sin(ang), ymin, ymax, ax_b, ax_h, linear_scale))
-    end subroutine append_wedge_point
+    ! One wedge: out along a radius, round the rim, back to the centre.
+    !
+    ! The rim is emitted as cubics rather than as an SVG arc. Only SVG has an
+    ! arc primitive, so flattening here is what lets the same wedge reach a
+    ! PDF or a rasterizer unchanged. Splitting at 90 degrees keeps the error
+    ! of the standard cubic approximation far below a pixel.
+    subroutine append_wedge(b, cx, cy, rx, ry, a0, a1, color, alpha)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: cx, cy, rx, ry, a0, a1, alpha
+        character(len=*), intent(in) :: color
+        integer, parameter :: MAXSEG = 8
+        real(dp) :: px(2 + 3*MAXSEG), py(2 + 3*MAXSEG)
+        integer :: verbs(3 + MAXSEG), np, nv, nseg, i
+        real(dp) :: t0, t1, dt, al
+        type(paint_t) :: p
+
+        nseg = max(1, min(MAXSEG, int(abs(a1 - a0)/(0.5_dp*PI)) + 1))
+        dt = (a1 - a0)/real(nseg, dp)
+        ! y grows downwards on the canvas, so the sine term is subtracted.
+        px(1) = cx
+        py(1) = cy
+        px(2) = cx + rx*cos(a0)
+        py(2) = cy - ry*sin(a0)
+        np = 2
+        verbs(1) = VERB_MOVE
+        verbs(2) = VERB_LINE
+        nv = 2
+
+        al = 4.0_dp/3.0_dp*tan(0.25_dp*dt)
+        do i = 1, nseg
+            t0 = a0 + real(i - 1, dp)*dt
+            t1 = t0 + dt
+            ! Control points ride the tangents at each end of the segment.
+            px(np + 1) = cx + rx*cos(t0) + al*(-rx*sin(t0))
+            py(np + 1) = cy - ry*sin(t0) + al*(-ry*cos(t0))
+            px(np + 2) = cx + rx*cos(t1) - al*(-rx*sin(t1))
+            py(np + 2) = cy - ry*sin(t1) - al*(-ry*cos(t1))
+            px(np + 3) = cx + rx*cos(t1)
+            py(np + 3) = cy - ry*sin(t1)
+            np = np + 3
+            nv = nv + 1
+            verbs(nv) = VERB_CUBIC
+        end do
+        nv = nv + 1
+        verbs(nv) = VERB_CLOSE
+
+        p = brush(color, alpha)
+        p%stroked = .true.
+        p%stroke_rgb = hex_rgb("#ffffff")
+        p%line_width = 1.0_dp
+        call b%draw_path(px(1:np), py(1:np), verbs(1:nv), nv, p)
+    end subroutine append_wedge
 
     ! Walk every cell as two triangles, emitting filled bands or level lines.
     subroutine append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(axes_t), intent(in) :: a
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
@@ -2844,7 +2959,7 @@ contains
     ! embedding an encoded image, and nearest-neighbour cells are what
     ! matplotlib's default interpolation looks like at these sizes anyway.
     subroutine append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(axes_t), intent(in) :: a
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
@@ -2877,27 +2992,17 @@ contains
     ! Cells are grown by a hairline so that neighbours overlap; without it the
     ! renderer leaves visible seams between abutting rectangles.
     subroutine append_cell(b, x, y, w, h, color)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x, y, w, h
         character(len=*), intent(in) :: color
         real(dp), parameter :: BLEED = 0.05_dp
-        call builder_append(b, '<rect x="')
-        call append_num(b, x - BLEED)
-        call builder_append(b, '" y="')
-        call append_num(b, y - BLEED)
-        call builder_append(b, '" width="')
-        call append_num(b, w + 2.0_dp * BLEED)
-        call builder_append(b, '" height="')
-        call append_num(b, h + 2.0_dp * BLEED)
-        call builder_append(b, '" fill="')
-        call builder_append(b, color)
-        call builder_append(b, '"/>')
-        call builder_append(b, new_line("a"))
+        call append_rect(b, x - BLEED, y - BLEED, w + 2.0_dp*BLEED, &
+                         h + 2.0_dp*BLEED, color)
     end subroutine append_cell
 
     ! Vertical gradient strip plus its own frame, ticks and labels.
     subroutine append_colorbar(b, a, idx, W, H)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(axes_t), intent(in) :: a
         integer, intent(in) :: idx
         real(dp), intent(in) :: W, H
@@ -2918,36 +3023,18 @@ contains
         bb = (1.0_dp - a%bottom) * H
         bh = bb - bt
 
-        call builder_append(b, '<defs><clipPath id="axclip')
-        call builder_append(b, int_to_str(idx))
-        call builder_append(b, 'cb"><rect x="')
-        call append_num(b, bx)
-        call builder_append(b, '" y="')
-        call append_num(b, bt)
-        call builder_append(b, '" width="')
-        call append_num(b, bw)
-        call builder_append(b, '" height="')
-        call append_num(b, bh)
-        call builder_append(b, '"/></clipPath></defs>')
-        call builder_append(b, new_line("a"))
-
+        ! Slices are grown slightly so they abut without seams, so keep them
+        ! inside the bar.
+        call set_clip(bx, bt, bw, bh)
         do i = 1, CBAR_SLICES
             y1 = bb - real(i - 1, dp) * bh / real(CBAR_SLICES, dp)
             y0 = bb - real(i, dp) * bh / real(CBAR_SLICES, dp)
             t = (real(i, dp) - 0.5_dp) / real(CBAR_SLICES, dp)
             call append_cell(b, bx, y0, bw, y1 - y0, cmap_color(a%img_cmap, t))
         end do
+        call clear_clip()
 
-        call builder_append(b, '<rect x="')
-        call append_num(b, bx)
-        call builder_append(b, '" y="')
-        call append_num(b, bt)
-        call builder_append(b, '" width="')
-        call append_num(b, bw)
-        call builder_append(b, '" height="')
-        call append_num(b, bh)
-        call builder_append(b, '" fill="none" stroke="#000000" stroke-width="0.8"/>')
-        call builder_append(b, new_line("a"))
+        call b%draw_rect(bx, bt, bw, bh, pen("#000000", 0.8_dp))
 
         lo = a%img_vmin
         hi = a%img_vmax
@@ -2963,11 +3050,8 @@ contains
         end do
 
         if (len_trim(a%cbar_label) > 0) then
-            call xml_escape_to(a%cbar_label, esc, ln)
-            call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), esc(1:ln), &
-                             "center", a%ylabel_size, "#000000", &
-                             "rotate(-90 " // trim(fmt_pt(bx + bw + 34.0_dp)) // " " // &
-                             trim(fmt_pt(0.5_dp * (bt + bb))) // ")")
+            call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), trim(a%cbar_label), &
+                             "center", a%ylabel_size, "#000000", 90.0_dp)
         end if
     end subroutine append_colorbar
 
@@ -3058,22 +3142,13 @@ contains
     end subroutine legend_origin
 
     subroutine append_tick(b, x1, y1, x2, y2)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x1, y1, x2, y2
-        call builder_append(b, '<line x1="')
-        call append_num(b, x1)
-        call builder_append(b, '" y1="')
-        call append_num(b, y1)
-        call builder_append(b, '" x2="')
-        call append_num(b, x2)
-        call builder_append(b, '" y2="')
-        call append_num(b, y2)
-        call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
-        call builder_append(b, new_line("a"))
+        call append_line(b, x1, y1, x2, y2, "#000000", 0.8_dp, LINE_SOLID, 1.0_dp)
     end subroutine append_tick
 
     subroutine append_spine(b, x1, y1, x2, y2)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x1, y1, x2, y2
         call append_line(b, x1, y1, x2, y2, "#000000", 0.8_dp, LINE_SOLID, 1.0_dp)
     end subroutine append_spine
@@ -3081,7 +3156,7 @@ contains
     ! A tick at (x, y) on a spine whose outward normal is (ox, oy). dir 1
     ! puts it outside the axes, -1 inside, 0 straddling the spine.
     subroutine append_tick_at(b, x, y, ox, oy, dir, length)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x, y, ox, oy, dir, length
         real(dp) :: a, c
         if (dir > 0.0_dp) then
@@ -3097,25 +3172,12 @@ contains
         call append_tick(b, x + ox * a, y + oy * a, x + ox * c, y + oy * c)
     end subroutine append_tick_at
 
-    ! A tick label, rotated about its anchor when asked. SVG rotates
-    ! clockwise and matplotlib counter-clockwise, hence the sign.
+    ! A tick label, rotated about its anchor when asked.
     subroutine append_tick_text(b, x, y, s, anchor, fontsize, rot)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x, y, fontsize, rot
         character(len=*), intent(in) :: s, anchor
-        character(len=96) :: tr
-        character(len=32) :: n1, n2, n3
-        integer :: k1, k2, k3
-
-        if (rot == 0.0_dp) then
-            call append_text(b, x, y, s, anchor, fontsize, "#000000")
-            return
-        end if
-        call fmt_num(-rot, n1, k1)
-        call fmt_num(x, n2, k2)
-        call fmt_num(y, n3, k3)
-        tr = "rotate(" // n1(1:k1) // " " // n2(1:k2) // " " // n3(1:k3) // ")"
-        call append_text(b, x, y, s, anchor, fontsize, "#000000", trim(tr))
+        call append_text(b, x, y, s, anchor, fontsize, "#000000", rot)
     end subroutine append_tick_text
 
     subroutine tick_label(labeled, lab, i, v, sc, out, n)
@@ -3135,7 +3197,7 @@ contains
     end subroutine tick_label
 
     subroutine render_axes(b, a, idx, W, H, clear)
-        type(svg_builder), intent(inout) :: b
+        class(renderer_t), intent(inout) :: b
         type(axes_t), intent(in) :: a
         integer, intent(in) :: idx
         real(dp), intent(in) :: W, H
@@ -3157,6 +3219,8 @@ contains
         type(scale_t) :: xsc, ysc
         integer :: n_leg, k, max_lbl, n_col, n_row, lc, lr
         real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h, col_w, ttl_h, leg_x0
+        real(dp), allocatable :: lx(:), ly(:)
+        type(paint_t) :: pnt
 
         ax_l = a%left * W
         ax_r = a%right * W
@@ -3215,85 +3279,42 @@ contains
             nym = 0
         end if
 
-        ! clip path for this axes' data
-        call builder_append(b, '<defs><clipPath id="axclip')
-        call builder_append(b, int_to_str(idx))
-        call builder_append(b, '"><rect x="')
-        call append_num(b, ax_l)
-        call builder_append(b, '" y="')
-        call append_num(b, ax_t)
-        call builder_append(b, '" width="')
-        call append_num(b, ax_w)
-        call builder_append(b, '" height="')
-        call append_num(b, ax_h)
-        call builder_append(b, '"/></clipPath></defs>')
-        call builder_append(b, new_line("a"))
-
         ! axes face
         if (.not. clear .and. .not. a%patch_off) then
-            call builder_append(b, '<rect x="')
-            call append_num(b, ax_l)
-            call builder_append(b, '" y="')
-            call append_num(b, ax_t)
-            call builder_append(b, '" width="')
-            call append_num(b, ax_w)
-            call builder_append(b, '" height="')
-            call append_num(b, ax_h)
-            call builder_append(b, '" fill="#ffffff"/>')
-            call builder_append(b, new_line("a"))
+            call append_rect(b, ax_l, ax_t, ax_w, ax_h, "#ffffff")
         end if
 
         ! grid
         if (a%grid_on) then
             do i = 1, nxt
                 px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
-                call builder_append(b, '<line x1="')
-                call append_num(b, px)
-                call builder_append(b, '" y1="')
-                call append_num(b, ax_t)
-                call builder_append(b, '" x2="')
-                call append_num(b, px)
-                call builder_append(b, '" y2="')
-                call append_num(b, ax_b)
-                call builder_append(b, '" stroke="#b0b0b0" stroke-width="0.8"/>')
-                call builder_append(b, new_line("a"))
+                call append_line(b, px, ax_t, px, ax_b, "#b0b0b0", 0.8_dp, &
+                                 LINE_SOLID, 1.0_dp)
             end do
             do i = 1, nyt
                 py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
-                call builder_append(b, '<line x1="')
-                call append_num(b, ax_l)
-                call builder_append(b, '" y1="')
-                call append_num(b, py)
-                call builder_append(b, '" x2="')
-                call append_num(b, ax_r)
-                call builder_append(b, '" y2="')
-                call append_num(b, py)
-                call builder_append(b, '" stroke="#b0b0b0" stroke-width="0.8"/>')
-                call builder_append(b, new_line("a"))
+                call append_line(b, ax_l, py, ax_r, py, "#b0b0b0", 0.8_dp, &
+                                 LINE_SOLID, 1.0_dp)
             end do
         end if
 
         if (a%has_img .or. a%has_cont) then
-            call builder_append(b, '<g clip-path="url(#axclip')
-            call builder_append(b, int_to_str(idx))
-            call builder_append(b, ')">')
-            call builder_append(b, new_line("a"))
+            call set_clip(ax_l, ax_t, ax_w, ax_h)
             if (a%has_img) &
                 call append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
             if (a%has_cont) &
                 call append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
-            call builder_append(b, "</g>")
-            call builder_append(b, new_line("a"))
+            call clear_clip()
         end if
 
         ! data
-        call builder_append(b, '<g clip-path="url(#axclip')
-        call builder_append(b, int_to_str(idx))
-        call builder_append(b, ')">')
-        call builder_append(b, new_line("a"))
+        call set_clip(ax_l, ax_t, ax_w, ax_h)
         do i = 1, a%n_series
             n = a%series(i)%n
             if (n <= 0) cycle
+            if (allocated(lx)) deallocate (lx)
+            if (allocated(ly)) deallocate (ly)
+            allocate (lx(n), ly(n))
 
             select case (a%series(i)%kind)
             case (SERIES_BOX)
@@ -3361,42 +3382,41 @@ contains
                 end do
             end select
 
-            if (a%series(i)%linestyle /= LINE_NONE .and. n >= 2) then
-                call builder_append(b, '<polyline fill="none" stroke="')
-                call builder_append(b, trim(a%series(i)%color))
-                call builder_append(b, '" stroke-width="')
-                call append_num(b, a%series(i)%linewidth)
-                call append_opacity(b, "stroke-opacity", a%series(i)%alpha)
-                call builder_append(b, '" stroke-linejoin="round" stroke-linecap="butt"')
-                call append_dash(b, a%series(i)%linestyle)
-                call builder_append(b, ' points="')
-                nl = 0
-                do j = 1, n
-                    if (a%xsc%kind == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
-                    if (a%ysc%kind == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
-                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
-                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc)
-                    if (nl > 0) call builder_append(b, " ")
-                    call append_num(b, px)
-                    call builder_append(b, ",")
-                    call append_num(b, py)
-                    nl = nl + 1
-                end do
-                call builder_append(b, '"/>')
-                call builder_append(b, new_line("a"))
+            ! Points that fall off a log axis are dropped once, and both the
+            ! line and its markers then work from the same list.
+            nl = 0
+            do j = 1, n
+                if (a%xsc%kind == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
+                if (a%ysc%kind == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
+                nl = nl + 1
+                lx(nl) = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
+                ly(nl) = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            end do
+
+            if (a%series(i)%linestyle /= LINE_NONE .and. nl >= 2) then
+                pnt = pen(trim(a%series(i)%color), a%series(i)%linewidth, &
+                          a%series(i)%alpha, a%series(i)%linestyle)
+                pnt%join = JOIN_ROUND
+                pnt%cap = CAP_BUTT
+                call b%draw_path(lx(1:nl), ly(1:nl), line_verbs(nl), nl, pnt)
             end if
 
-            if (a%series(i)%marker /= MARKER_NONE) then
-                ms = a%series(i)%markersize
-                do j = 1, n
-                    if (a%xsc%kind == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
-                    if (a%ysc%kind == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
-                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
-                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc)
-                    if (allocated(a%series(i)%psize)) ms = a%series(i)%psize(j)
-                    call append_marker(b, a%series(i)%marker, px, py, ms, &
-                                       point_color(a%series(i), j), a%series(i)%alpha)
-                end do
+            if (a%series(i)%marker /= MARKER_NONE .and. nl > 0) then
+                if (allocated(a%series(i)%psize) .or. allocated(a%series(i)%pcolor)) then
+                    ! scatter gave every point its own size or color, so the
+                    ! shape cannot be shared between them.
+                    ms = a%series(i)%markersize
+                    do j = 1, nl
+                        if (allocated(a%series(i)%psize)) ms = a%series(i)%psize(j)
+                        call append_marker(b, a%series(i)%marker, lx(j), ly(j), ms, &
+                                           point_color(a%series(i), j), &
+                                           a%series(i)%alpha)
+                    end do
+                else
+                    call append_markers(b, a%series(i)%marker, lx, ly, nl, &
+                                        a%series(i)%markersize, &
+                                        trim(a%series(i)%color), a%series(i)%alpha)
+                end if
             end if
         end do
         ! annotations, in data coordinates
@@ -3409,29 +3429,18 @@ contains
                                  map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ysc), &
                                  trim(a%texts(i)%color), 1.0_dp, LINE_SOLID, 1.0_dp)
             end if
-            call xml_escape_to(a%texts(i)%s, esc, en)
-            call append_text(b, px, py + 3.5_dp, esc(1:en), &
+            call append_text(b, px, py + 3.5_dp, trim(a%texts(i)%s), &
                              trim(a%texts(i)%ha), a%texts(i)%fontsize, &
                              trim(a%texts(i)%color))
         end do
 
-        call builder_append(b, "</g>")
-        call builder_append(b, new_line("a"))
+        call clear_clip()
 
         ! spines. All four still go out as one <rect>, so a plot that leaves
         ! them alone renders exactly as it did before they could be hidden.
         if (.not. a%frame_off) then
             if (all(a%spine)) then
-                call builder_append(b, '<rect x="')
-                call append_num(b, ax_l)
-                call builder_append(b, '" y="')
-                call append_num(b, ax_t)
-                call builder_append(b, '" width="')
-                call append_num(b, ax_w)
-                call builder_append(b, '" height="')
-                call append_num(b, ax_h)
-                call builder_append(b, '" fill="none" stroke="#000000" stroke-width="0.8"/>')
-                call builder_append(b, new_line("a"))
+                call b%draw_rect(ax_l, ax_t, ax_w, ax_h, pen("#000000", 0.8_dp))
             else
                 if (a%spine(SPINE_LEFT)) call append_spine(b, ax_l, ax_t, ax_l, ax_b)
                 if (a%spine(SPINE_RIGHT)) call append_spine(b, ax_r, ax_t, ax_r, ax_b)
@@ -3491,36 +3500,29 @@ contains
         end do
 
         if (len_trim(a%xlabel) > 0) then
-            call xml_escape_to(a%xlabel, esc, en)
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_b + xtick_gap(a) + 0.24_dp * a%xtick_size + 1.84_dp &
-                             + 0.76_dp * a%xlabel_size, esc(1:en), &
+                             + 0.76_dp * a%xlabel_size, trim(a%xlabel), &
                              "center", a%xlabel_size, "#000000")
         end if
 
         if (len_trim(a%ylabel) > 0) then
-            call xml_escape_to(a%ylabel, esc, en)
             ! The right-hand label of a twinx faces the other way, so that it
             ! reads from outside the axes just as the left-hand one does.
             mid = y_edge + y_out * (34.0_dp + 0.76_dp * (a%ylabel_size - LABEL_FONT) &
                                     + 1.15_dp * (a%ytick_size - TICK_FONT))
-            call fmt_num(mid, tx, tn)
-            call fmt_num(0.5_dp * (ax_t + ax_b), ty, tyn)
-            call append_text(b, mid, 0.5_dp * (ax_t + ax_b), esc(1:en), &
+            call append_text(b, mid, 0.5_dp*(ax_t + ax_b), trim(a%ylabel), &
                              "center", a%ylabel_size, "#000000", &
-                             "rotate(" // merge("90 ", "-90", a%y_right) // " " // &
-                             tx(1:tn) // " " // ty(1:tyn) // ")")
+                             merge(-90.0_dp, 90.0_dp, a%y_right))
         end if
 
         ! title
         if (len_trim(a%title) > 0) then
-            call xml_escape_to(a%title, esc, en)
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
-                             ax_t - 0.5_dp * a%title_size, esc(1:en), &
+                             ax_t - 0.5_dp * a%title_size, trim(a%title), &
                              "center", a%title_size, "#000000")
         end if
 
-        if (a%cbar_on) call append_colorbar(b, a, idx, W, H)
 
         ! legend
         if (a%legend_on) then
@@ -3554,22 +3556,17 @@ contains
                                        leg_w, leg_h, leg_x, leg_y)
                 end if
                 if (len_trim(a%legend_title) > 0) then
-                    call xml_escape_to(a%legend_title, esc, en)
                     call append_text(b, leg_x + 0.5_dp * leg_w, &
                                      leg_y + 4.0_dp + 0.5_dp * row_h + 3.5_dp, &
-                                     esc(1:en), "center", a%legend_size, "#000000")
+                                     trim(a%legend_title), "center", &
+                                     a%legend_size, "#000000")
                 end if
                 if (a%legend_frame) then
-                call builder_append(b, '<rect x="')
-                call append_num(b, leg_x)
-                call builder_append(b, '" y="')
-                call append_num(b, leg_y)
-                call builder_append(b, '" width="')
-                call append_num(b, leg_w)
-                call builder_append(b, '" height="')
-                call append_num(b, leg_h)
-                call builder_append(b, '" fill="#ffffff" stroke="#cccccc" stroke-width="0.8" rx="2"/>')
-                call builder_append(b, new_line("a"))
+                    pnt = brush("#ffffff")
+                    pnt%stroked = .true.
+                    pnt%stroke_rgb = hex_rgb("#cccccc")
+                    pnt%line_width = 0.8_dp
+                    call b%draw_rect(leg_x, leg_y, leg_w, leg_h, pnt, 2.0_dp)
                 end if
                 leg_x0 = leg_x
                 k = 0
@@ -3581,22 +3578,10 @@ contains
                     leg_x = leg_x0 + real(lc, dp) * col_w
                     py = leg_y + 4.0_dp + ttl_h + (real(lr, dp) + 0.5_dp) * row_h
                     if (a%series(i)%linestyle /= LINE_NONE) then
-                        call builder_append(b, '<line x1="')
-                        call append_num(b, leg_x + 8.0_dp)
-                        call builder_append(b, '" y1="')
-                        call append_num(b, py)
-                        call builder_append(b, '" x2="')
-                        call append_num(b, leg_x + 28.0_dp)
-                        call builder_append(b, '" y2="')
-                        call append_num(b, py)
-                        call builder_append(b, '" stroke="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '" stroke-width="')
-                        call append_num(b, a%series(i)%linewidth)
-                        call builder_append(b, '"')
-                        call append_dash(b, a%series(i)%linestyle)
-                        call builder_append(b, "/>")
-                        call builder_append(b, new_line("a"))
+                        call append_line(b, leg_x + 8.0_dp, py, leg_x + 28.0_dp, py, &
+                                         trim(a%series(i)%color), &
+                                         a%series(i)%linewidth, &
+                                         a%series(i)%linestyle, 1.0_dp)
                     end if
                     mid = leg_x + 18.0_dp
                     if (a%series(i)%marker /= MARKER_NONE) then
@@ -3604,35 +3589,37 @@ contains
                                            a%series(i)%markersize, &
                                            trim(a%series(i)%color), a%series(i)%alpha)
                     end if
-                    call xml_escape_to(a%series(i)%label, esc, en)
-                    call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, esc(1:en), &
+                    call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, &
+                                     trim(a%series(i)%label), &
                                      "left", a%legend_size, "#000000")
                 end do
             end if
         end if
     end subroutine render_axes
 
-    function render_svg(facecolor, transparent, bbox_inches, pad_inches) result(svg)
+    ! Draw the whole figure into any backend. Everything above this point is
+    ! format independent; the only thing render_svg and its PDF and PNG
+    ! counterparts add is the choice of renderer.
+    subroutine render_figure(b, facecolor, transparent, bbox_inches, pad_inches)
+        class(renderer_t), intent(inout) :: b
         character(len=*), intent(in), optional :: facecolor, bbox_inches
         logical, intent(in), optional :: transparent
         real(dp), intent(in), optional :: pad_inches
-        character(len=:), allocatable :: svg
-        type(svg_builder) :: b
         real(dp) :: W, H, vx, vy, vw, vh, bpad
         character(len=512) :: esc
         character(len=7) :: face
         logical :: clear
-        integer :: i, en
+        integer :: i, en, n_grp
 
         call ensure_fig()
         clear = .false.
         if (present(transparent)) clear = transparent
         face = resolve_color(facecolor)
         if (len_trim(face) == 0) face = "#ffffff"
-        call builder_init(b)
+        call clear_clip()
 
-        W = fig_w_in * PT_PER_IN
-        H = fig_h_in * PT_PER_IN
+        W = fig_w_in*PT_PER_IN
+        H = fig_h_in*PT_PER_IN
         vx = 0.0_dp
         vy = 0.0_dp
         vw = W
@@ -3641,8 +3628,8 @@ contains
             if (lower(trim(bbox_inches)) == "tight") then
                 bpad = 0.1_dp
                 if (present(pad_inches)) bpad = pad_inches
-                bpad = bpad * PT_PER_IN
-                ! Cropping is expressed as a shifted viewBox, so the drawing
+                bpad = bpad*PT_PER_IN
+                ! Cropping moves the window onto the drawing, so the drawing
                 ! itself needs no translation.
                 call drawn_bbox(W, H, vx, vy, vw, vh)
                 vx = vx - bpad
@@ -3654,73 +3641,98 @@ contains
             end if
         end if
 
-        call builder_append(b, '<?xml version="1.0" encoding="utf-8" standalone="no"?>')
-        call builder_append(b, new_line("a"))
-        call builder_append(b, '<svg xmlns="http://www.w3.org/2000/svg" ')
-        call builder_append(b, 'xmlns:xlink="http://www.w3.org/1999/xlink" width="')
-        call append_num(b, vw)
-        call builder_append(b, 'pt" height="')
-        call append_num(b, vh)
-        call builder_append(b, 'pt" viewBox="')
-        call append_num(b, vx)
-        call builder_append(b, " ")
-        call append_num(b, vy)
-        call builder_append(b, " ")
-        call append_num(b, vw)
-        call builder_append(b, " ")
-        call append_num(b, vh)
-        call builder_append(b, '" version="1.1">')
-        call builder_append(b, new_line("a"))
-
-        ! background; transparent drops the figure patch entirely
-        if (.not. clear) then
-            call builder_append(b, '<rect x="')
-            call append_num(b, vx)
-            call builder_append(b, '" y="')
-            call append_num(b, vy)
-            call builder_append(b, '" width="')
-            call append_num(b, vw)
-            call builder_append(b, '" height="')
-            call append_num(b, vh)
-            call builder_append(b, '" fill="')
-            call builder_append(b, face)
-            call builder_append(b, '"/>')
-            call builder_append(b, new_line("a"))
+        ! transparent drops the figure patch entirely
+        if (clear) then
+            call b%open_canvas(vw, vh, x0=vx, y0=vy)
+        else
+            call b%open_canvas(vw, vh, bg_rgb=hex_rgb(face), x0=vx, y0=vy)
         end if
 
-        ! axes (subplots)
+        ! matplotlib counts a colorbar as an axes in its own right, and it is
+        ! drawn after the axes it belongs to, so the numbering interleaves.
+        n_grp = 0
         do i = 1, n_ax
+            n_grp = n_grp + 1
+            call b%begin_group("axes_"//int_to_str(n_grp))
             call render_axes(b, ax(i), i, W, H, clear)
+            call b%end_group()
+            if (ax(i)%cbar_on) then
+                n_grp = n_grp + 1
+                call b%begin_group("axes_"//int_to_str(n_grp))
+                call append_colorbar(b, ax(i), i, W, H)
+                call b%end_group()
+            end if
         end do
 
         ! suptitle (figure-level, above all axes)
         if (len_trim(fig_suptitle) > 0) then
-            call xml_escape_to(fig_suptitle, esc, en)
-            call append_text(b, 0.5_dp * W, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp, &
-                             esc(1:en), "center", fig_suptitle_size, "#000000")
+            call append_text(b, 0.5_dp*W, (1.0_dp - SUPTITLE_Y)*H + 4.2_dp, &
+                             trim(fig_suptitle), "center", fig_suptitle_size, &
+                             "#000000")
         end if
 
-        call builder_append(b, "</svg>")
-        call builder_append(b, new_line("a"))
-        svg = builder_get(b)
+        call b%close_canvas()
+    end subroutine render_figure
+
+    function render_svg(facecolor, transparent, bbox_inches, pad_inches) result(svg)
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        logical, intent(in), optional :: transparent
+        real(dp), intent(in), optional :: pad_inches
+        character(len=:), allocatable :: svg
+        type(svg_renderer_t) :: r
+        call render_figure(r, facecolor, transparent, bbox_inches, pad_inches)
+        svg = r%bytes()
     end function render_svg
+
+    function render_pdf(facecolor, transparent, bbox_inches, pad_inches) result(pdf)
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        logical, intent(in), optional :: transparent
+        real(dp), intent(in), optional :: pad_inches
+        character(len=:), allocatable :: pdf
+        type(pdf_renderer_t) :: r
+        call render_figure(r, facecolor, transparent, bbox_inches, pad_inches)
+        pdf = r%bytes()
+    end function render_pdf
+
+    ! Unlike the vector formats, dpi is not decorative here: it is what
+    ! decides how many pixels the figure is rasterized into.
+    function render_png(facecolor, transparent, bbox_inches, pad_inches) result(png)
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        logical, intent(in), optional :: transparent
+        real(dp), intent(in), optional :: pad_inches
+        character(len=:), allocatable :: png
+        type(png_renderer_t) :: r
+        call r%set_dpi(fig_dpi)
+        call render_figure(r, facecolor, transparent, bbox_inches, pad_inches)
+        png = r%bytes()
+    end function render_png
+
+    ! The extension picks the backend, as it does in matplotlib. A name with
+    ! no extension at all is taken as SVG.
+    function file_ext(filename) result(ext)
+        character(len=*), intent(in) :: filename
+        character(len=:), allocatable :: ext
+        integer :: d, sl
+
+        d = index(filename, ".", back=.true.)
+        sl = max(index(filename, "/", back=.true.), &
+                 index(filename, achar(92), back=.true.))
+        if (d <= sl + 1) then
+            ext = "svg"
+        else
+            ext = lower(filename(d + 1:len_trim(filename)))
+        end if
+    end function file_ext
 
     ! Writing SVG bytes into a .png would produce a file no viewer can open,
     ! so an unsupported extension is a hard error rather than a silent default.
-    subroutine check_svg_ext(filename)
+    subroutine reject_ext(filename)
         character(len=*), intent(in) :: filename
-        integer :: d, sl
-        character(len=:), allocatable :: ext
-
-        d = index(filename, ".", back=.true.)
-        sl = max(index(filename, "/", back=.true.), index(filename, achar(92), back=.true.))
-        if (d <= sl + 1) return
-        ext = lower(filename(d + 1:len_trim(filename)))
-        if (ext == "svg") return
         print *, "fplot: cannot write ", trim(filename)
-        print *, "fplot: only .svg output is supported, not ." // ext
+        print *, "fplot: supported formats are .svg, .pdf and .png, not ." &
+            //file_ext(filename)
         error stop "fplot: unsupported savefig format"
-    end subroutine check_svg_ext
+    end subroutine reject_ext
 
     pure function lower(s) result(t)
         character(len=*), intent(in) :: s
@@ -3736,9 +3748,8 @@ contains
         end do
     end function lower
 
-    ! dpi is accepted and remembered, but SVG is resolution independent and
-    ! matplotlib emits the same inches*72 canvas at any dpi, so it does not
-    ! change the output here either.
+    ! dpi sizes the raster in the PNG backend. The vector formats ignore it,
+    ! as matplotlib does: they emit the same inches*72 canvas at any dpi.
     subroutine savefig(filename, transparent, facecolor, dpi, bbox_inches, pad_inches)
         character(len=*), intent(in) :: filename
         logical, intent(in), optional :: transparent
@@ -3746,13 +3757,27 @@ contains
         real(dp), intent(in), optional :: dpi, pad_inches
         character(len=:), allocatable :: svg
         integer :: u, ios, n
+        real(dp) :: saved_dpi
 
-        call check_svg_ext(filename)
+        ! dpi given here applies to this file only, as it does in matplotlib;
+        ! the figure's own dpi is what figure(dpi=) set and outlives the call.
+        saved_dpi = fig_dpi
         if (present(dpi)) then
             if (dpi <= 0.0_dp) error stop "fplot: savefig dpi must be positive"
             fig_dpi = dpi
         end if
-        svg = render_svg(facecolor, transparent, bbox_inches, pad_inches)
+        select case (file_ext(filename))
+        case ("svg")
+            svg = render_svg(facecolor, transparent, bbox_inches, pad_inches)
+        case ("pdf")
+            svg = render_pdf(facecolor, transparent, bbox_inches, pad_inches)
+        case ("png")
+            svg = render_png(facecolor, transparent, bbox_inches, pad_inches)
+        case default
+            call reject_ext(filename)
+            return
+        end select
+        fig_dpi = saved_dpi
         n = len(svg)
         open (newunit=u, file=trim(filename), status="replace", action="write", &
               form="unformatted", access="stream", iostat=ios)
