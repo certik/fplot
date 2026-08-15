@@ -533,6 +533,14 @@ program test_plots
     call save_all("figures")
     call close(all=.true.)
 
+    ! 44) an image on a log axis, where the samples are no longer evenly
+    ! spaced on the canvas and so cannot be sent as one raster
+    call figure()
+    call imshow(zimg, extent=[1.0_dp, 1000.0_dp, 0.0_dp, 4.0_dp], aspect="auto")
+    call set_xscale("log")
+    call title("imshow on a log axis")
+    call save_all("imshow_log")
+
     print *, "All test plots written."
 
 contains

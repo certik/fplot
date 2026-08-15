@@ -37,6 +37,7 @@ OUT_NAMES = [
     "facecolor",
     "imshow",
     "imshow_cbar",
+    "imshow_log",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -537,6 +538,13 @@ def main() -> None:
     a2.set_title("figure two")
     plt.close(f2)
     save(f1, "figures")
+
+    # 44 an image on a log axis
+    fig, ax = setup_fig()
+    ax.imshow(zimg, extent=(1.0, 1000.0, 0.0, 4.0), aspect="auto")
+    ax.set_xscale("log")
+    ax.set_title("imshow on a log axis")
+    save(fig, "imshow_log")
 
     print("All matplotlib references written.")
 

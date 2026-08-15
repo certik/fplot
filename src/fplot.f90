@@ -2955,10 +2955,89 @@ contains
         end if
     end subroutine cell_triangle
 
-    ! One <rect> per sample. SVG has no raster primitive we can reach without
-    ! embedding an encoded image, and nearest-neighbour cells are what
-    ! matplotlib's default interpolation looks like at these sizes anyway.
+    ! An image is one draw_image call. Every format has a way to place a
+    ! raster, and using it costs one object in the file where a rectangle per
+    ! sample costs nr*nc: a 200x200 image is 40000 elements the other way.
+    !
+    ! A blit assumes the samples are evenly spaced on the canvas, which is
+    ! true only while both axes are linear, so a log axis keeps the per-cell
+    ! path below.
     subroutine append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        integer :: nr, nc, i, j, si, sj, fx, fy
+        integer, allocatable :: rgba(:, :, :)
+        real(dp) :: px0, px1, py0, py1, t
+        type(paint_t) :: p
+        logical :: flip_x, flip_y
+
+        if (xsc%kind /= SCALE_LINEAR .or. ysc%kind /= SCALE_LINEAR) then
+            call append_image_cells(b, a, xmin, xmax, ymin, ymax, &
+                                    ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            return
+        end if
+
+        nr = size(a%img, 1)
+        nc = size(a%img, 2)
+        px0 = map_x(a%img_ext(1), xmin, xmax, ax_l, ax_w, xsc)
+        px1 = map_x(a%img_ext(2), xmin, xmax, ax_l, ax_w, xsc)
+        py0 = map_y(a%img_ext(3), ymin, ymax, ax_b, ax_h, ysc)
+        py1 = map_y(a%img_ext(4), ymin, ymax, ax_b, ax_h, ysc)
+
+        ! draw_image wants its rows from the top of the canvas down, and the
+        ! image's own rows run up the extent, so whichever end of the extent
+        ! lands at the top decides where row 1 goes. This is how origin=
+        ! "upper" reaches the file: it descends the y axis, which is what
+        ! puts the first row at the top.
+        flip_x = px1 < px0
+        flip_y = py0 > py1
+
+        ! The raster is sent at roughly the size it will be drawn, which is
+        ! what matplotlib does and for the same reason: a backend or a viewer
+        ! asked to enlarge a 16x12 image will often interpolate it, and these
+        ! images are small enough that interpolating turns the data into a
+        ! blur. Repeating each sample a whole number of times is exactly
+        ! nearest neighbour, so no value is invented by doing it.
+        fx = fill_factor(abs(px1 - px0), nc)
+        fy = fill_factor(abs(py1 - py0), nr)
+
+        allocate (rgba(4, nc*fx, nr*fy))
+        do i = 1, nr*fy
+            si = (i - 1)/fy + 1
+            if (flip_y) si = nr - si + 1
+            do j = 1, nc*fx
+                sj = (j - 1)/fx + 1
+                if (flip_x) sj = nc - sj + 1
+                t = (a%img(si, sj) - a%img_vmin) / (a%img_vmax - a%img_vmin)
+                rgba(1:3, j, i) = hex_rgb(cmap_color(a%img_cmap, t))
+                rgba(4, j, i) = 255
+            end do
+        end do
+
+        p%clip = g_clip
+        call b%draw_image(min(px0, px1), min(py0, py1), abs(px1 - px0), &
+                          abs(py1 - py0), rgba, nc*fx, nr*fy, p)
+    end subroutine append_image
+
+    ! How many times to repeat each sample so the raster covers the space it
+    ! is drawn in, bounded so that a large image is left as it is rather than
+    ! grown into something the file has to carry.
+    pure function fill_factor(extent, n) result(f)
+        real(dp), intent(in) :: extent
+        integer, intent(in) :: n
+        integer :: f
+        integer, parameter :: MAX_SAMPLES = 2048
+
+        f = max(1, ceiling(extent/real(max(n, 1), dp)))
+        f = min(f, max(1, MAX_SAMPLES/max(n, 1)))
+    end function fill_factor
+
+    ! One rectangle per sample. Correct whatever the axes do to the spacing,
+    ! and so the answer when a scale is not linear and a blit would put the
+    ! samples in the wrong places.
+    subroutine append_image_cells(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         class(renderer_t), intent(inout) :: b
         type(axes_t), intent(in) :: a
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
@@ -2987,9 +3066,10 @@ contains
                                  cmap_color(a%img_cmap, t))
             end do
         end do
-    end subroutine append_image
+    end subroutine append_image_cells
 
     ! Cells are grown by a hairline so that neighbours overlap; without it the
+    ! renderer leaves visible seams between abutting rectangles.
     ! renderer leaves visible seams between abutting rectangles.
     subroutine append_cell(b, x, y, w, h, color)
         class(renderer_t), intent(inout) :: b

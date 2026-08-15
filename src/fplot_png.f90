@@ -18,7 +18,10 @@ module fplot_png
     implicit none
     private
 
-    public :: png_encode
+    ! zlib_compress is here rather than in the PDF backend because a PDF
+    ! FlateDecode stream is the same zlib stream a PNG carries, and one
+    ! compressor is enough.
+    public :: png_encode, zlib_compress
 
     ! LZ77 parameters. WSIZE is fixed by the format; CHAIN bounds how hard the
     ! matcher looks before settling, which is the usual size/speed dial.
@@ -384,6 +387,22 @@ contains
             bytes(i:i) = achar(out%b(i))
         end do
     end function png_encode
+
+    ! Bytes in, a zlib stream out. Unlike a PNG the caller supplies its own
+    ! layout, so nothing is filtered here.
+    function zlib_compress(src) result(bytes)
+        integer, intent(in) :: src(:)
+        character(len=:), allocatable :: bytes
+        integer, allocatable :: z(:)
+        integer :: i, n
+
+        n = size(src)
+        z = zlib_wrap(deflate(src, n), src, n)
+        allocate (character(len=size(z)) :: bytes)
+        do i = 1, size(z)
+            bytes(i:i) = achar(z(i))
+        end do
+    end function zlib_compress
 
     function zlib_wrap(comp, raw, nraw) result(z)
         integer, intent(in) :: comp(:), raw(:), nraw

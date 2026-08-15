@@ -16,6 +16,7 @@ module fplot_backend_svg
     use fplot_render
     use fplot_svg, only: svg_builder, builder_init, builder_append, &
                          builder_get, fmt_num, xml_escape_to
+    use fplot_png, only: png_encode
     implicit none
     private
 
@@ -485,16 +486,73 @@ contains
         call put_eol(self)
     end subroutine svg_draw_text
 
-    ! A raster block becomes a base64 data URI holding a PNG. Left until the
-    ! PNG backend exists, since that is where the encoder will live; fplot
-    ! currently draws imshow as a grid of rectangles instead.
+    ! A raster becomes a PNG in a base64 data URI, which is what matplotlib
+    ! emits and what lets the whole image be one element. Smoothing is turned
+    ! off: the samples are the data, and interpolating them would show the
+    ! reader values that were never measured.
     subroutine svg_draw_image(self, x, y, w, h, rgba, nx, ny, paint)
         class(svg_renderer_t), intent(inout) :: self
         real(dp), intent(in) :: x, y, w, h
         integer, intent(in) :: nx, ny
         integer, intent(in) :: rgba(4, nx, ny)
         type(paint_t), intent(in) :: paint
+
+        if (nx < 1 .or. ny < 1) return
+        call sync_clip(self, paint%clip)
+        call put(self, '<image x="')
+        call put_num(self, x)
+        call put(self, '" y="')
+        call put_num(self, y)
+        call put(self, '" width="')
+        call put_num(self, w)
+        call put(self, '" height="')
+        call put_num(self, h)
+        call put(self, '" preserveAspectRatio="none" image-rendering="pixelated"')
+        if (paint%fill_alpha < 1.0_dp) then
+            call put(self, ' opacity="')
+            call put_num(self, paint%fill_alpha)
+            call put(self, '"')
+        end if
+        call put(self, ' xlink:href="data:image/png;base64,')
+        call put_base64(self, png_encode(nx, ny, rgba))
+        call put(self, '"/>')
+        call put_eol(self)
     end subroutine svg_draw_image
+
+    ! Three bytes become four characters; a short final group is padded with
+    ! "=" so the length still divides by four.
+    subroutine put_base64(self, s)
+        class(svg_renderer_t), intent(inout) :: self
+        character(len=*), intent(in) :: s
+        character(len=64), parameter :: TBL = &
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        character(len=:), allocatable :: out
+        integer :: i, n, k, v, b(3), have
+
+        n = len(s)
+        allocate (character(len=4*((n + 2)/3)) :: out)
+        k = 0
+        do i = 1, n, 3
+            have = min(3, n - i + 1)
+            b = 0
+            b(1:have) = [(iachar(s(i + v - 1:i + v - 1)), v=1, have)]
+            v = ishft(b(1), 16) + ishft(b(2), 8) + b(3)
+            out(k + 1:k + 1) = TBL(iand(ishft(v, -18), 63) + 1:iand(ishft(v, -18), 63) + 1)
+            out(k + 2:k + 2) = TBL(iand(ishft(v, -12), 63) + 1:iand(ishft(v, -12), 63) + 1)
+            if (have > 1) then
+                out(k + 3:k + 3) = TBL(iand(ishft(v, -6), 63) + 1:iand(ishft(v, -6), 63) + 1)
+            else
+                out(k + 3:k + 3) = "="
+            end if
+            if (have > 2) then
+                out(k + 4:k + 4) = TBL(iand(v, 63) + 1:iand(v, 63) + 1)
+            else
+                out(k + 4:k + 4) = "="
+            end if
+            k = k + 4
+        end do
+        call put(self, out)
+    end subroutine put_base64
 
     subroutine svg_begin_group(self, name)
         class(svg_renderer_t), intent(inout) :: self
