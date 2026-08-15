@@ -29,6 +29,7 @@ module fplot_backend_pdf
     use fplot_render
     use fplot_svg, only: svg_builder, builder_init, builder_append, &
                          builder_get, fmt_num
+    use fplot_png, only: zlib_compress
     implicit none
     private
 
@@ -36,6 +37,18 @@ module fplot_backend_pdf
 
     integer, parameter :: MAX_OBJ = 64
     integer, parameter :: MAX_ALPHA = 64
+    integer, parameter :: MAX_IMG = 16
+
+    ! An image already compressed and ready to become an XObject. The samples
+    ! are kept as the deflated stream rather than as pixels because that is
+    ! the only form the file wants them in.
+    type :: pdf_image_t
+        integer :: w = 0, h = 0
+        character(len=:), allocatable :: rgb
+        ! Empty unless some sample is transparent, since a fully opaque
+        ! image needs no soft mask.
+        character(len=:), allocatable :: alpha
+    end type pdf_image_t
 
     type, extends(renderer_t) :: pdf_renderer_t
         ! The page content stream. The file itself is assembled in
@@ -50,6 +63,8 @@ module fplot_backend_pdf
         real(dp) :: alpha_stroke(MAX_ALPHA) = 1.0_dp
         logical :: clip_open = .false.
         type(clip_t) :: cur_clip
+        integer :: n_img = 0
+        type(pdf_image_t) :: img(MAX_IMG)
     contains
         procedure :: open_canvas => pdf_open_canvas
         procedure :: close_canvas => pdf_close_canvas
@@ -247,6 +262,7 @@ contains
         if (present(x0)) self%x0 = x0
         if (present(y0)) self%y0 = y0
         self%n_alpha = 0
+        self%n_img = 0
         call builder_init(self%c)
 
         ! One matrix for the whole page turns the API's top-left origin with
@@ -411,14 +427,56 @@ contains
         call put(self, "Q"//new_line("a"))
     end subroutine pdf_draw_text
 
-    ! imshow currently reaches every backend as a grid of rectangles, so no
-    ! figure fplot can draw needs this yet.
+    ! The image itself is registered for later; what goes in the content
+    ! stream is a matrix and one Do. PDF draws an image into the unit square
+    ! with the first row at the top of it, so the matrix that lands it on the
+    ! API's rectangle is a flip: v = 1 is the top edge, and the page is
+    ! already flipped underneath.
     subroutine pdf_draw_image(self, x, y, w, h, rgba, nx, ny, paint)
         class(pdf_renderer_t), intent(inout) :: self
         real(dp), intent(in) :: x, y, w, h
         integer, intent(in) :: nx, ny
         integer, intent(in) :: rgba(4, nx, ny)
         type(paint_t), intent(in) :: paint
+        integer, allocatable :: rgb(:), a(:)
+        integer :: i, j, k, id
+        logical :: opaque
+
+        if (nx < 1 .or. ny < 1 .or. self%n_img >= MAX_IMG) return
+
+        allocate (rgb(3*nx*ny), a(nx*ny))
+        k = 0
+        opaque = .true.
+        do j = 1, ny
+            do i = 1, nx
+                rgb(3*k + 1:3*k + 3) = rgba(1:3, i, j)
+                a(k + 1) = rgba(4, i, j)
+                if (rgba(4, i, j) < 255) opaque = .false.
+                k = k + 1
+            end do
+        end do
+
+        self%n_img = self%n_img + 1
+        id = self%n_img
+        self%img(id)%w = nx
+        self%img(id)%h = ny
+        self%img(id)%rgb = zlib_compress(rgb)
+        if (opaque) then
+            self%img(id)%alpha = ""
+        else
+            self%img(id)%alpha = zlib_compress(a)
+        end if
+
+        call begin_paint(self, paint)
+        call put_num(self, w)
+        call put_num(self, 0.0_dp)
+        call put_num(self, 0.0_dp)
+        call put_num(self, -h)
+        call put_num(self, x)
+        call put_num(self, y + h)
+        call put(self, "cm"//new_line("a"))
+        call put(self, "/Im"//int_str(id)//" Do"//new_line("a"))
+        call put(self, "Q"//new_line("a"))
     end subroutine pdf_draw_image
 
     ! Assemble the file. Objects have to be byte-counted as they are written
@@ -426,8 +484,9 @@ contains
     subroutine pdf_close_canvas(self)
         class(pdf_renderer_t), intent(inout) :: self
         type(svg_builder) :: f
-        character(len=:), allocatable :: content, res, gs
+        character(len=:), allocatable :: content, res, gs, xo
         integer :: off(MAX_OBJ), nobj, i, pos, xref_pos
+        integer :: img_obj(MAX_IMG), mask_obj(MAX_IMG)
         character(len=1) :: eol
 
         eol = new_line("a")
@@ -440,13 +499,29 @@ contains
                  //num_str(self%alpha_fill(i))//" /CA " &
                  //num_str(self%alpha_stroke(i))//" >> "
         end do
+
+        ! Images follow the five fixed objects, one object each and a second
+        ! for a soft mask where one is needed.
+        nobj = 5
+        xo = ""
+        do i = 1, self%n_img
+            nobj = nobj + 1
+            img_obj(i) = nobj
+            mask_obj(i) = 0
+            if (len(self%img(i)%alpha) > 0) then
+                nobj = nobj + 1
+                mask_obj(i) = nobj
+            end if
+            xo = xo//"/Im"//int_str(i)//" "//int_str(img_obj(i))//" 0 R "
+        end do
+
         res = "<< /Font << /F1 5 0 R >>"
         if (len(gs) > 0) res = res//" /ExtGState << "//gs//">>"
+        if (len(xo) > 0) res = res//" /XObject << "//xo//">>"
         res = res//" >>"
 
         call builder_init(f)
         pos = 0
-        nobj = 5
 
         call emit(f, pos, "%PDF-1.4"//eol)
         ! A comment with high bytes marks the file as binary for tools that
@@ -476,6 +551,36 @@ contains
         call emit(f, pos, "5 0 obj"//eol//"<< /Type /Font /Subtype /Type1 " &
                   //"/BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"//eol &
                   //"endobj"//eol)
+
+        do i = 1, self%n_img
+            off(img_obj(i)) = pos
+            call emit(f, pos, int_str(img_obj(i))//" 0 obj"//eol &
+                      //"<< /Type /XObject /Subtype /Image /Width " &
+                      //int_str(self%img(i)%w)//" /Height "//int_str(self%img(i)%h) &
+                      //" /ColorSpace /DeviceRGB /BitsPerComponent 8" &
+                      //" /Filter /FlateDecode")
+            if (mask_obj(i) > 0) then
+                call emit(f, pos, " /SMask "//int_str(mask_obj(i))//" 0 R")
+            end if
+            call emit(f, pos, " /Length "//int_str(len(self%img(i)%rgb))//" >>" &
+                      //eol//"stream"//eol)
+            call emit(f, pos, self%img(i)%rgb)
+            call emit(f, pos, eol//"endstream"//eol//"endobj"//eol)
+
+            ! The mask is the alpha channel as a greyscale image of the same
+            ! size, which is how PDF spells per-sample transparency.
+            if (mask_obj(i) > 0) then
+                off(mask_obj(i)) = pos
+                call emit(f, pos, int_str(mask_obj(i))//" 0 obj"//eol &
+                          //"<< /Type /XObject /Subtype /Image /Width " &
+                          //int_str(self%img(i)%w)//" /Height "//int_str(self%img(i)%h) &
+                          //" /ColorSpace /DeviceGray /BitsPerComponent 8" &
+                          //" /Filter /FlateDecode /Length " &
+                          //int_str(len(self%img(i)%alpha))//" >>"//eol//"stream"//eol)
+                call emit(f, pos, self%img(i)%alpha)
+                call emit(f, pos, eol//"endstream"//eol//"endobj"//eol)
+            end if
+        end do
 
         xref_pos = pos
         call emit(f, pos, "xref"//eol//"0 "//int_str(nobj + 1)//eol)
