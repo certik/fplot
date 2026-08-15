@@ -498,7 +498,7 @@ contains
         type(axes_t), intent(in) :: a
         integer, intent(in) :: idx
         real(dp), intent(in) :: W, H
-        real(dp) :: axl, axr, axb, axt, axw, axh
+        real(dp) :: ax_l, ax_r, ax_b, ax_t, ax_w, ax_h
         real(dp) :: xmin, xmax, ymin, ymax
         real(dp) :: xticks(MAX_TICKS), yticks(MAX_TICKS)
         integer :: nxt, nyt, i, j, n, nl
@@ -510,12 +510,12 @@ contains
         integer :: n_leg, k, max_lbl
         real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h
 
-        axl = a%left * W
-        axr = a%right * W
-        axb = (1.0_dp - a%bottom) * H
-        axt = (1.0_dp - a%top) * H
-        axw = axr - axl
-        axh = axb - axt
+        ax_l = a%left * W
+        ax_r = a%right * W
+        ax_b = (1.0_dp - a%bottom) * H
+        ax_t = (1.0_dp - a%top) * H
+        ax_w = ax_r - ax_l
+        ax_h = ax_b - ax_t
 
         call compute_limits(a, xmin, xmax, ymin, ymax)
         xlog = a%xscale == SCALE_LOG
@@ -536,51 +536,51 @@ contains
         call builder_append(b, '<defs><clipPath id="axclip')
         call builder_append(b, int_to_str(idx))
         call builder_append(b, '"><rect x="')
-        call append_num(b, axl)
+        call append_num(b, ax_l)
         call builder_append(b, '" y="')
-        call append_num(b, axt)
+        call append_num(b, ax_t)
         call builder_append(b, '" width="')
-        call append_num(b, axw)
+        call append_num(b, ax_w)
         call builder_append(b, '" height="')
-        call append_num(b, axh)
+        call append_num(b, ax_h)
         call builder_append(b, '"/></clipPath></defs>')
         call builder_append(b, new_line("a"))
 
         ! axes face
         call builder_append(b, '<rect x="')
-        call append_num(b, axl)
+        call append_num(b, ax_l)
         call builder_append(b, '" y="')
-        call append_num(b, axt)
+        call append_num(b, ax_t)
         call builder_append(b, '" width="')
-        call append_num(b, axw)
+        call append_num(b, ax_w)
         call builder_append(b, '" height="')
-        call append_num(b, axh)
+        call append_num(b, ax_h)
         call builder_append(b, '" fill="#ffffff"/>')
         call builder_append(b, new_line("a"))
 
         ! grid
         if (a%grid_on) then
             do i = 1, nxt
-                px = map_x(xticks(i), xmin, xmax, axl, axw, xlog)
+                px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xlog)
                 call builder_append(b, '<line x1="')
                 call append_num(b, px)
                 call builder_append(b, '" y1="')
-                call append_num(b, axt)
+                call append_num(b, ax_t)
                 call builder_append(b, '" x2="')
                 call append_num(b, px)
                 call builder_append(b, '" y2="')
-                call append_num(b, axb)
+                call append_num(b, ax_b)
                 call builder_append(b, '" stroke="#b0b0b0" stroke-width="0.8"/>')
                 call builder_append(b, new_line("a"))
             end do
             do i = 1, nyt
-                py = map_y(yticks(i), ymin, ymax, axb, axh, ylog)
+                py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ylog)
                 call builder_append(b, '<line x1="')
-                call append_num(b, axl)
+                call append_num(b, ax_l)
                 call builder_append(b, '" y1="')
                 call append_num(b, py)
                 call builder_append(b, '" x2="')
-                call append_num(b, axr)
+                call append_num(b, ax_r)
                 call builder_append(b, '" y2="')
                 call append_num(b, py)
                 call builder_append(b, '" stroke="#b0b0b0" stroke-width="0.8"/>')
@@ -609,8 +609,8 @@ contains
                 do j = 1, n
                     if (a%xscale == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
                     if (a%yscale == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
-                    px = map_x(a%series(i)%x(j), xmin, xmax, axl, axw, xlog)
-                    py = map_y(a%series(i)%y(j), ymin, ymax, axb, axh, ylog)
+                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
+                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog)
                     if (nl > 0) call builder_append(b, " ")
                     call append_num(b, px)
                     call builder_append(b, ",")
@@ -626,8 +626,8 @@ contains
                 do j = 1, n
                     if (a%xscale == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
                     if (a%yscale == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
-                    px = map_x(a%series(i)%x(j), xmin, xmax, axl, axw, xlog)
-                    py = map_y(a%series(i)%y(j), ymin, ymax, axb, axh, ylog)
+                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
+                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog)
                     select case (a%series(i)%marker)
                     case (MARKER_CIRCLE)
                         r = 0.5_dp * ms * 0.75_dp
@@ -686,34 +686,34 @@ contains
 
         ! spines
         call builder_append(b, '<rect x="')
-        call append_num(b, axl)
+        call append_num(b, ax_l)
         call builder_append(b, '" y="')
-        call append_num(b, axt)
+        call append_num(b, ax_t)
         call builder_append(b, '" width="')
-        call append_num(b, axw)
+        call append_num(b, ax_w)
         call builder_append(b, '" height="')
-        call append_num(b, axh)
+        call append_num(b, ax_h)
         call builder_append(b, '" fill="none" stroke="#000000" stroke-width="0.8"/>')
         call builder_append(b, new_line("a"))
 
         ! x ticks
         do i = 1, nxt
-            px = map_x(xticks(i), xmin, xmax, axl, axw, xlog)
+            px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xlog)
             call builder_append(b, '<line x1="')
             call append_num(b, px)
             call builder_append(b, '" y1="')
-            call append_num(b, axb)
+            call append_num(b, ax_b)
             call builder_append(b, '" x2="')
             call append_num(b, px)
             call builder_append(b, '" y2="')
-            call append_num(b, axb + 3.5_dp)
+            call append_num(b, ax_b + 3.5_dp)
             call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
             call builder_append(b, new_line("a"))
             call format_tick_to(xticks(i), xlog, lbl, ln)
             call builder_append(b, '<text x="')
             call append_num(b, px)
             call builder_append(b, '" y="')
-            call append_num(b, axb + 16.0_dp)
+            call append_num(b, ax_b + 16.0_dp)
             call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
             call builder_append(b, 'font-size="10" fill="#000000">')
             call builder_append(b, lbl(1:ln))
@@ -723,20 +723,20 @@ contains
 
         ! y ticks
         do i = 1, nyt
-            py = map_y(yticks(i), ymin, ymax, axb, axh, ylog)
+            py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ylog)
             call builder_append(b, '<line x1="')
-            call append_num(b, axl)
+            call append_num(b, ax_l)
             call builder_append(b, '" y1="')
             call append_num(b, py)
             call builder_append(b, '" x2="')
-            call append_num(b, axl - 3.5_dp)
+            call append_num(b, ax_l - 3.5_dp)
             call builder_append(b, '" y2="')
             call append_num(b, py)
             call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
             call builder_append(b, new_line("a"))
             call format_tick_to(yticks(i), ylog, lbl, ln)
             call builder_append(b, '<text x="')
-            call append_num(b, axl - 7.0_dp)
+            call append_num(b, ax_l - 7.0_dp)
             call builder_append(b, '" y="')
             call append_num(b, py + 3.5_dp)
             call builder_append(b, '" text-anchor="end" font-family="DejaVu Sans, sans-serif" ')
@@ -749,9 +749,9 @@ contains
         if (len_trim(a%xlabel) > 0) then
             call xml_escape_to(a%xlabel, esc, en)
             call builder_append(b, '<text x="')
-            call append_num(b, 0.5_dp * (axl + axr))
+            call append_num(b, 0.5_dp * (ax_l + ax_r))
             call builder_append(b, '" y="')
-            call append_num(b, axb + 28.6_dp)
+            call append_num(b, ax_b + 28.6_dp)
             call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
             call builder_append(b, 'font-size="11" fill="#000000">')
             call builder_append(b, esc(1:en))
@@ -762,14 +762,14 @@ contains
         if (len_trim(a%ylabel) > 0) then
             call xml_escape_to(a%ylabel, esc, en)
             call builder_append(b, '<text x="')
-            call append_num(b, axl - 34.0_dp)
+            call append_num(b, ax_l - 34.0_dp)
             call builder_append(b, '" y="')
-            call append_num(b, 0.5_dp * (axt + axb))
+            call append_num(b, 0.5_dp * (ax_t + ax_b))
             call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
             call builder_append(b, 'font-size="11" fill="#000000" transform="rotate(-90 ')
-            call append_num(b, axl - 34.0_dp)
+            call append_num(b, ax_l - 34.0_dp)
             call builder_append(b, " ")
-            call append_num(b, 0.5_dp * (axt + axb))
+            call append_num(b, 0.5_dp * (ax_t + ax_b))
             call builder_append(b, ')">')
             call builder_append(b, esc(1:en))
             call builder_append(b, "</text>")
@@ -780,9 +780,9 @@ contains
         if (len_trim(a%title) > 0) then
             call xml_escape_to(a%title, esc, en)
             call builder_append(b, '<text x="')
-            call append_num(b, 0.5_dp * (axl + axr))
+            call append_num(b, 0.5_dp * (ax_l + ax_r))
             call builder_append(b, '" y="')
-            call append_num(b, axt - 6.0_dp)
+            call append_num(b, ax_t - 6.0_dp)
             call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
             call builder_append(b, 'font-size="12" fill="#000000">')
             call builder_append(b, esc(1:en))
@@ -805,10 +805,10 @@ contains
                 ! Sample line (leg_x+8 .. leg_x+28), gap to the text at
                 ! leg_x+34, the label itself, and a trailing pad.
                 leg_w = 34.0_dp + real(max_lbl, dp) * LEGEND_CHAR_W + 8.0_dp
-                leg_w = min(leg_w, axw - 16.0_dp)
+                leg_w = min(leg_w, ax_w - 16.0_dp)
                 leg_h = 8.0_dp + real(n_leg, dp) * row_h
-                leg_x = axr - leg_w - 8.0_dp
-                leg_y = axt + 8.0_dp
+                leg_x = ax_r - leg_w - 8.0_dp
+                leg_y = ax_t + 8.0_dp
                 call builder_append(b, '<rect x="')
                 call append_num(b, leg_x)
                 call builder_append(b, '" y="')
