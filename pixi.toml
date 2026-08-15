@@ -17,6 +17,7 @@ demo-lfortran = "bash scripts/build_lfortran.sh && ./build/lfortran/demo"
 
 mpl-refs = "python tests/gen_mpl_refs.py"
 compare = "python tests/gen_mpl_refs.py && bash scripts/build_flang.sh && mkdir -p tests/out && ./build/flang/test_plots && python tests/compare_svgs.py"
+compare-png = "python tests/gen_mpl_refs.py && bash scripts/build_flang.sh && mkdir -p tests/out && ./build/flang/test_plots && python tests/compare_pngs.py"
 
 [dependencies]
 python = ">=3.14.6,<3.15"

@@ -10,6 +10,7 @@ module fplot
     use fplot_render
     use fplot_backend_svg
     use fplot_backend_pdf
+    use fplot_backend_png
     implicit none
     private
 
@@ -24,7 +25,7 @@ module fplot
     public :: imshow, colorbar, contour, contourf
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
-    public :: render_svg, render_pdf
+    public :: render_svg, render_pdf, render_png
     public :: subplot, suptitle, subplots_adjust, tight_layout
     public :: twinx, twiny
     public :: set_fontsize
@@ -3693,6 +3694,19 @@ contains
         pdf = r%bytes()
     end function render_pdf
 
+    ! Unlike the vector formats, dpi is not decorative here: it is what
+    ! decides how many pixels the figure is rasterized into.
+    function render_png(facecolor, transparent, bbox_inches, pad_inches) result(png)
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        logical, intent(in), optional :: transparent
+        real(dp), intent(in), optional :: pad_inches
+        character(len=:), allocatable :: png
+        type(png_renderer_t) :: r
+        call r%set_dpi(fig_dpi)
+        call render_figure(r, facecolor, transparent, bbox_inches, pad_inches)
+        png = r%bytes()
+    end function render_png
+
     ! The extension picks the backend, as it does in matplotlib. A name with
     ! no extension at all is taken as SVG.
     function file_ext(filename) result(ext)
@@ -3715,7 +3729,7 @@ contains
     subroutine reject_ext(filename)
         character(len=*), intent(in) :: filename
         print *, "fplot: cannot write ", trim(filename)
-        print *, "fplot: supported formats are .svg and .pdf, not ." &
+        print *, "fplot: supported formats are .svg, .pdf and .png, not ." &
             //file_ext(filename)
         error stop "fplot: unsupported savefig format"
     end subroutine reject_ext
@@ -3734,9 +3748,8 @@ contains
         end do
     end function lower
 
-    ! dpi is accepted and remembered, but SVG is resolution independent and
-    ! matplotlib emits the same inches*72 canvas at any dpi, so it does not
-    ! change the output here either.
+    ! dpi sizes the raster in the PNG backend. The vector formats ignore it,
+    ! as matplotlib does: they emit the same inches*72 canvas at any dpi.
     subroutine savefig(filename, transparent, facecolor, dpi, bbox_inches, pad_inches)
         character(len=*), intent(in) :: filename
         logical, intent(in), optional :: transparent
@@ -3754,6 +3767,8 @@ contains
             svg = render_svg(facecolor, transparent, bbox_inches, pad_inches)
         case ("pdf")
             svg = render_pdf(facecolor, transparent, bbox_inches, pad_inches)
+        case ("png")
+            svg = render_png(facecolor, transparent, bbox_inches, pad_inches)
         case default
             call reject_ext(filename)
             return

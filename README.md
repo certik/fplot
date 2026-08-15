@@ -2,7 +2,8 @@
 
 [![CI](https://github.com/certik/fplot/actions/workflows/ci.yml/badge.svg)](https://github.com/certik/fplot/actions/workflows/ci.yml)
 
-Pure Fortran plotting library that emits SVG text, with a pylab-style API.
+Pure Fortran plotting library with a pylab-style API, writing SVG, PNG and PDF.
+No external graphics library: the PNG rasterizer and its font are part of fplot.
 
 ```fortran
 use fplot
@@ -12,7 +13,7 @@ call xlabel("x")
 call ylabel("y")
 call grid(.true.)
 call legend()
-call savefig("out.svg")   ! file backend
+call savefig("out.svg")   ! or "out.png", "out.pdf"
 call show()               ! Jupyter (LFortran) or writes fplot_show.svg
 
 ! subplots
@@ -43,7 +44,8 @@ call suptitle("figure title")
   markers `o x . s ^ v < > * + D`
 - Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
 - Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure(figsize=, dpi=)`
-- `savefig(file, transparent=, facecolor=)`
+- `savefig(file, transparent=, facecolor=)`; the extension picks the format,
+  one of `.svg`, `.png` or `.pdf`, and `dpi=` sizes the PNG raster
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
