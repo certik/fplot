@@ -1,6 +1,7 @@
 program test_plots
     use fplot
     implicit none
+    integer :: fig1
 
     integer, parameter :: n = 100
     integer, parameter :: m = 20
@@ -18,6 +19,8 @@ program test_plots
     real(dp) :: dist1(nd), dist2(nd)
     integer, parameter :: nsym = 201
     real(dp) :: xsym(nsym)
+    integer, parameter :: nsm = 2
+    real(dp) :: xsm(nsm) = [0.0_dp, 1.0_dp], ysm(nsm)
     real(dp) :: xe(ne), ye(ne), ee(ne)
     real(dp), parameter :: xb(nb) = [1.0_dp, 2.0_dp, 3.0_dp, 4.0_dp, 5.0_dp, 6.0_dp]
     real(dp), parameter :: hb(nb) = [3.0_dp, 5.0_dp, 2.0_dp, 7.0_dp, 4.0_dp, 6.0_dp]
@@ -369,7 +372,7 @@ program test_plots
     call savefig("tests/out/imshow_cbar.svg")
     print *, "wrote tests/out/imshow_cbar.svg"
 
-    ! 24) scatter with per-point sizes and colour-mapped values
+    ! 24) scatter with per-point sizes and color-mapped values
     call figure()
     call scatter(x(1:ns), y(1:ns), sizes=svals, cvals=cvals, cmap="viridis")
     call colorbar(label="c")
@@ -511,6 +514,67 @@ program test_plots
     call title("twinx")
     call savefig("tests/out/twinx.svg")
     print *, "wrote tests/out/twinx.svg"
+
+    ! 39) color spellings
+    call figure()
+    do i = 1, 6
+        ysm = real(i, dp) + 0.0_dp * xsm
+        select case (i)
+        case (1); call plot(xsm, ysm, color="red", lw=3.0_dp)
+        case (2); call plot(xsm, ysm, color="tab:orange", lw=3.0_dp)
+        case (3); call plot(xsm, ysm, color="steelblue", lw=3.0_dp)
+        case (4); call plot(xsm, ysm, color="#0f0", lw=3.0_dp)
+        case (5); call plot(xsm, ysm, color="0.5", lw=3.0_dp)
+        case (6); call plot(xsm, ysm, color="#8c564bcc", lw=3.0_dp)
+        end select
+    end do
+    call title("color names")
+    call savefig("tests/out/colors.svg")
+    print *, "wrote tests/out/colors.svg"
+
+    ! 40) font sizes
+    call figure()
+    call plot(xb, hb, label="sine")
+    call title("big title", fontsize=17.0_dp)
+    call xlabel("x axis", fontsize=14.0_dp)
+    call ylabel("y axis", fontsize=14.0_dp)
+    call tick_params(labelsize=13.0_dp)
+    call legend(fontsize=12.0_dp)
+    call savefig("tests/out/fontsize.svg")
+    print *, "wrote tests/out/fontsize.svg"
+
+    ! 41) legend options
+    call figure()
+    call plot(xb, hb, label="alpha")
+    call plot(xb, hb * 0.5_dp, label="beta")
+    call plot(xb, hb * 0.25_dp, label="gamma")
+    call plot(xb, hb * 0.125_dp, label="delta")
+    call legend(loc="upper right", ncol=2, title="series", frameon=.false.)
+    call savefig("tests/out/legend_opts.svg")
+    print *, "wrote tests/out/legend_opts.svg"
+
+    ! 42) savefig(bbox_inches="tight")
+    call figure()
+    call plot(xb, hb)
+    call title("tight")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/savefig_tight.svg", bbox_inches="tight", dpi=200.0_dp)
+    print *, "wrote tests/out/savefig_tight.svg"
+
+    ! 43) two live figures kept apart, then closed
+    call figure()
+    fig1 = gcf()
+    call plot(xb, hb, "r-")
+    call title("figure one")
+    call figure()
+    call plot(xb, -hb, "b-")
+    call title("figure two")
+    call close()
+    call figure(num=fig1)
+    call savefig("tests/out/figures.svg")
+    print *, "wrote tests/out/figures.svg"
+    call close(all=.true.)
 
     print *, "All test plots written."
 end program test_plots

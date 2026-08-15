@@ -29,7 +29,7 @@ call suptitle("figure title")
 ## Features (MVP)
 
 - `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
-- `scatter` also takes per-point `sizes=` and colour-mapped `cvals=`
+- `scatter` also takes per-point `sizes=` and color-mapped `cvals=`
   (separate keywords because Fortran cannot overload one dummy as
   scalar-or-array the way matplotlib's `s=` and `c=` do)
 - `step`, `stem`, `barh`, `pie`, `boxplot`, `violinplot`
@@ -47,12 +47,19 @@ call suptitle("figure title")
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
-- `legend(loc=...)`, `xticks` / `yticks` with optional labels, `minorticks_on`
+- `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
+  `xticks` / `yticks` with optional labels, `minorticks_on`
+- Font sizes: `fontsize=` on `title` / `xlabel` / `ylabel` / `suptitle`, and
+  `set_fontsize(size=, title=, labels=, ticks=, legend=)` to set them globally
+- `savefig(dpi=, bbox_inches="tight", pad_inches=)` to crop to the drawing
+- Several live figures at once: `figure(num=)`, `gcf()`, `close(num=, all=)`
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing
 - `subplots_adjust` and `tight_layout`
 - `twinx` and `twiny` for a second y or x axis on the same plot
+- Colors as CSS4/X11 names, `tab:` names, `#rgb`, `#rrggbb`, `#rrggbbaa`,
+  single letters, `C0`-`C9`, or a greyscale fraction such as `"0.5"`
 - SVG defaults aligned with matplotlib (6.4×4.8 in, tab10 colors, subplot margins)
 
 ## Build

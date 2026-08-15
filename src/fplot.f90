@@ -1,5 +1,6 @@
 ! fplot — pure Fortran pylab-style SVG plotting library.
 module fplot
+    use fplot_colors
     use fplot_style
     use fplot_scale
     use fplot_cmap
@@ -23,6 +24,8 @@ module fplot
     public :: render_svg
     public :: subplot, suptitle, subplots_adjust, tight_layout
     public :: twinx, twiny
+    public :: set_fontsize
+    public :: close, gcf
 
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
@@ -67,6 +70,7 @@ module fplot
     real(dp), parameter :: TITLE_FONT = 12.0_dp
     real(dp), parameter :: SUPTITLE_FONT = 12.0_dp
     real(dp), parameter :: LABEL_FONT = 11.0_dp
+    real(dp), parameter :: LEGEND_FONT = 10.0_dp
     real(dp), parameter :: DIGIT_W = 0.636_dp
     ! Height of a one-line label including its leading, in font sizes.
     real(dp), parameter :: LABEL_BOX = 1.45_dp
@@ -162,6 +166,14 @@ module fplot
         real(dp) :: xtick_dir = 1.0_dp, ytick_dir = 1.0_dp
         real(dp) :: xtick_rot = 0.0_dp, ytick_rot = 0.0_dp
         real(dp) :: xtick_size = TICK_FONT, ytick_size = TICK_FONT
+        real(dp) :: title_size = TITLE_FONT
+        real(dp) :: xlabel_size = LABEL_FONT, ylabel_size = LABEL_FONT
+        real(dp) :: legend_size = LEGEND_FONT
+        integer :: legend_ncol = 1
+        logical :: legend_frame = .true.
+        character(len=64) :: legend_title = ""
+        real(dp) :: legend_bbox(2) = 0.0_dp
+        logical :: legend_has_bbox = .false.
         logical :: spine(4) = .true.
         ! Twin axes: which axes to borrow limits from, and which side this
         ! one's own ticks and label go on. A twin also lets the axes beneath
@@ -200,11 +212,33 @@ module fplot
     real(dp), save :: fig_bottom = MARGIN_BOTTOM, fig_top = MARGIN_TOP
     real(dp), save :: fig_wspace = WSPACE, fig_hspace = HSPACE
     character(len=256), save :: fig_suptitle = ""
+    ! Font sizes for anything not set on an individual axes. New axes take
+    ! their sizes from here, so set_fontsize before or after plotting behaves
+    ! the same way.
+    real(dp), save :: def_title = TITLE_FONT, def_label = LABEL_FONT
+    real(dp), save :: def_tick = TICK_FONT, def_legend = LEGEND_FONT
+    real(dp), save :: fig_suptitle_size = SUPTITLE_FONT
     type(axes_t), allocatable, save :: ax(:)
     integer, save :: n_ax = 0
     integer, save :: cur_i = 0
     integer, save :: grid_m = 0, grid_n = 0
     logical, save :: fig_initialized = .false.
+
+    ! A parked figure. Holds exactly the module state above, so switching
+    ! figures is a copy in and a copy out rather than threading a figure
+    ! object through every renderer routine. Any new figure-level variable
+    ! must be added here and to stash_fig/unstash_fig.
+    type :: figure_t
+        logical :: live = .false.
+        real(dp) :: w_in, h_in, dpi
+        real(dp) :: left, right, bottom, top, wspace, hspace
+        character(len=256) :: suptitle
+        real(dp) :: d_title, d_label, d_tick, d_legend, suptitle_size
+        type(axes_t), allocatable :: ax(:)
+        integer :: n_ax, cur_i, grid_m, grid_n
+    end type figure_t
+    type(figure_t), allocatable, save :: figs(:)
+    integer, save :: cur_fig = 0
 
     ! Pie wedges and colorbar cells are laid out in figure geometry, not on a
     ! user scale, so they map through a plain linear one.
@@ -214,6 +248,11 @@ contains
 
     subroutine ensure_fig()
         if (.not. fig_initialized) call clf()
+        if (cur_fig < 1) then
+            cur_fig = next_free_fig()
+            call grow_figs(cur_fig)
+            figs(cur_fig)%live = .true.
+        end if
         ! No axes yet: create a single full-figure axes (pylab default).
         if (cur_i < 1 .or. cur_i > n_ax) then
             call new_axes_grid(1, 1)
@@ -221,8 +260,153 @@ contains
         end if
     end subroutine ensure_fig
 
-    subroutine figure(figsize, dpi)
+    ! Copy the live figure state into slot k of the store, and back out again.
+    ! These two are the only places that know the full field list.
+    subroutine stash_fig(k)
+        integer, intent(in) :: k
+        figs(k)%live = .true.
+        figs(k)%w_in = fig_w_in
+        figs(k)%h_in = fig_h_in
+        figs(k)%dpi = fig_dpi
+        figs(k)%left = fig_left
+        figs(k)%right = fig_right
+        figs(k)%bottom = fig_bottom
+        figs(k)%top = fig_top
+        figs(k)%wspace = fig_wspace
+        figs(k)%hspace = fig_hspace
+        figs(k)%suptitle = fig_suptitle
+        figs(k)%d_title = def_title
+        figs(k)%d_label = def_label
+        figs(k)%d_tick = def_tick
+        figs(k)%d_legend = def_legend
+        figs(k)%suptitle_size = fig_suptitle_size
+        figs(k)%n_ax = n_ax
+        figs(k)%cur_i = cur_i
+        figs(k)%grid_m = grid_m
+        figs(k)%grid_n = grid_n
+        if (allocated(figs(k)%ax)) deallocate (figs(k)%ax)
+        ! Allocated explicitly rather than relying on reallocation on
+        ! assignment, which is not on by default in every compiler.
+        if (allocated(ax)) then
+            allocate (figs(k)%ax(size(ax)))
+            figs(k)%ax = ax
+        end if
+    end subroutine stash_fig
+
+    subroutine unstash_fig(k)
+        integer, intent(in) :: k
+        fig_w_in = figs(k)%w_in
+        fig_h_in = figs(k)%h_in
+        fig_dpi = figs(k)%dpi
+        fig_left = figs(k)%left
+        fig_right = figs(k)%right
+        fig_bottom = figs(k)%bottom
+        fig_top = figs(k)%top
+        fig_wspace = figs(k)%wspace
+        fig_hspace = figs(k)%hspace
+        fig_suptitle = figs(k)%suptitle
+        def_title = figs(k)%d_title
+        def_label = figs(k)%d_label
+        def_tick = figs(k)%d_tick
+        def_legend = figs(k)%d_legend
+        fig_suptitle_size = figs(k)%suptitle_size
+        n_ax = figs(k)%n_ax
+        cur_i = figs(k)%cur_i
+        grid_m = figs(k)%grid_m
+        grid_n = figs(k)%grid_n
+        if (allocated(ax)) deallocate (ax)
+        if (allocated(figs(k)%ax)) then
+            allocate (ax(size(figs(k)%ax)))
+            ax = figs(k)%ax
+        end if
+        fig_initialized = .true.
+    end subroutine unstash_fig
+
+    subroutine grow_figs(k)
+        integer, intent(in) :: k
+        type(figure_t), allocatable :: tmp(:)
+        integer :: i
+        if (.not. allocated(figs)) allocate (figs(0))
+        if (k <= size(figs)) return
+        allocate (tmp(k))
+        do i = 1, size(figs)
+            tmp(i) = figs(i)
+        end do
+        call move_alloc(tmp, figs)
+    end subroutine grow_figs
+
+    ! The number of the active figure, matplotlib's gcf().number.
+    function gcf() result(num)
+        integer :: num
+        call ensure_fig()
+        num = cur_fig
+    end function gcf
+
+    ! close() drops the active figure, close(num) a specific one and
+    ! close(all=.true.) every one, freeing the axes and their series data.
+    subroutine close(num, all)
+        integer, intent(in), optional :: num
+        logical, intent(in), optional :: all
+        integer :: k, i
+        if (present(all)) then
+            if (all) then
+                if (allocated(figs)) deallocate (figs)
+                cur_fig = 0
+                call clf()
+                fig_initialized = .false.
+                return
+            end if
+        end if
+        k = cur_fig
+        if (present(num)) k = num
+        if (k < 1) return
+        if (allocated(figs)) then
+            if (k <= size(figs)) then
+                figs(k)%live = .false.
+                if (allocated(figs(k)%ax)) deallocate (figs(k)%ax)
+            end if
+        end if
+        if (k == cur_fig) then
+            call clf()
+            fig_initialized = .false.
+            cur_fig = 0
+            ! Fall back to whichever figure is still open, as pyplot does.
+            if (allocated(figs)) then
+                do i = size(figs), 1, -1
+                    if (figs(i)%live) then
+                        cur_fig = i
+                        call unstash_fig(i)
+                        exit
+                    end if
+                end do
+            end if
+        end if
+    end subroutine close
+
+    subroutine figure(figsize, dpi, num)
         real(dp), intent(in), optional :: figsize(2), dpi
+        integer, intent(in), optional :: num
+        integer :: k
+        ! Park the figure we are leaving so it can be returned to by number.
+        if (cur_fig > 0 .and. fig_initialized) then
+            call grow_figs(cur_fig)
+            call stash_fig(cur_fig)
+        end if
+        if (present(num)) then
+            if (num < 1) error stop "fplot: figure num must be positive"
+            k = num
+        else
+            k = next_free_fig()
+        end if
+        call grow_figs(k)
+        if (figs(k)%live .and. .not. present(figsize) .and. .not. present(dpi)) then
+            ! Reselecting an existing figure resumes it untouched.
+            cur_fig = k
+            call unstash_fig(k)
+            return
+        end if
+        cur_fig = k
+        figs(k)%live = .true.
         call clf()
         fig_w_in = FIG_W_DEFAULT
         fig_h_in = FIG_H_DEFAULT
@@ -239,6 +423,19 @@ contains
         end if
     end subroutine figure
 
+    ! Lowest number not currently in use, matching pyplot's figure numbering.
+    function next_free_fig() result(k)
+        integer :: k
+        if (.not. allocated(figs)) then
+            k = 1
+            return
+        end if
+        do k = 1, size(figs)
+            if (.not. figs(k)%live) return
+        end do
+        k = size(figs) + 1
+    end function next_free_fig
+
     subroutine clf()
         cur_i = 0
         if (allocated(ax)) deallocate (ax)
@@ -252,6 +449,11 @@ contains
         fig_top = MARGIN_TOP
         fig_wspace = WSPACE
         fig_hspace = HSPACE
+        def_title = TITLE_FONT
+        def_label = LABEL_FONT
+        def_tick = TICK_FONT
+        def_legend = LEGEND_FONT
+        fig_suptitle_size = SUPTITLE_FONT
         fig_initialized = .true.
     end subroutine clf
 
@@ -266,10 +468,31 @@ contains
 
         n_ax = m * n
         allocate (ax(n_ax))
+        do i = 1, n_ax
+            call apply_font_defaults(ax(i))
+        end do
         grid_m = m
         grid_n = n
         call layout_grid()
     end subroutine new_axes_grid
+
+    ! Baseline of the x tick labels below the axes. Reduces to matplotlib's
+    ! 16.0 at the default tick size and grows with the ascent of larger text.
+    pure function xtick_gap(a) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp) :: v
+        v = 8.4_dp + 0.76_dp * a%xtick_size
+    end function xtick_gap
+
+    subroutine apply_font_defaults(a)
+        type(axes_t), intent(inout) :: a
+        a%title_size = def_title
+        a%xlabel_size = def_label
+        a%ylabel_size = def_label
+        a%xtick_size = def_tick
+        a%ytick_size = def_tick
+        a%legend_size = def_legend
+    end subroutine apply_font_defaults
 
     ! Place the existing axes in the current margins. Called again whenever
     ! those margins move, so the axes objects themselves survive.
@@ -348,7 +571,7 @@ contains
             ax(cur_i)%x_top = .true.
         end if
         ! matplotlib keeps counting through one cycle across twinned axes,
-        ! so the second curve does not come out the same colour as the first.
+        ! so the second curve does not come out the same color as the first.
         ax(cur_i)%color_cycle = ax(parent)%color_cycle
     end subroutine add_twin
 
@@ -394,7 +617,7 @@ contains
             if (mod(i - 1, grid_n) > 0) inner_l = max(inner_l, decor_left(ax(i)))
             if ((i - 1) / grid_n < grid_m - 1) inner_b = max(inner_b, decor_bottom(ax(i)))
         end do
-        if (len_trim(fig_suptitle) > 0) need_t = need_t + LABEL_BOX * SUPTITLE_FONT
+        if (len_trim(fig_suptitle) > 0) need_t = need_t + LABEL_BOX * fig_suptitle_size
 
         fig_left = (p + need_l) / W
         fig_right = 1.0_dp - (p + need_r) / W
@@ -426,7 +649,7 @@ contains
         type(axes_t), intent(in) :: a
         real(dp) :: v
         v = TICK_LEN + 2.0_dp + tick_label_width(a)
-        if (len_trim(a%ylabel) > 0) v = v + LABEL_BOX * LABEL_FONT
+        if (len_trim(a%ylabel) > 0) v = v + LABEL_BOX * a%ylabel_size
     end function decor_left
 
     function decor_bottom(a) result(v)
@@ -435,14 +658,64 @@ contains
         v = TICK_LEN + 1.0_dp + 1.15_dp * a%xtick_size
         if (a%xtick_rot /= 0.0_dp) v = v + tick_label_width(a) * &
                                         abs(sin(a%xtick_rot * PI / 180.0_dp))
-        if (len_trim(a%xlabel) > 0) v = v + LABEL_BOX * LABEL_FONT
+        if (len_trim(a%xlabel) > 0) v = v + LABEL_BOX * a%xlabel_size
     end function decor_bottom
+
+    ! How far the decorations reach to the right of the axes box. Only a
+    ! colorbar and its labels live out there.
+    function decor_right(a, W) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: W
+        real(dp) :: v, l0, w0
+        v = 0.0_dp
+        if (.not. a%cbar_on) return
+        l0 = a%left * W
+        w0 = (a%right * W - l0) / CBAR_SHRINK
+        v = l0 + (CBAR_X + CBAR_W) * w0 - a%right * W + 7.0_dp
+        if (len_trim(a%cbar_label) > 0) then
+            v = v + 34.0_dp
+        else
+            v = v + 4.0_dp * a%ytick_size
+        end if
+    end function decor_right
+
+    ! Bounding box of everything actually drawn, in canvas points. This is
+    ! what savefig(bbox_inches="tight") crops to, and it is built from the
+    ! same decoration estimates that tight_layout uses.
+    subroutine drawn_bbox(W, H, x0, y0, x1, y1)
+        real(dp), intent(in) :: W, H
+        real(dp), intent(out) :: x0, y0, x1, y1
+        integer :: i
+        real(dp) :: l, r, t, bt
+        x0 = W
+        y0 = H
+        x1 = 0.0_dp
+        y1 = 0.0_dp
+        do i = 1, n_ax
+            l = ax(i)%left * W - decor_left(ax(i))
+            r = ax(i)%right * W + decor_right(ax(i), W)
+            t = (1.0_dp - ax(i)%top) * H - decor_top(ax(i))
+            bt = (1.0_dp - ax(i)%bottom) * H + decor_bottom(ax(i))
+            x0 = min(x0, l)
+            x1 = max(x1, r)
+            y0 = min(y0, t)
+            y1 = max(y1, bt)
+        end do
+        if (len_trim(fig_suptitle) > 0) &
+            y0 = min(y0, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp - fig_suptitle_size)
+        if (x1 <= x0 .or. y1 <= y0) then
+            x0 = 0.0_dp
+            y0 = 0.0_dp
+            x1 = W
+            y1 = H
+        end if
+    end subroutine drawn_bbox
 
     function decor_top(a) result(v)
         type(axes_t), intent(in) :: a
         real(dp) :: v
         v = 0.0_dp
-        if (len_trim(a%title) > 0) v = LABEL_BOX * TITLE_FONT
+        if (len_trim(a%title) > 0) v = LABEL_BOX * a%title_size
     end function decor_top
 
     ! Widest tick label an axes will draw, in points. Tick text is digits,
@@ -479,29 +752,73 @@ contains
         cur_i = i
     end subroutine subplot
 
-    subroutine suptitle(s)
+    subroutine suptitle(s, fontsize)
         character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
         call ensure_fig()
         fig_suptitle = s
+        if (present(fontsize)) fig_suptitle_size = fontsize
     end subroutine suptitle
 
-    subroutine title(s)
+    subroutine title(s, fontsize)
         character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
         call ensure_fig()
         ax(cur_i)%title = s
+        if (present(fontsize)) ax(cur_i)%title_size = fontsize
     end subroutine title
 
-    subroutine xlabel(s)
+    subroutine xlabel(s, fontsize)
         character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
         call ensure_fig()
         ax(cur_i)%xlabel = s
+        if (present(fontsize)) ax(cur_i)%xlabel_size = fontsize
     end subroutine xlabel
 
-    subroutine ylabel(s)
+    subroutine ylabel(s, fontsize)
         character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
         call ensure_fig()
         ax(cur_i)%ylabel = s
+        if (present(fontsize)) ax(cur_i)%ylabel_size = fontsize
     end subroutine ylabel
+
+    ! One place to set text sizes. size= sets everything at once, which is the
+    ! common request; the individual arguments override it. Applies to the
+    ! axes that already exist as well as any made later, so it works whether
+    ! it is called before or after plotting.
+    subroutine set_fontsize(size, title, labels, ticks, legend)
+        real(dp), intent(in), optional :: size, title, labels, ticks, legend
+        integer :: i
+
+        call ensure_fig()
+        if (present(size)) then
+            ! Keep matplotlib's proportions: the title is a little larger than
+            ! the axis labels, which are larger than the tick labels.
+            def_title = size * TITLE_FONT / LABEL_FONT
+            def_label = size
+            def_tick = size * TICK_FONT / LABEL_FONT
+            def_legend = size * LEGEND_FONT / LABEL_FONT
+            fig_suptitle_size = size * SUPTITLE_FONT / LABEL_FONT
+        end if
+        if (present(title)) then
+            def_title = title
+            fig_suptitle_size = title
+        end if
+        if (present(labels)) def_label = labels
+        if (present(ticks)) def_tick = ticks
+        if (present(legend)) def_legend = legend
+
+        do i = 1, n_ax
+            ax(i)%title_size = def_title
+            ax(i)%xlabel_size = def_label
+            ax(i)%ylabel_size = def_label
+            ax(i)%xtick_size = def_tick
+            ax(i)%ytick_size = def_tick
+            ax(i)%legend_size = def_legend
+        end do
+    end subroutine set_fontsize
 
     subroutine grid(on)
         logical, intent(in) :: on
@@ -509,11 +826,27 @@ contains
         ax(cur_i)%grid_on = on
     end subroutine grid
 
-    subroutine legend(loc)
-        character(len=*), intent(in), optional :: loc
+    ! bbox_to_anchor is in axes coordinates, so (1.02, 1.0) with the default
+    ! loc="upper right" is matplotlib's usual recipe for parking the legend
+    ! just outside the right-hand edge. When it is given, loc names which
+    ! corner of the legend sits on the anchor rather than a position in the
+    ! axes, exactly as matplotlib treats it.
+    subroutine legend(loc, fontsize, ncol, frameon, title, bbox_to_anchor)
+        character(len=*), intent(in), optional :: loc, title
+        real(dp), intent(in), optional :: fontsize, bbox_to_anchor(2)
+        integer, intent(in), optional :: ncol
+        logical, intent(in), optional :: frameon
         call ensure_fig()
         ax(cur_i)%legend_on = .true.
         if (present(loc)) ax(cur_i)%legend_loc = loc
+        if (present(fontsize)) ax(cur_i)%legend_size = fontsize
+        if (present(ncol)) ax(cur_i)%legend_ncol = max(1, ncol)
+        if (present(frameon)) ax(cur_i)%legend_frame = frameon
+        if (present(title)) ax(cur_i)%legend_title = title
+        if (present(bbox_to_anchor)) then
+            ax(cur_i)%legend_bbox = bbox_to_anchor
+            ax(cur_i)%legend_has_bbox = .true.
+        end if
     end subroutine legend
 
     subroutine xticks(vals, labels)
@@ -742,13 +1075,14 @@ contains
     end subroutine push_text
 
     ! Start a new series of the given kind and return its index, applying the
-    ! shared bookkeeping (point count, colour cycling, label).
+    ! shared bookkeeping (point count, color cycling, label).
     function new_shape_series(kd, x, y, color, label, alpha) result(is)
         integer, intent(in) :: kd
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: color, label
         real(dp), intent(in), optional :: alpha
         integer :: is, n
+        real(dp) :: ca
 
         is = 0
         n = min(size(x), size(y))
@@ -767,31 +1101,102 @@ contains
         if (present(label)) ax(cur_i)%series(is)%label = label
         if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
 
-        ax(cur_i)%series(is)%color = resolve_color(color)
+        ax(cur_i)%series(is)%color = resolve_color(color, ca)
+        if (ca >= 0.0_dp .and. .not. present(alpha)) ax(cur_i)%series(is)%alpha = ca
         if (len_trim(ax(cur_i)%series(is)%color) == 0) then
             ax(cur_i)%series(is)%color = color_from_C(ax(cur_i)%color_cycle)
             ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
         end if
     end function new_shape_series
 
-    ! Accept "#rrggbb", a single-letter name, or a "C<n>" cycle index.
-    function resolve_color(color) result(col)
+    ! Every spelling of a color matplotlib accepts: "#rgb", "#rrggbb",
+    ! "#rrggbbaa", a CSS4/X11 or "tab:" name, a single-letter code, a "C<n>"
+    ! cycle index, or a greyscale fraction such as "0.5". Returns an empty
+    ! string if the color is not recognised, which lets callers fall back to
+    ! the cycle. An "#rrggbbaa" alpha comes back through alpha_out.
+    function resolve_color(color, alpha_out) result(col)
         character(len=*), intent(in), optional :: color
+        real(dp), intent(out), optional :: alpha_out
         character(len=7) :: col
-        integer :: m
+        character(len=:), allocatable :: c
+        integer :: m, n, ios
+        real(dp) :: g
 
         col = ""
+        if (present(alpha_out)) alpha_out = -1.0_dp
         if (.not. present(color)) return
         if (len_trim(color) == 0) return
-        if (is_hex_color(trim(color))) then
-            col = color(1:7)
-        else if (len_trim(color) == 1) then
-            col = color_from_char(color(1:1))
-        else if (len_trim(color) >= 2 .and. color(1:1) == "C") then
-            read (color(2:2), *) m
-            col = color_from_C(m)
+        c = trim(adjustl(color))
+        n = len(c)
+
+        if (c(1:1) == "#") then
+            select case (n)
+            case (4)
+                ! "#rgb" is shorthand for "#rrggbb" with each digit doubled.
+                col = "#" // c(2:2) // c(2:2) // c(3:3) // c(3:3) // c(4:4) // c(4:4)
+            case (7)
+                col = c
+            case (9)
+                col = c(1:7)
+                if (present(alpha_out)) alpha_out = real(hex_byte(c(8:9)), dp) / 255.0_dp
+            end select
+            return
+        end if
+
+        if (n >= 2 .and. c(1:1) == "C") then
+            m = -1
+            read (c(2:n), *, iostat=ios) m
+            if (ios == 0 .and. m >= 0) then
+                col = color_from_C(m)
+                return
+            end if
+        end if
+
+        if (n == 1) then
+            col = color_from_char(c(1:1))
+            if (len_trim(col) > 0) return
+        end if
+
+        col = color_from_name(c)
+        if (len_trim(col) > 0) return
+
+        ! A bare number is a shade of grey, "0" black through "1" white.
+        read (c, *, iostat=ios) g
+        if (ios == 0 .and. g >= 0.0_dp .and. g <= 1.0_dp) then
+            m = nint(g * 255.0_dp)
+            col = "#" // hex_pair(m) // hex_pair(m) // hex_pair(m)
         end if
     end function resolve_color
+
+    pure function hex_byte(s) result(v)
+        character(len=2), intent(in) :: s
+        integer :: v
+        v = 16 * hex_digit(s(1:1)) + hex_digit(s(2:2))
+    end function hex_byte
+
+    pure function hex_digit(c) result(v)
+        character(len=1), intent(in) :: c
+        integer :: v, k
+        k = iachar(c)
+        if (k >= 48 .and. k <= 57) then
+            v = k - 48
+        else if (k >= 97 .and. k <= 102) then
+            v = k - 87
+        else if (k >= 65 .and. k <= 70) then
+            v = k - 55
+        else
+            v = 0
+        end if
+    end function hex_digit
+
+    pure function hex_pair(v) result(s)
+        integer, intent(in) :: v
+        character(len=2) :: s
+        character(len=16), parameter :: D = "0123456789abcdef"
+        integer :: w
+        w = max(0, min(255, v))
+        s = D(w / 16 + 1:w / 16 + 1) // D(mod(w, 16) + 1:mod(w, 16) + 1)
+    end function hex_pair
 
     ! Draw z as an image. z is indexed (row, column) and, with the default
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
@@ -1190,8 +1595,8 @@ contains
         if (present(position)) ax(cur_i)%series(is)%pos = position
         ax(cur_i)%series(is)%width = wdefault
         if (present(width)) ax(cur_i)%series(is)%width = width
-        ! Neither kind takes a turn in the colour cycle: matplotlib draws box
-        ! furniture in black and every violin in the first cycle colour.
+        ! Neither kind takes a turn in the color cycle: matplotlib draws box
+        ! furniture in black and every violin in the first cycle color.
         if (.not. present(color)) then
             if (kd == SERIES_BOX) then
                 ax(cur_i)%series(is)%color = "#000000"
@@ -1375,7 +1780,7 @@ contains
         call ensure_fig()
         is = new_shape_series(kd, [v], [v], color, label)
         if (is < 1) return
-        ! Reference lines default to black, not to the colour cycle.
+        ! Reference lines default to black, not to the color cycle.
         if (.not. present(color)) then
             ax(cur_i)%series(is)%color = "#000000"
             ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
@@ -1456,6 +1861,7 @@ contains
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
         real(dp), intent(in), optional :: lw, alpha
         integer :: n, is, m, ls
+        real(dp) :: ca
         character(len=7) :: col
         character(len=32) :: f
         logical :: have_fmt
@@ -1500,8 +1906,11 @@ contains
             if (len_trim(col) > 0) ax(ia)%series(is)%color = col
         end if
 
-        col = resolve_color(color)
+        col = resolve_color(color, ca)
         if (len_trim(col) > 0) ax(ia)%series(is)%color = col
+        ! An "#rrggbbaa" spelling carries its own alpha; an explicit alpha=
+        ! argument still wins, matching matplotlib.
+        if (ca >= 0.0_dp) ax(ia)%series(is)%alpha = ca
 
         if (present(marker)) then
             select case (trim(marker))
@@ -1869,7 +2278,7 @@ contains
         call append_opacity(b, "fill-opacity", alpha)
         ! Abutting polygons leave a hairline of background showing through
         ! where the renderer antialiases both edges, so seal the seam by
-        ! stroking the outline in the fill colour.
+        ! stroking the outline in the fill color.
         if (present(seal)) then
             if (seal) then
                 call builder_append(b, '" stroke="')
@@ -2550,13 +2959,13 @@ contains
             call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
             call format_tick_to(v, .false., lbl, ln)
             call append_text(b, bx + bw + 7.0_dp, py + 3.5_dp, lbl(1:ln), &
-                             "left", 10.0_dp, "#000000")
+                             "left", a%ytick_size, "#000000")
         end do
 
         if (len_trim(a%cbar_label) > 0) then
             call xml_escape_to(a%cbar_label, esc, ln)
             call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), esc(1:ln), &
-                             "center", 11.0_dp, "#000000", &
+                             "center", a%ylabel_size, "#000000", &
                              "rotate(-90 " // trim(fmt_pt(bx + bw + 34.0_dp)) // " " // &
                              trim(fmt_pt(0.5_dp * (bt + bb))) // ")")
         end if
@@ -2570,7 +2979,7 @@ contains
         t = t(1:n)
     end function fmt_pt
 
-    ! Per-point colour when scatter mapped c values, otherwise the series colour.
+    ! Per-point color when scatter mapped c values, otherwise the series color.
     function point_color(s, j) result(col)
         type(series_t), intent(in) :: s
         integer, intent(in) :: j
@@ -2584,6 +2993,33 @@ contains
 
     ! matplotlib's "best" needs a data-overlap search; upper right is the
     ! placement it picks for the common case, so we use it as the fallback.
+    ! Place the legend box against a point given in axes coordinates. loc then
+    ! names the corner of the box that touches that point, which is what lets
+    ! loc="upper left" with bbox_to_anchor=[1.02, 1] sit outside the axes.
+    subroutine legend_anchor(loc, ax_l, ax_t, ax_b, ax_w, bbox, &
+                             leg_w, leg_h, leg_x, leg_y)
+        character(len=*), intent(in) :: loc
+        real(dp), intent(in) :: ax_l, ax_t, ax_b, ax_w, bbox(2), leg_w, leg_h
+        real(dp), intent(out) :: leg_x, leg_y
+        real(dp) :: px, py
+        px = ax_l + bbox(1) * ax_w
+        py = ax_b - bbox(2) * (ax_b - ax_t)
+        if (index(loc, "right") > 0) then
+            leg_x = px - leg_w
+        else if (index(loc, "center") > 0 .and. index(loc, "left") == 0) then
+            leg_x = px - 0.5_dp * leg_w
+        else
+            leg_x = px
+        end if
+        if (index(loc, "lower") > 0) then
+            leg_y = py - leg_h
+        else if (index(loc, "upper") > 0 .or. loc == "best") then
+            leg_y = py
+        else
+            leg_y = py - 0.5_dp * leg_h
+        end if
+    end subroutine legend_anchor
+
     subroutine legend_origin(loc, ax_l, ax_r, ax_t, ax_b, leg_w, leg_h, leg_x, leg_y)
         character(len=*), intent(in) :: loc
         real(dp), intent(in) :: ax_l, ax_r, ax_t, ax_b, leg_w, leg_h
@@ -2719,8 +3155,8 @@ contains
         character(len=512) :: esc
         integer :: ln, en
         type(scale_t) :: xsc, ysc
-        integer :: n_leg, k, max_lbl
-        real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h
+        integer :: n_leg, k, max_lbl, n_col, n_row, lc, lr
+        real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h, col_w, ttl_h, leg_x0
 
         ax_l = a%left * W
         ax_r = a%right * W
@@ -3021,7 +3457,7 @@ contains
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
             call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, a%xtick_len)
             call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, lbl, ln)
-            call append_tick_text(b, px, x_edge + x_out * 16.0_dp - &
+            call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
                                   merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
                                   a%xtick_size, a%xtick_rot)
         end do
@@ -3056,19 +3492,22 @@ contains
 
         if (len_trim(a%xlabel) > 0) then
             call xml_escape_to(a%xlabel, esc, en)
-            call append_text(b, 0.5_dp * (ax_l + ax_r), ax_b + 28.6_dp, esc(1:en), &
-                             "center", 11.0_dp, "#000000")
+            call append_text(b, 0.5_dp * (ax_l + ax_r), &
+                             ax_b + xtick_gap(a) + 0.24_dp * a%xtick_size + 1.84_dp &
+                             + 0.76_dp * a%xlabel_size, esc(1:en), &
+                             "center", a%xlabel_size, "#000000")
         end if
 
         if (len_trim(a%ylabel) > 0) then
             call xml_escape_to(a%ylabel, esc, en)
             ! The right-hand label of a twinx faces the other way, so that it
             ! reads from outside the axes just as the left-hand one does.
-            mid = y_edge + y_out * 34.0_dp
+            mid = y_edge + y_out * (34.0_dp + 0.76_dp * (a%ylabel_size - LABEL_FONT) &
+                                    + 1.15_dp * (a%ytick_size - TICK_FONT))
             call fmt_num(mid, tx, tn)
             call fmt_num(0.5_dp * (ax_t + ax_b), ty, tyn)
             call append_text(b, mid, 0.5_dp * (ax_t + ax_b), esc(1:en), &
-                             "center", 11.0_dp, "#000000", &
+                             "center", a%ylabel_size, "#000000", &
                              "rotate(" // merge("90 ", "-90", a%y_right) // " " // &
                              tx(1:tn) // " " // ty(1:tyn) // ")")
         end if
@@ -3076,8 +3515,9 @@ contains
         ! title
         if (len_trim(a%title) > 0) then
             call xml_escape_to(a%title, esc, en)
-            call append_text(b, 0.5_dp * (ax_l + ax_r), ax_t - 6.0_dp, esc(1:en), &
-                             "center", 12.0_dp, "#000000")
+            call append_text(b, 0.5_dp * (ax_l + ax_r), &
+                             ax_t - 0.5_dp * a%title_size, esc(1:en), &
+                             "center", a%title_size, "#000000")
         end if
 
         if (a%cbar_on) call append_colorbar(b, a, idx, W, H)
@@ -3093,14 +3533,33 @@ contains
                 end if
             end do
             if (n_leg > 0) then
-                row_h = 18.0_dp
+                row_h = 18.0_dp * a%legend_size / LEGEND_FONT
+                n_col = min(max(1, a%legend_ncol), n_leg)
+                n_row = (n_leg + n_col - 1) / n_col
                 ! Sample line (leg_x+8 .. leg_x+28), gap to the text at
                 ! leg_x+34, the label itself, and a trailing pad.
-                leg_w = 34.0_dp + real(max_lbl, dp) * LEGEND_CHAR_W + 8.0_dp
-                leg_w = min(leg_w, ax_w - 16.0_dp)
-                leg_h = 8.0_dp + real(n_leg, dp) * row_h
-                call legend_origin(a%legend_loc, ax_l, ax_r, ax_t, ax_b, &
-                                   leg_w, leg_h, leg_x, leg_y)
+                col_w = 34.0_dp + real(max_lbl, dp) * LEGEND_CHAR_W &
+                        * a%legend_size / LEGEND_FONT + 8.0_dp
+                leg_w = real(n_col, dp) * col_w
+                ttl_h = 0.0_dp
+                if (len_trim(a%legend_title) > 0) ttl_h = row_h
+                leg_h = 8.0_dp + ttl_h + real(n_row, dp) * row_h
+                if (a%legend_has_bbox) then
+                    call legend_anchor(a%legend_loc, ax_l, ax_t, ax_b, &
+                                       ax_w, a%legend_bbox, leg_w, leg_h, &
+                                       leg_x, leg_y)
+                else
+                    leg_w = min(leg_w, ax_w - 16.0_dp)
+                    call legend_origin(a%legend_loc, ax_l, ax_r, ax_t, ax_b, &
+                                       leg_w, leg_h, leg_x, leg_y)
+                end if
+                if (len_trim(a%legend_title) > 0) then
+                    call xml_escape_to(a%legend_title, esc, en)
+                    call append_text(b, leg_x + 0.5_dp * leg_w, &
+                                     leg_y + 4.0_dp + 0.5_dp * row_h + 3.5_dp, &
+                                     esc(1:en), "center", a%legend_size, "#000000")
+                end if
+                if (a%legend_frame) then
                 call builder_append(b, '<rect x="')
                 call append_num(b, leg_x)
                 call builder_append(b, '" y="')
@@ -3111,11 +3570,16 @@ contains
                 call append_num(b, leg_h)
                 call builder_append(b, '" fill="#ffffff" stroke="#cccccc" stroke-width="0.8" rx="2"/>')
                 call builder_append(b, new_line("a"))
+                end if
+                leg_x0 = leg_x
                 k = 0
                 do i = 1, a%n_series
                     if (len_trim(a%series(i)%label) == 0) cycle
                     k = k + 1
-                    py = leg_y + 4.0_dp + (real(k, dp) - 0.5_dp) * row_h
+                    lc = (k - 1) / n_row
+                    lr = k - 1 - lc * n_row
+                    leg_x = leg_x0 + real(lc, dp) * col_w
+                    py = leg_y + 4.0_dp + ttl_h + (real(lr, dp) + 0.5_dp) * row_h
                     if (a%series(i)%linestyle /= LINE_NONE) then
                         call builder_append(b, '<line x1="')
                         call append_num(b, leg_x + 8.0_dp)
@@ -3142,18 +3606,19 @@ contains
                     end if
                     call xml_escape_to(a%series(i)%label, esc, en)
                     call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, esc(1:en), &
-                                     "left", 10.0_dp, "#000000")
+                                     "left", a%legend_size, "#000000")
                 end do
             end if
         end if
     end subroutine render_axes
 
-    function render_svg(facecolor, transparent) result(svg)
-        character(len=*), intent(in), optional :: facecolor
+    function render_svg(facecolor, transparent, bbox_inches, pad_inches) result(svg)
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
         logical, intent(in), optional :: transparent
+        real(dp), intent(in), optional :: pad_inches
         character(len=:), allocatable :: svg
         type(svg_builder) :: b
-        real(dp) :: W, H
+        real(dp) :: W, H, vx, vy, vw, vh, bpad
         character(len=512) :: esc
         character(len=7) :: face
         logical :: clear
@@ -3168,27 +3633,55 @@ contains
 
         W = fig_w_in * PT_PER_IN
         H = fig_h_in * PT_PER_IN
+        vx = 0.0_dp
+        vy = 0.0_dp
+        vw = W
+        vh = H
+        if (present(bbox_inches)) then
+            if (lower(trim(bbox_inches)) == "tight") then
+                bpad = 0.1_dp
+                if (present(pad_inches)) bpad = pad_inches
+                bpad = bpad * PT_PER_IN
+                ! Cropping is expressed as a shifted viewBox, so the drawing
+                ! itself needs no translation.
+                call drawn_bbox(W, H, vx, vy, vw, vh)
+                vx = vx - bpad
+                vy = vy - bpad
+                vw = vw - vx + bpad
+                vh = vh - vy + bpad
+            else if (len_trim(bbox_inches) > 0) then
+                error stop "fplot: bbox_inches must be 'tight'"
+            end if
+        end if
 
         call builder_append(b, '<?xml version="1.0" encoding="utf-8" standalone="no"?>')
         call builder_append(b, new_line("a"))
         call builder_append(b, '<svg xmlns="http://www.w3.org/2000/svg" ')
         call builder_append(b, 'xmlns:xlink="http://www.w3.org/1999/xlink" width="')
-        call append_num(b, W)
+        call append_num(b, vw)
         call builder_append(b, 'pt" height="')
-        call append_num(b, H)
-        call builder_append(b, 'pt" viewBox="0 0 ')
-        call append_num(b, W)
+        call append_num(b, vh)
+        call builder_append(b, 'pt" viewBox="')
+        call append_num(b, vx)
         call builder_append(b, " ")
-        call append_num(b, H)
+        call append_num(b, vy)
+        call builder_append(b, " ")
+        call append_num(b, vw)
+        call builder_append(b, " ")
+        call append_num(b, vh)
         call builder_append(b, '" version="1.1">')
         call builder_append(b, new_line("a"))
 
         ! background; transparent drops the figure patch entirely
         if (.not. clear) then
-            call builder_append(b, '<rect x="0" y="0" width="')
-            call append_num(b, W)
+            call builder_append(b, '<rect x="')
+            call append_num(b, vx)
+            call builder_append(b, '" y="')
+            call append_num(b, vy)
+            call builder_append(b, '" width="')
+            call append_num(b, vw)
             call builder_append(b, '" height="')
-            call append_num(b, H)
+            call append_num(b, vh)
             call builder_append(b, '" fill="')
             call builder_append(b, face)
             call builder_append(b, '"/>')
@@ -3204,7 +3697,7 @@ contains
         if (len_trim(fig_suptitle) > 0) then
             call xml_escape_to(fig_suptitle, esc, en)
             call append_text(b, 0.5_dp * W, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp, &
-                             esc(1:en), "center", 12.0_dp, "#000000")
+                             esc(1:en), "center", fig_suptitle_size, "#000000")
         end if
 
         call builder_append(b, "</svg>")
@@ -3243,15 +3736,23 @@ contains
         end do
     end function lower
 
-    subroutine savefig(filename, transparent, facecolor)
+    ! dpi is accepted and remembered, but SVG is resolution independent and
+    ! matplotlib emits the same inches*72 canvas at any dpi, so it does not
+    ! change the output here either.
+    subroutine savefig(filename, transparent, facecolor, dpi, bbox_inches, pad_inches)
         character(len=*), intent(in) :: filename
         logical, intent(in), optional :: transparent
-        character(len=*), intent(in), optional :: facecolor
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        real(dp), intent(in), optional :: dpi, pad_inches
         character(len=:), allocatable :: svg
         integer :: u, ios, n
 
         call check_svg_ext(filename)
-        svg = render_svg(facecolor, transparent)
+        if (present(dpi)) then
+            if (dpi <= 0.0_dp) error stop "fplot: savefig dpi must be positive"
+            fig_dpi = dpi
+        end if
+        svg = render_svg(facecolor, transparent, bbox_inches, pad_inches)
         n = len(svg)
         open (newunit=u, file=trim(filename), status="replace", action="write", &
               form="unformatted", access="stream", iostat=ios)

@@ -52,6 +52,11 @@ OUT_NAMES = [
     "tight_layout",
     "subplots_adjust",
     "twinx",
+    "colors",
+    "fontsize",
+    "legend_opts",
+    "savefig_tight",
+    "figures",
 ]
 
 
@@ -480,6 +485,53 @@ def main() -> None:
     ax2.set_ylabel("right")
     ax.set_title("twinx")
     save(fig, "twinx")
+
+    # 39 color spellings
+    fig, ax = setup_fig()
+    xsm = [0.0, 1.0]
+    for i, c in enumerate(
+        ["red", "tab:orange", "steelblue", "#0f0", "0.5", "#8c564bcc"], start=1
+    ):
+        ax.plot(xsm, [float(i)] * 2, color=c, lw=3.0)
+    ax.set_title("color names")
+    save(fig, "colors")
+
+    # 40 font sizes
+    fig, ax = setup_fig()
+    ax.plot(xb, hb, label="sine")
+    ax.set_title("big title", fontsize=17.0)
+    ax.set_xlabel("x axis", fontsize=14.0)
+    ax.set_ylabel("y axis", fontsize=14.0)
+    ax.tick_params(labelsize=13.0)
+    ax.legend(fontsize=12.0)
+    save(fig, "fontsize")
+
+    # 41 legend options
+    fig, ax = setup_fig()
+    ax.plot(xb, hb, label="alpha")
+    ax.plot(xb, hb * 0.5, label="beta")
+    ax.plot(xb, hb * 0.25, label="gamma")
+    ax.plot(xb, hb * 0.125, label="delta")
+    ax.legend(loc="upper right", ncol=2, title="series", frameon=False)
+    save(fig, "legend_opts")
+
+    # 42 savefig bbox_inches="tight"
+    fig, ax = setup_fig()
+    ax.plot(xb, hb)
+    ax.set_title("tight")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "savefig_tight", bbox_inches="tight", dpi=200)
+
+    # 43 two live figures kept apart, then closed
+    f1, a1 = setup_fig()
+    a1.plot(xb, hb, "r-")
+    a1.set_title("figure one")
+    f2, a2 = setup_fig()
+    a2.plot(xb, -hb, "b-")
+    a2.set_title("figure two")
+    plt.close(f2)
+    save(f1, "figures")
 
     print("All matplotlib references written.")
 
