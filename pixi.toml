@@ -2,7 +2,7 @@
 authors = ["Ondřej Čertík <ondrej@certik.us>"]
 channels = ["conda-forge"]
 name = "fplot"
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64", "linux-64"]
 version = "0.1.0"
 
 [tasks]
@@ -25,3 +25,6 @@ numpy = ">=2.5.1,<3"
 cairosvg = ">=2.9.0,<3"
 pillow = ">=12.3.0,<13"
 lfortran = ">=0.64.0,<0.65"
+
+[target.linux-64.dependencies]
+flang = ">=22,<23"

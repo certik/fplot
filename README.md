@@ -1,5 +1,7 @@
 # fplot
 
+[![CI](https://github.com/certik/fplot/actions/workflows/ci.yml/badge.svg)](https://github.com/certik/fplot/actions/workflows/ci.yml)
+
 Pure Fortran plotting library that emits SVG text, with a pylab-style API.
 
 ```fortran
@@ -37,7 +39,9 @@ call suptitle("figure title")
 
 ## Build
 
-Requires **Flang** or **LFortran** on `PATH`, and [pixi](https://pixi.sh) for Python comparison tooling.
+Requires [pixi](https://pixi.sh). LFortran is installed by pixi on all platforms.
+Flang is installed by pixi on Linux (conda-forge); on macOS provide a system
+Flang on `PATH`.
 
 ```bash
 pixi install
@@ -54,6 +58,8 @@ pixi run test-lfortran
 # Compare against matplotlib reference SVGs
 pixi run compare
 ```
+
+CI (Linux) runs `pixi run test-flang` and `pixi run test-lfortran`.
 
 ## Layout
 
