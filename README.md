@@ -65,6 +65,8 @@ call suptitle("figure title")
 - `twinx` and `twiny` for a second y or x axis on the same plot
 - Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
   color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
+- `subplot2grid`: panels that span several cells of a grid, so a wide
+  plot can sit over two narrow ones
 - `pcolormesh` and `pcolor`: a grid of cells with edges of your own
   choosing, which is what an unevenly sampled field needs
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the

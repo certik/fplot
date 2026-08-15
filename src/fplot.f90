@@ -29,7 +29,7 @@ module fplot
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg, render_pdf, render_png
-    public :: subplot, suptitle, subplots_adjust, tight_layout
+    public :: subplot, subplot2grid, suptitle, subplots_adjust, tight_layout
     public :: twinx, twiny
     public :: set_fontsize
     public :: close, gcf
@@ -194,6 +194,10 @@ module fplot
         logical :: img_origin_upper = .true.
         ! pcolormesh keeps the same samples in img, but with its own cell
         ! edges instead of an evenly divided extent.
+        ! Where the axes sits in the figure's grid, zero based, and how
+        ! many cells it spans. A plain subplot spans one of each.
+        integer :: g_row = 0, g_col = 0
+        integer :: g_rowspan = 1, g_colspan = 1
         logical :: has_mesh = .false.
         real(dp), allocatable :: mesh_x(:), mesh_y(:)
         ! Data units per point in y over the same in x. Zero means auto.
@@ -367,6 +371,9 @@ module fplot
     integer, save :: n_ax = 0
     integer, save :: cur_i = 0
     integer, save :: grid_m = 0, grid_n = 0
+    ! A grid whose cells are filled in one at a time by subplot2grid,
+    ! rather than all at once by subplot.
+    logical, save :: grid_sparse = .false.
     logical, save :: fig_initialized = .false.
 
     ! A parked figure. Holds exactly the module state above, so switching
@@ -381,6 +388,7 @@ module fplot
         real(dp) :: d_title, d_label, d_tick, d_legend, suptitle_size
         type(axes_t), allocatable :: ax(:)
         integer :: n_ax, cur_i, grid_m, grid_n
+        logical :: sparse
     end type figure_t
     type(figure_t), allocatable, save :: figs(:)
     integer, save :: cur_fig = 0
@@ -429,6 +437,7 @@ contains
         figs(k)%cur_i = cur_i
         figs(k)%grid_m = grid_m
         figs(k)%grid_n = grid_n
+        figs(k)%sparse = grid_sparse
         if (allocated(figs(k)%ax)) deallocate (figs(k)%ax)
         ! Allocated explicitly rather than relying on reallocation on
         ! assignment, which is not on by default in every compiler.
@@ -459,6 +468,7 @@ contains
         cur_i = figs(k)%cur_i
         grid_m = figs(k)%grid_m
         grid_n = figs(k)%grid_n
+        grid_sparse = figs(k)%sparse
         if (allocated(ax)) deallocate (ax)
         if (allocated(figs(k)%ax)) then
             allocate (ax(size(figs(k)%ax)))
@@ -587,6 +597,7 @@ contains
         n_ax = 0
         grid_m = 0
         grid_n = 0
+        grid_sparse = .false.
         fig_suptitle = ""
         fig_left = MARGIN_LEFT
         fig_right = MARGIN_RIGHT
@@ -615,9 +626,12 @@ contains
         allocate (ax(n_ax))
         do i = 1, n_ax
             call apply_font_defaults(ax(i))
+            ax(i)%g_row = (i - 1) / n
+            ax(i)%g_col = mod(i - 1, n)
         end do
         grid_m = m
         grid_n = n
+        grid_sparse = .false.
         call layout_grid()
     end subroutine new_axes_grid
 
@@ -790,17 +804,20 @@ contains
         dx = w * (1.0_dp + fig_wspace)
         dy = h * (1.0_dp + fig_hspace)
 
-        do i = 1, min(n_ax, grid_m * grid_n)
-            r = (i - 1) / grid_n     ! row from the top
-            c = mod(i - 1, grid_n)   ! column from the left
+        do i = 1, n_ax
+            ! Twins sit exactly on top of the axes they were made from.
+            r = max(ax(i)%share_x, ax(i)%share_y)
+            if (r >= 1) cycle
+            r = ax(i)%g_row          ! row from the top
+            c = ax(i)%g_col          ! column from the left
             ax(i)%left = fig_left + real(c, dp) * dx
-            ax(i)%right = ax(i)%left + w
-            ax(i)%bottom = fig_bottom + real(grid_m - 1 - r, dp) * dy
-            ax(i)%top = ax(i)%bottom + h
+            ax(i)%right = ax(i)%left + w + real(ax(i)%g_colspan - 1, dp) * dx
+            ax(i)%bottom = fig_bottom + &
+                           real(grid_m - r - ax(i)%g_rowspan, dp) * dy
+            ax(i)%top = ax(i)%bottom + h + real(ax(i)%g_rowspan - 1, dp) * dy
         end do
 
-        ! Twins sit exactly on top of the axes they were made from.
-        do i = grid_m * grid_n + 1, n_ax
+        do i = 1, n_ax
             r = max(ax(i)%share_x, ax(i)%share_y)
             if (r < 1) cycle
             ax(i)%left = ax(r)%left
@@ -894,8 +911,9 @@ contains
             need_t = max(need_t, decor_top(ax(i)))
             ! Only axes away from the left column and the bottom row put
             ! decorations into the gaps between subplots.
-            if (mod(i - 1, grid_n) > 0) inner_l = max(inner_l, decor_left(ax(i)))
-            if ((i - 1) / grid_n < grid_m - 1) inner_b = max(inner_b, decor_bottom(ax(i)))
+            if (ax(i)%g_col > 0) inner_l = max(inner_l, decor_left(ax(i)))
+            if (ax(i)%g_row + ax(i)%g_rowspan < grid_m) &
+                inner_b = max(inner_b, decor_bottom(ax(i)))
         end do
         if (len_trim(fig_suptitle) > 0) need_t = need_t + LABEL_BOX * fig_suptitle_size
 
@@ -1050,6 +1068,55 @@ contains
         if (grid_m /= m .or. grid_n /= n) call new_axes_grid(m, n)
         cur_i = i
     end subroutine subplot
+
+    ! One axes spanning several cells of a shape(1) x shape(2) grid, with
+    ! its top left corner at loc, counted from zero as matplotlib counts
+    ! it. Cells nobody asks for stay empty, which is how a wide panel over
+    ! two narrow ones is built.
+    function subplot2grid(shape, loc, rowspan, colspan) result(h)
+        integer, intent(in) :: shape(2), loc(2)
+        integer, intent(in), optional :: rowspan, colspan
+        type(axes) :: h
+        type(axes_t), allocatable :: tmp(:)
+        integer :: rs, cs
+
+        rs = 1
+        cs = 1
+        if (present(rowspan)) rs = max(1, rowspan)
+        if (present(colspan)) cs = max(1, colspan)
+        if (shape(1) < 1 .or. shape(2) < 1) then
+            print *, "fplot: invalid subplot2grid shape:", shape
+            error stop
+        end if
+
+        call ensure_fig()
+        ! A grid of a different shape, or one that subplot filled in for
+        ! us, is not ours to add to.
+        if (.not. grid_sparse .or. grid_m /= shape(1) .or. grid_n /= shape(2)) then
+            if (allocated(ax)) deallocate (ax)
+            n_ax = 0
+            grid_m = shape(1)
+            grid_n = shape(2)
+            grid_sparse = .true.
+        end if
+
+        if (n_ax > 0) then
+            call move_alloc(ax, tmp)
+            allocate (ax(n_ax + 1))
+            ax(1:n_ax) = tmp
+        else
+            allocate (ax(1))
+        end if
+        n_ax = n_ax + 1
+        cur_i = n_ax
+        call apply_font_defaults(ax(cur_i))
+        ax(cur_i)%g_row = max(0, min(loc(1), grid_m - 1))
+        ax(cur_i)%g_col = max(0, min(loc(2), grid_n - 1))
+        ax(cur_i)%g_rowspan = min(rs, grid_m - ax(cur_i)%g_row)
+        ax(cur_i)%g_colspan = min(cs, grid_n - ax(cur_i)%g_col)
+        call layout_grid()
+        h%idx = cur_i
+    end function subplot2grid
 
     ! ----------------------------------------------------------------------
     ! Axes handles. subplots makes a new figure, as matplotlib's does, and

@@ -53,6 +53,7 @@ OUT_NAMES = [
     "categorical",
     "mathtext",
     "pcolormesh",
+    "gridspec",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -689,6 +690,19 @@ def main() -> None:
     fig.colorbar(m, ax=ax)
     ax.set_title("pcolormesh")
     save(fig, "pcolormesh")
+
+    # 59 panels spanning several cells
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    a1 = plt.subplot2grid((3, 3), (0, 0), colspan=3)
+    a2 = plt.subplot2grid((3, 3), (1, 0), colspan=2, rowspan=2)
+    a3 = plt.subplot2grid((3, 3), (1, 2), rowspan=2)
+    a1.plot(x, y)
+    a1.set_title("wide")
+    a2.plot(x, y2)
+    a2.set_title("big")
+    a3.plot(x, y)
+    a3.set_title("tall")
+    save(fig, "gridspec")
 
     print("All matplotlib references written.")
 

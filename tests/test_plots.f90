@@ -3,6 +3,7 @@ program test_plots
     implicit none
     integer :: fig1
     type(axes), allocatable :: axs(:, :)
+    type(axes) :: a1, a2, a3
 
     integer, parameter :: n = 100
     integer, parameter :: m = 20
@@ -678,6 +679,19 @@ program test_plots
     call colorbar()
     call title("pcolormesh")
     call save_all("pcolormesh")
+
+    ! 59) panels spanning several cells
+    call clf()
+    a1 = subplot2grid([3, 3], [0, 0], colspan=3)
+    a2 = subplot2grid([3, 3], [1, 0], colspan=2, rowspan=2)
+    a3 = subplot2grid([3, 3], [1, 2], rowspan=2)
+    call a1%plot(x, y)
+    call a1%set_title("wide")
+    call a2%plot(x, y2)
+    call a2%set_title("big")
+    call a3%plot(x, y)
+    call a3%set_title("tall")
+    call save_all("gridspec")
 
     print *, "All test plots written."
 
