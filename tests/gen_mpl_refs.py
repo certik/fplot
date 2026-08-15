@@ -108,6 +108,7 @@ def save(fig, name: str, **kw) -> None:
     # would only tell us how the SVG renderer differs.
     fig.savefig(REF / f"{name}.png", format="png", **kw)
     fig.savefig(REF / f"{name}.pdf", format="pdf", **kw)
+    fig.savefig(REF / f"{name}.eps", format="eps", **kw)
     plt.close(fig)
     print(f"wrote {path}")
 

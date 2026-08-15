@@ -10,6 +10,7 @@ module fplot
     use fplot_render
     use fplot_backend_svg
     use fplot_backend_pdf
+    use fplot_backend_eps
     use fplot_backend_png
     use fplot_mathtext
     use fplot_dates
@@ -7236,6 +7237,16 @@ contains
 
     ! Unlike the vector formats, dpi is not decorative here: it is what
     ! decides how many pixels the figure is rasterized into.
+    function render_eps(facecolor, transparent, bbox_inches, pad_inches) result(eps)
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        logical, intent(in), optional :: transparent
+        real(dp), intent(in), optional :: pad_inches
+        character(len=:), allocatable :: eps
+        type(eps_renderer_t) :: r
+        call render_figure(r, facecolor, transparent, bbox_inches, pad_inches)
+        eps = r%bytes()
+    end function render_eps
+
     function render_png(facecolor, transparent, bbox_inches, pad_inches) result(png)
         character(len=*), intent(in), optional :: facecolor, bbox_inches
         logical, intent(in), optional :: transparent
@@ -7269,7 +7280,7 @@ contains
     subroutine reject_ext(filename)
         character(len=*), intent(in) :: filename
         print *, "fplot: cannot write ", trim(filename)
-        print *, "fplot: supported formats are .svg, .pdf and .png, not ." &
+        print *, "fplot: supported formats are .svg, .pdf, .eps and .png, not ." &
             //file_ext(filename)
         error stop "fplot: unsupported savefig format"
     end subroutine reject_ext
@@ -7313,6 +7324,8 @@ contains
             svg = render_pdf(facecolor, transparent, bbox_inches, pad_inches)
         case ("png")
             svg = render_png(facecolor, transparent, bbox_inches, pad_inches)
+        case ("eps")
+            svg = render_eps(facecolor, transparent, bbox_inches, pad_inches)
         case default
             call reject_ext(filename)
             return

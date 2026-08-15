@@ -868,7 +868,9 @@ contains
                      bbox_inches=bbox_inches, dpi=dpi)
         call savefig("tests/out/"//stem//".png", facecolor=facecolor, &
                      bbox_inches=bbox_inches, dpi=dpi)
-        print *, "wrote tests/out/"//stem//".svg, .pdf and .png"
+        call savefig("tests/out/"//stem//".eps", facecolor=facecolor, &
+                     bbox_inches=bbox_inches, dpi=dpi)
+        print *, "wrote tests/out/"//stem//".svg, .pdf, .png and .eps"
     end subroutine save_all
 
 end program test_plots

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/certik/fplot/actions/workflows/ci.yml/badge.svg)](https://github.com/certik/fplot/actions/workflows/ci.yml)
 
-Pure Fortran plotting library with a pylab-style API, writing SVG, PNG and PDF.
+Pure Fortran plotting library with a pylab-style API, writing SVG, PNG, PDF and EPS.
 No external graphics library: the PNG rasterizer and its font are part of fplot.
 
 ```fortran
@@ -13,7 +13,7 @@ call xlabel("x")
 call ylabel("y")
 call grid(.true.)
 call legend()
-call savefig("out.svg")   ! or "out.png", "out.pdf"
+call savefig("out.svg")   ! or "out.png", "out.pdf", "out.eps"
 call show()               ! Jupyter (LFortran) or writes fplot_show.svg
 
 ! subplots
@@ -45,7 +45,7 @@ call suptitle("figure title")
 - Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
 - Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure(figsize=, dpi=)`
 - `savefig(file, transparent=, facecolor=)`; the extension picks the format,
-  one of `.svg`, `.png` or `.pdf`, and `dpi=` sizes the PNG raster
+  one of `.svg`, `.png`, `.pdf` or `.eps`, and `dpi=` sizes the PNG raster
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
@@ -130,13 +130,15 @@ pixi run test-lfortran
 pixi run compare       # SVG, structurally
 pixi run compare-png   # PNG, pixel by pixel
 pixi run compare-pdf   # PDF, rasterized by pdftoppm
+pixi run compare-eps   # EPS, rasterized by ghostscript
 ```
 
 The SVG comparison is structural because a viewer, not fplot, decides what an
-SVG looks like. PNG and PDF are compared as pixels, since there fplot decides.
+SVG looks like. PNG, PDF and EPS are compared as pixels, since there fplot
+decides.
 
 CI (Linux) runs `pixi run test-flang` and `pixi run test-lfortran`, then all
-three comparisons.
+four comparisons.
 
 ## Layout
 

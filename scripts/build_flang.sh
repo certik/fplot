@@ -29,17 +29,18 @@ $FLANG -c "$ROOT/src/fplot_raster.f90"
 $FLANG -c "$ROOT/src/fplot_mathtext.f90"
 $FLANG -c "$ROOT/src/fplot_dates.f90"
 $FLANG -c "$ROOT/src/fplot_backend_pdf.f90"
+$FLANG -c "$ROOT/src/fplot_backend_eps.f90"
 $FLANG -c "$ROOT/src/fplot_backend_png.f90"
 $FLANG -c "$ROOT/src/fplot.f90"
 
 # Test program
 $FLANG -o "$BUILD/test_plots" \
     "$ROOT/tests/test_plots.f90" \
-    fplot_colors.o fplot_style.o fplot_render.o fplot_scale.o fplot_cmap.o fplot_ticks.o fplot_contour.o fplot_svg.o fplot_backend_svg.o fplot_backend_pdf.o fplot_glyphs.o fplot_png.o fplot_raster.o fplot_backend_png.o fplot_mathtext.o fplot_dates.o fplot.o
+    fplot_colors.o fplot_style.o fplot_render.o fplot_scale.o fplot_cmap.o fplot_ticks.o fplot_contour.o fplot_svg.o fplot_backend_svg.o fplot_backend_pdf.o fplot_backend_eps.o fplot_glyphs.o fplot_png.o fplot_raster.o fplot_backend_png.o fplot_mathtext.o fplot_dates.o fplot.o
 
 # Demo
 $FLANG -o "$BUILD/demo" \
     "$ROOT/examples/demo.f90" \
-    fplot_colors.o fplot_style.o fplot_render.o fplot_scale.o fplot_cmap.o fplot_ticks.o fplot_contour.o fplot_svg.o fplot_backend_svg.o fplot_backend_pdf.o fplot_glyphs.o fplot_png.o fplot_raster.o fplot_backend_png.o fplot_mathtext.o fplot_dates.o fplot.o
+    fplot_colors.o fplot_style.o fplot_render.o fplot_scale.o fplot_cmap.o fplot_ticks.o fplot_contour.o fplot_svg.o fplot_backend_svg.o fplot_backend_pdf.o fplot_backend_eps.o fplot_glyphs.o fplot_png.o fplot_raster.o fplot_backend_png.o fplot_mathtext.o fplot_dates.o fplot.o
 
 echo "Built: $BUILD/test_plots $BUILD/demo"
