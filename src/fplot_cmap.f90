@@ -109,7 +109,7 @@ contains
         end select
     end function cmap_from_str
 
-    ! Colour at position t in [0, 1], linearly interpolated between anchors.
+    ! Color at position t in [0, 1], linearly interpolated between anchors.
     pure subroutine cmap_rgb(id, t, r, g, b)
         integer, intent(in) :: id
         real(dp), intent(in) :: t

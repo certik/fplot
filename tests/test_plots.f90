@@ -372,7 +372,7 @@ program test_plots
     call savefig("tests/out/imshow_cbar.svg")
     print *, "wrote tests/out/imshow_cbar.svg"
 
-    ! 24) scatter with per-point sizes and colour-mapped values
+    ! 24) scatter with per-point sizes and color-mapped values
     call figure()
     call scatter(x(1:ns), y(1:ns), sizes=svals, cvals=cvals, cmap="viridis")
     call colorbar(label="c")
@@ -515,7 +515,7 @@ program test_plots
     call savefig("tests/out/twinx.svg")
     print *, "wrote tests/out/twinx.svg"
 
-    ! 39) colour spellings
+    ! 39) color spellings
     call figure()
     do i = 1, 6
         ysm = real(i, dp) + 0.0_dp * xsm
@@ -528,7 +528,7 @@ program test_plots
         case (6); call plot(xsm, ysm, color="#8c564bcc", lw=3.0_dp)
         end select
     end do
-    call title("colour names")
+    call title("color names")
     call savefig("tests/out/colors.svg")
     print *, "wrote tests/out/colors.svg"
 

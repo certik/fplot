@@ -571,7 +571,7 @@ contains
             ax(cur_i)%x_top = .true.
         end if
         ! matplotlib keeps counting through one cycle across twinned axes,
-        ! so the second curve does not come out the same colour as the first.
+        ! so the second curve does not come out the same color as the first.
         ax(cur_i)%color_cycle = ax(parent)%color_cycle
     end subroutine add_twin
 
@@ -1075,7 +1075,7 @@ contains
     end subroutine push_text
 
     ! Start a new series of the given kind and return its index, applying the
-    ! shared bookkeeping (point count, colour cycling, label).
+    ! shared bookkeeping (point count, color cycling, label).
     function new_shape_series(kd, x, y, color, label, alpha) result(is)
         integer, intent(in) :: kd
         real(dp), intent(in) :: x(:), y(:)
@@ -1109,10 +1109,10 @@ contains
         end if
     end function new_shape_series
 
-    ! Every spelling of a colour matplotlib accepts: "#rgb", "#rrggbb",
+    ! Every spelling of a color matplotlib accepts: "#rgb", "#rrggbb",
     ! "#rrggbbaa", a CSS4/X11 or "tab:" name, a single-letter code, a "C<n>"
     ! cycle index, or a greyscale fraction such as "0.5". Returns an empty
-    ! string if the colour is not recognised, which lets callers fall back to
+    ! string if the color is not recognised, which lets callers fall back to
     ! the cycle. An "#rrggbbaa" alpha comes back through alpha_out.
     function resolve_color(color, alpha_out) result(col)
         character(len=*), intent(in), optional :: color
@@ -1595,8 +1595,8 @@ contains
         if (present(position)) ax(cur_i)%series(is)%pos = position
         ax(cur_i)%series(is)%width = wdefault
         if (present(width)) ax(cur_i)%series(is)%width = width
-        ! Neither kind takes a turn in the colour cycle: matplotlib draws box
-        ! furniture in black and every violin in the first cycle colour.
+        ! Neither kind takes a turn in the color cycle: matplotlib draws box
+        ! furniture in black and every violin in the first cycle color.
         if (.not. present(color)) then
             if (kd == SERIES_BOX) then
                 ax(cur_i)%series(is)%color = "#000000"
@@ -1780,7 +1780,7 @@ contains
         call ensure_fig()
         is = new_shape_series(kd, [v], [v], color, label)
         if (is < 1) return
-        ! Reference lines default to black, not to the colour cycle.
+        ! Reference lines default to black, not to the color cycle.
         if (.not. present(color)) then
             ax(cur_i)%series(is)%color = "#000000"
             ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
@@ -2278,7 +2278,7 @@ contains
         call append_opacity(b, "fill-opacity", alpha)
         ! Abutting polygons leave a hairline of background showing through
         ! where the renderer antialiases both edges, so seal the seam by
-        ! stroking the outline in the fill colour.
+        ! stroking the outline in the fill color.
         if (present(seal)) then
             if (seal) then
                 call builder_append(b, '" stroke="')
@@ -2979,7 +2979,7 @@ contains
         t = t(1:n)
     end function fmt_pt
 
-    ! Per-point colour when scatter mapped c values, otherwise the series colour.
+    ! Per-point color when scatter mapped c values, otherwise the series color.
     function point_color(s, j) result(col)
         type(series_t), intent(in) :: s
         integer, intent(in) :: j
