@@ -46,6 +46,7 @@ program test_plots
         11.0_dp, 12.0_dp, 13.0_dp, 14.0_dp, 15.0_dp, 16.0_dp, 17.0_dp, &
         18.0_dp, 19.0_dp]
     real(dp) :: qx(64), qy(64), qu(64), qv(64)
+    real(dp) :: hx(500), hy(500)
     real(dp), parameter :: yedge(nzr + 1) = [ &
         0.0_dp, 1.0_dp, 2.0_dp, 4.0_dp, 6.0_dp, 6.5_dp, 7.0_dp, 8.0_dp, 10.0_dp]
     real(dp) :: svals(ns), cvals(ns)
@@ -766,9 +767,35 @@ program test_plots
     call title("interp")
     call save_all("interp")
 
+    ! 67) two dimensional histograms
+    call clf()
+    do i = 1, 500
+        hx(i) = gauss(real(i, dp)*12.9898_dp)
+        hy(i) = gauss(real(i, dp)*78.233_dp)
+    end do
+    call hist2d(hx, hy, bins=[12, 12])
+    call title("hist2d")
+    call save_all("hist2d")
+
+    ! 68) hexagonal binning
+    call clf()
+    call hexbin(hx, hy, gridsize=15)
+    call title("hexbin")
+    call save_all("hexbin")
+
     print *, "All test plots written."
 
 contains
+
+    ! A repeatable stand-in for random numbers: the fractional part of a
+    ! large sine, summed twice so the result piles up in the middle.
+    function gauss(seed) result(g)
+        real(dp), intent(in) :: seed
+        real(dp) :: g, a, b
+        a = sin(seed)*43758.5453_dp
+        b = sin(seed + 1.0_dp)*43758.5453_dp
+        g = (a - floor(a)) + (b - floor(b)) - 1.0_dp
+    end function gauss
 
     ! Every case is written in all three formats, so the three savefig calls
     ! and the line that reports them are stated once here rather than once

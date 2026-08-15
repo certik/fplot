@@ -64,6 +64,8 @@ OUT_NAMES = [
     "patches",
     "polar",
     "interp",
+    "hist2d",
+    "hexbin",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -771,6 +773,25 @@ def main() -> None:
     ax.imshow(zimg, interpolation="bilinear")
     ax.set_title("interp")
     save(fig, "interp")
+
+    # 67/68 two dimensional histograms
+    seed = np.arange(1, 501, dtype=float)
+    ha = np.sin(seed * 12.9898) * 43758.5453
+    hb = np.sin(seed * 12.9898 + 1.0) * 43758.5453
+    hxx = (ha - np.floor(ha)) + (hb - np.floor(hb)) - 1.0
+    ha = np.sin(seed * 78.233) * 43758.5453
+    hb = np.sin(seed * 78.233 + 1.0) * 43758.5453
+    hyy = (ha - np.floor(ha)) + (hb - np.floor(hb)) - 1.0
+
+    fig, ax = setup_fig()
+    ax.hist2d(hxx, hyy, bins=[12, 12])
+    ax.set_title("hist2d")
+    save(fig, "hist2d")
+
+    fig, ax = setup_fig()
+    ax.hexbin(hxx, hyy, gridsize=15)
+    ax.set_title("hexbin")
+    save(fig, "hexbin")
 
     print("All matplotlib references written.")
 

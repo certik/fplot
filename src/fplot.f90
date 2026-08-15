@@ -20,7 +20,7 @@ module fplot
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
-    public :: pcolormesh, pcolor
+    public :: pcolormesh, pcolor, hist2d, hexbin
     public :: add_axes, secondary_xaxis, secondary_yaxis
     public :: add_rectangle, add_circle, add_ellipse, add_polygon
     public :: polar, set_polar
@@ -2398,6 +2398,143 @@ contains
             if (trim(aspect) == "auto") ax(cur_i)%aspect = 0.0_dp
         end if
     end subroutine imshow
+
+    ! A two dimensional histogram: count the points into a grid of cells
+    ! and hand the counts to pcolormesh, which is how matplotlib draws one.
+    subroutine hist2d(x, y, bins, cmap, vmin, vmax)
+        real(dp), intent(in) :: x(:), y(:)
+        integer, intent(in), optional :: bins(2)
+        character(len=*), intent(in), optional :: cmap
+        real(dp), intent(in), optional :: vmin, vmax
+        integer :: nb(2), n, i, jx, jy
+        real(dp) :: x0, x1, y0, y1
+        real(dp), allocatable :: xe(:), ye(:), h(:, :)
+
+        call ensure_fig()
+        n = min(size(x), size(y))
+        if (n < 1) return
+        nb = [10, 10]
+        if (present(bins)) nb = max(1, bins)
+
+        x0 = minval(x(1:n)); x1 = maxval(x(1:n))
+        y0 = minval(y(1:n)); y1 = maxval(y(1:n))
+        if (x1 <= x0) x1 = x0 + 1.0_dp
+        if (y1 <= y0) y1 = y0 + 1.0_dp
+
+        allocate (xe(nb(1) + 1), ye(nb(2) + 1), h(nb(2), nb(1)))
+        do i = 1, nb(1) + 1
+            xe(i) = x0 + (x1 - x0)*real(i - 1, dp)/real(nb(1), dp)
+        end do
+        do i = 1, nb(2) + 1
+            ye(i) = y0 + (y1 - y0)*real(i - 1, dp)/real(nb(2), dp)
+        end do
+
+        h = 0.0_dp
+        do i = 1, n
+            ! The last cell owns its right edge, as numpy's histogram does.
+            jx = min(nb(1), 1 + int((x(i) - x0)/(x1 - x0)*real(nb(1), dp)))
+            jy = min(nb(2), 1 + int((y(i) - y0)/(y1 - y0)*real(nb(2), dp)))
+            h(jy, jx) = h(jy, jx) + 1.0_dp
+        end do
+
+        call pcolormesh(xe, ye, h, cmap, vmin, vmax)
+    end subroutine hist2d
+
+    ! Hexagonal binning. matplotlib lays two rectangular grids over the
+    ! data, one offset half a cell from the other, and gives each point to
+    ! whichever centre is nearer: those centres are the hexagon centres,
+    ! and this is the same arithmetic.
+    subroutine hexbin(x, y, gridsize, cmap, mincnt)
+        real(dp), intent(in) :: x(:), y(:)
+        integer, intent(in), optional :: gridsize, mincnt
+        character(len=*), intent(in), optional :: cmap
+        integer :: nx, ny, nx1, ny1, nx2, ny2, n, i, j, k, ix1, iy1, ix2, iy2, mc
+        real(dp) :: x0, x1, y0, y1, sx, sy, ix, iy, d1, d2, pad, cmax, t, cxp, cyp
+        real(dp) :: hx(6), hy(6)
+        real(dp), allocatable :: c1(:, :), c2(:, :)
+
+        call ensure_fig()
+        n = min(size(x), size(y))
+        if (n < 1) return
+        nx = 100
+        if (present(gridsize)) nx = max(1, gridsize)
+        ny = int(real(nx, dp)/sqrt(3.0_dp))
+        ny = max(1, ny)
+        ! matplotlib draws every cell of the grid, empty ones included, at
+        ! the bottom of the colormap. mincnt raises that floor.
+        mc = 0
+        if (present(mincnt)) mc = mincnt
+
+        x0 = minval(x(1:n)); x1 = maxval(x(1:n))
+        y0 = minval(y(1:n)); y1 = maxval(y(1:n))
+        pad = 1.0e-9_dp*(x1 - x0)
+        x0 = x0 - pad; x1 = x1 + pad
+        if (x1 <= x0) x1 = x0 + 1.0_dp
+        if (y1 <= y0) y1 = y0 + 1.0_dp
+        sx = (x1 - x0)/real(nx, dp)
+        sy = (y1 - y0)/real(ny, dp)
+
+        nx1 = nx + 1; ny1 = ny + 1
+        nx2 = nx; ny2 = ny
+        allocate (c1(nx1, ny1), c2(nx2, ny2))
+        c1 = 0.0_dp
+        c2 = 0.0_dp
+
+        do i = 1, n
+            ix = (x(i) - x0)/sx
+            iy = (y(i) - y0)/sy
+            ix1 = nint(ix); iy1 = nint(iy)
+            ix2 = floor(ix); iy2 = floor(iy)
+            d1 = (ix - real(ix1, dp))**2 + 3.0_dp*(iy - real(iy1, dp))**2
+            d2 = (ix - real(ix2, dp) - 0.5_dp)**2 + 3.0_dp*(iy - real(iy2, dp) - 0.5_dp)**2
+            if (d1 < d2) then
+                if (ix1 >= 0 .and. ix1 < nx1 .and. iy1 >= 0 .and. iy1 < ny1) &
+                    c1(ix1 + 1, iy1 + 1) = c1(ix1 + 1, iy1 + 1) + 1.0_dp
+            else
+                if (ix2 >= 0 .and. ix2 < nx2 .and. iy2 >= 0 .and. iy2 < ny2) &
+                    c2(ix2 + 1, iy2 + 1) = c2(ix2 + 1, iy2 + 1) + 1.0_dp
+            end if
+        end do
+
+        cmax = max(maxval(c1), maxval(c2))
+        if (cmax <= 0.0_dp) return
+
+        ! The hexagon is a cell wide and two thirds of a cell tall at the
+        ! points, which is what makes the two grids interlock.
+        hx = 0.5_dp*sx*[1.0_dp, 1.0_dp, 0.0_dp, -1.0_dp, -1.0_dp, 0.0_dp]
+        hy = (sy/3.0_dp)*[-0.5_dp, 0.5_dp, 1.0_dp, 0.5_dp, -0.5_dp, -1.0_dp]
+
+        ax(cur_i)%img_cmap = CMAP_VIRIDIS
+        if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
+        ax(cur_i)%img_vmin = real(mc, dp)
+        ax(cur_i)%img_vmax = cmax
+        ax(cur_i)%has_cmap_src = .true.
+
+        do k = 1, 2
+            do i = 1, merge(nx1, nx2, k == 1)
+                do j = 1, merge(ny1, ny2, k == 1)
+                    if (k == 1) then
+                        if (c1(i, j) < real(mc, dp)) cycle
+                        t = (c1(i, j) - real(mc, dp))/max(cmax - real(mc, dp), 1.0_dp)
+                        cxp = x0 + real(i - 1, dp)*sx
+                        cyp = y0 + real(j - 1, dp)*sy
+                    else
+                        if (c2(i, j) < real(mc, dp)) cycle
+                        t = (c2(i, j) - real(mc, dp))/max(cmax - real(mc, dp), 1.0_dp)
+                        cxp = x0 + (real(i - 1, dp) + 0.5_dp)*sx
+                        cyp = y0 + (real(j - 1, dp) + 0.5_dp)*sy
+                    end if
+                    call add_polygon(cxp + hx, cyp + hy, &
+                                     facecolor=cmap_color(ax(cur_i)%img_cmap, t))
+                end do
+            end do
+        end do
+
+        ! Patches never ask for room of their own, so the axes is told what
+        ! the binning covered, margins and all.
+        call xlim(x0 - 0.05_dp*(x1 - x0), x1 + 0.05_dp*(x1 - x0))
+        call ylim(y0 - 0.05_dp*(y1 - y0), y1 + 0.05_dp*(y1 - y0))
+    end subroutine hexbin
 
     ! A grid of coloured cells with edges of the caller's choosing. x and
     ! y are the edges, one more than the samples along that direction; if
