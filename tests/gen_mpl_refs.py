@@ -33,6 +33,7 @@ OUT_NAMES = [
     "ticks_legend",
     "figsize",
     "many_series",
+    "alpha",
 ]
 
 
@@ -304,6 +305,17 @@ def main() -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     save(fig, "many_series")
+
+    # 20 alpha
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-", label="sin", alpha=0.35)
+    ax.plot(x, np.cos(x), "r-o", label="cos", alpha=0.6)
+    ax.scatter(x[:30], y[:30], s=80.0, c="g", label="pts", alpha=0.5)
+    ax.set_title("Alpha")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.legend()
+    save(fig, "alpha")
 
     print("All matplotlib references written.")
 

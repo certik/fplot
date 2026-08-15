@@ -31,6 +31,7 @@ CASES = [
     "ticks_legend",
     "figsize",
     "many_series",
+    "alpha",
 ]
 
 

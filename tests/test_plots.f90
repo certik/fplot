@@ -311,5 +311,17 @@ program test_plots
     call savefig("tests/out/many_series.svg")
     print *, "wrote tests/out/many_series.svg"
 
+    ! 20) alpha on lines and markers
+    call figure()
+    call plot(x, y, "b-", label="sin", alpha=0.35_dp)
+    call plot(x, cos(x), "r-o", label="cos", alpha=0.6_dp)
+    call scatter(x(1:ns), y(1:ns), s=80.0_dp, c="g", label="pts", alpha=0.5_dp)
+    call title("Alpha")
+    call xlabel("x")
+    call ylabel("y")
+    call legend()
+    call savefig("tests/out/alpha.svg")
+    print *, "wrote tests/out/alpha.svg"
+
     print *, "All test plots written."
 end program test_plots

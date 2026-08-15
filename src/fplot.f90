@@ -299,29 +299,29 @@ contains
         ax(cur_i)%ylim_set = .true.
     end subroutine ylim
 
-    subroutine plot(x, y, fmt, label, lw, color, marker, linestyle)
+    subroutine plot(x, y, fmt, label, lw, color, marker, linestyle, alpha)
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
-        real(dp), intent(in), optional :: lw
+        real(dp), intent(in), optional :: lw, alpha
         call ensure_fig()
-        call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle)
+        call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle, alpha)
     end subroutine plot
 
     ! Marker-only plot. s is the marker area in points^2 (matplotlib's
     ! convention), so the marker size is its square root.
-    subroutine scatter(x, y, s, c, marker, label)
+    subroutine scatter(x, y, s, c, marker, label, alpha)
         real(dp), intent(in) :: x(:), y(:)
-        real(dp), intent(in), optional :: s
+        real(dp), intent(in), optional :: s, alpha
         character(len=*), intent(in), optional :: c, marker, label
         integer :: is
 
         call ensure_fig()
         if (present(marker)) then
             call add_series(cur_i, x, y, label=label, color=c, marker=marker, &
-                            linestyle="None")
+                            linestyle="None", alpha=alpha)
         else
             call add_series(cur_i, x, y, label=label, color=c, marker="o", &
-                            linestyle="None")
+                            linestyle="None", alpha=alpha)
         end if
         is = ax(cur_i)%n_series
         if (is >= 1) then
@@ -651,11 +651,11 @@ contains
         if (len_trim(col) > 0) ax(cur_i)%texts(it)%color = col
     end subroutine add_text
 
-    subroutine add_series(ia, x, y, fmt, label, lw, color, marker, linestyle)
+    subroutine add_series(ia, x, y, fmt, label, lw, color, marker, linestyle, alpha)
         integer, intent(in) :: ia
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
-        real(dp), intent(in), optional :: lw
+        real(dp), intent(in), optional :: lw, alpha
         integer :: n, is, m, ls
         character(len=7) :: col
         character(len=32) :: f
@@ -716,6 +716,7 @@ contains
             ax(ia)%series(is)%linestyle = linestyle_from_str(linestyle)
 
         if (present(lw)) ax(ia)%series(is)%linewidth = lw
+        if (present(alpha)) ax(ia)%series(is)%alpha = alpha
         if (present(label)) ax(ia)%series(is)%label = label
 
         if (len_trim(ax(ia)%series(is)%color) == 0) then
@@ -911,12 +912,25 @@ contains
     end subroutine append_dash
 
     ! Emit a stroked open path through the given points, e.g. an "x" or "+".
-    subroutine append_stroke_path(b, px, py, np, color, lw)
+    ! matplotlib writes stroke-opacity/fill-opacity per element rather than a
+    ! group opacity; emitting nothing at alpha == 1 keeps the common case terse.
+    subroutine append_opacity(b, attr, alpha)
+        type(svg_builder), intent(inout) :: b
+        character(len=*), intent(in) :: attr
+        real(dp), intent(in) :: alpha
+        if (alpha >= 1.0_dp) return
+        call builder_append(b, '" ')
+        call builder_append(b, attr)
+        call builder_append(b, '="')
+        call append_num(b, alpha)
+    end subroutine append_opacity
+
+    subroutine append_stroke_path(b, px, py, np, color, lw, alpha)
         type(svg_builder), intent(inout) :: b
         real(dp), intent(in) :: px(:), py(:)
         integer, intent(in) :: np
         character(len=*), intent(in) :: color
-        real(dp), intent(in) :: lw
+        real(dp), intent(in) :: lw, alpha
         integer :: i
         call builder_append(b, '<path d="')
         do i = 1, np
@@ -933,6 +947,7 @@ contains
         call builder_append(b, color)
         call builder_append(b, '" stroke-width="')
         call append_num(b, lw)
+        call append_opacity(b, "stroke-opacity", alpha)
         call builder_append(b, '" fill="none"/>')
         call builder_append(b, new_line("a"))
     end subroutine append_stroke_path
@@ -955,21 +970,19 @@ contains
         end do
         call builder_append(b, '" fill="')
         call builder_append(b, color)
-        if (alpha < 1.0_dp) then
-            call builder_append(b, '" fill-opacity="')
-            call append_num(b, alpha)
-        end if
+        call append_opacity(b, "fill-opacity", alpha)
         call builder_append(b, '"/>')
         call builder_append(b, new_line("a"))
     end subroutine append_polygon
 
     ! Draw one marker of kind mk centred at (cx, cy), sized like a matplotlib
     ! marker of markersize ms.
-    subroutine append_marker(b, mk, cx, cy, ms, color)
+    subroutine append_marker(b, mk, cx, cy, ms, color, alpha)
         type(svg_builder), intent(inout) :: b
         integer, intent(in) :: mk
         real(dp), intent(in) :: cx, cy, ms
         character(len=*), intent(in) :: color
+        real(dp), intent(in) :: alpha
         real(dp) :: r, xs(11), ys(11)
         integer :: i
         real(dp) :: ang
@@ -989,46 +1002,49 @@ contains
             call append_num(b, r)
             call builder_append(b, '" fill="')
             call builder_append(b, color)
+            call append_opacity(b, "fill-opacity", alpha)
             if (mk == MARKER_CIRCLE) then
                 call builder_append(b, '" stroke="')
                 call builder_append(b, color)
-                call builder_append(b, '" stroke-width="1"/>')
+                call builder_append(b, '" stroke-width="1')
+                call append_opacity(b, "stroke-opacity", alpha)
+                call builder_append(b, '"/>')
             else
                 call builder_append(b, '"/>')
             end if
             call builder_append(b, new_line("a"))
         case (MARKER_X)
             r = 0.5_dp * ms * 0.7_dp
-            call append_stroke_path(b, [cx - r, cx + r], [cy - r, cy + r], 2, color, 1.5_dp)
-            call append_stroke_path(b, [cx - r, cx + r], [cy + r, cy - r], 2, color, 1.5_dp)
+            call append_stroke_path(b, [cx - r, cx + r], [cy - r, cy + r], 2, color, 1.5_dp, alpha)
+            call append_stroke_path(b, [cx - r, cx + r], [cy + r, cy - r], 2, color, 1.5_dp, alpha)
         case (MARKER_PLUS)
             r = 0.5_dp * ms * 0.75_dp
-            call append_stroke_path(b, [cx - r, cx + r], [cy, cy], 2, color, 1.5_dp)
-            call append_stroke_path(b, [cx, cx], [cy - r, cy + r], 2, color, 1.5_dp)
+            call append_stroke_path(b, [cx - r, cx + r], [cy, cy], 2, color, 1.5_dp, alpha)
+            call append_stroke_path(b, [cx, cx], [cy - r, cy + r], 2, color, 1.5_dp, alpha)
         case (MARKER_SQUARE)
             r = 0.5_dp * ms * 0.75_dp
             call append_polygon(b, [cx - r, cx + r, cx + r, cx - r], &
-                                [cy - r, cy - r, cy + r, cy + r], 4, color, 1.0_dp)
+                                [cy - r, cy - r, cy + r, cy + r], 4, color, alpha)
         case (MARKER_DIAMOND)
             r = 0.5_dp * ms * 0.75_dp
             call append_polygon(b, [cx, cx + r, cx, cx - r], &
-                                [cy - r, cy, cy + r, cy], 4, color, 1.0_dp)
+                                [cy - r, cy, cy + r, cy], 4, color, alpha)
         case (MARKER_TRI_UP)
             r = 0.5_dp * ms * 0.85_dp
             call append_polygon(b, [cx, cx + r, cx - r], &
-                                [cy - r, cy + r, cy + r], 3, color, 1.0_dp)
+                                [cy - r, cy + r, cy + r], 3, color, alpha)
         case (MARKER_TRI_DOWN)
             r = 0.5_dp * ms * 0.85_dp
             call append_polygon(b, [cx, cx + r, cx - r], &
-                                [cy + r, cy - r, cy - r], 3, color, 1.0_dp)
+                                [cy + r, cy - r, cy - r], 3, color, alpha)
         case (MARKER_TRI_LEFT)
             r = 0.5_dp * ms * 0.85_dp
             call append_polygon(b, [cx - r, cx + r, cx + r], &
-                                [cy, cy - r, cy + r], 3, color, 1.0_dp)
+                                [cy, cy - r, cy + r], 3, color, alpha)
         case (MARKER_TRI_RIGHT)
             r = 0.5_dp * ms * 0.85_dp
             call append_polygon(b, [cx + r, cx - r, cx - r], &
-                                [cy, cy - r, cy + r], 3, color, 1.0_dp)
+                                [cy, cy - r, cy + r], 3, color, alpha)
         case (MARKER_STAR)
             ! Five-pointed star: alternate outer and inner vertices.
             r = 0.5_dp * ms * 0.95_dp
@@ -1042,7 +1058,7 @@ contains
                     ys(i) = cy + 0.4_dp * r * sin(ang)
                 end if
             end do
-            call append_polygon(b, xs, ys, 10, color, 1.0_dp)
+            call append_polygon(b, xs, ys, 10, color, alpha)
         end select
     end subroutine append_marker
 
@@ -1079,11 +1095,12 @@ contains
     end subroutine append_text
 
     ! Straight line segment in pixel coordinates.
-    subroutine append_line(b, x1, y1, x2, y2, color, lw, ls)
+    subroutine append_line(b, x1, y1, x2, y2, color, lw, ls, alpha)
         type(svg_builder), intent(inout) :: b
         real(dp), intent(in) :: x1, y1, x2, y2, lw
         character(len=*), intent(in) :: color
         integer, intent(in) :: ls
+        real(dp), intent(in) :: alpha
         if (ls == LINE_NONE) return
         call builder_append(b, '<line x1="')
         call append_num(b, x1)
@@ -1097,6 +1114,7 @@ contains
         call builder_append(b, color)
         call builder_append(b, '" stroke-width="')
         call append_num(b, lw)
+        call append_opacity(b, "stroke-opacity", alpha)
         call builder_append(b, '"')
         call append_dash(b, ls)
         call builder_append(b, "/>")
@@ -1128,10 +1146,7 @@ contains
         call append_num(b, abs(yb - ya))
         call builder_append(b, '" fill="')
         call builder_append(b, trim(s%color))
-        if (s%alpha < 1.0_dp) then
-            call builder_append(b, '" fill-opacity="')
-            call append_num(b, s%alpha)
-        end if
+        call append_opacity(b, "fill-opacity", s%alpha)
         call builder_append(b, '" stroke="#ffffff" stroke-width="0.5"/>')
         call builder_append(b, new_line("a"))
     end subroutine append_bar
@@ -1171,12 +1186,12 @@ contains
         px = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xlog)
         plo = map_y(s%y(j) - s%y2(j), ymin, ymax, ax_b, ax_h, ylog)
         phi = map_y(s%y(j) + s%y2(j), ymin, ymax, ax_b, ax_h, ylog)
-        call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID)
+        call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
 
         cap = s%width
         if (cap > 0.0_dp) then
-            call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), 1.0_dp, LINE_SOLID)
-            call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), 1.0_dp, LINE_SOLID)
+            call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+            call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
         end if
     end subroutine append_errorbar
 
@@ -1427,13 +1442,13 @@ contains
                 py = map_y(a%series(i)%y(1), ymin, ymax, ax_b, ax_h, ylog)
                 call append_line(b, ax_l, py, ax_l + ax_w, py, &
                                  trim(a%series(i)%color), a%series(i)%linewidth, &
-                                 a%series(i)%linestyle)
+                                 a%series(i)%linestyle, a%series(i)%alpha)
                 cycle
             case (SERIES_VLINE)
                 px = map_x(a%series(i)%x(1), xmin, xmax, ax_l, ax_w, xlog)
                 call append_line(b, px, ax_b, px, ax_b - ax_h, &
                                  trim(a%series(i)%color), a%series(i)%linewidth, &
-                                 a%series(i)%linestyle)
+                                 a%series(i)%linestyle, a%series(i)%alpha)
                 cycle
             case (SERIES_ERRORBAR)
                 do j = 1, n
@@ -1447,6 +1462,7 @@ contains
                 call builder_append(b, trim(a%series(i)%color))
                 call builder_append(b, '" stroke-width="')
                 call append_num(b, a%series(i)%linewidth)
+                call append_opacity(b, "stroke-opacity", a%series(i)%alpha)
                 call builder_append(b, '" stroke-linejoin="round" stroke-linecap="butt"')
                 call append_dash(b, a%series(i)%linestyle)
                 call builder_append(b, ' points="')
@@ -1474,7 +1490,7 @@ contains
                     px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
                     py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog)
                     call append_marker(b, a%series(i)%marker, px, py, ms, &
-                                       trim(a%series(i)%color))
+                                       trim(a%series(i)%color), a%series(i)%alpha)
                 end do
             end if
         end do
@@ -1486,7 +1502,7 @@ contains
                 call append_line(b, px, py, &
                                  map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xlog), &
                                  map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ylog), &
-                                 trim(a%texts(i)%color), 1.0_dp, LINE_SOLID)
+                                 trim(a%texts(i)%color), 1.0_dp, LINE_SOLID, 1.0_dp)
             end if
             call xml_escape_to(a%texts(i)%s, esc, en)
             call append_text(b, px, py + 3.5_dp, esc(1:en), &
@@ -1611,7 +1627,7 @@ contains
                     if (a%series(i)%marker /= MARKER_NONE) then
                         call append_marker(b, a%series(i)%marker, mid, py, &
                                            a%series(i)%markersize, &
-                                           trim(a%series(i)%color))
+                                           trim(a%series(i)%color), a%series(i)%alpha)
                     end if
                     call xml_escape_to(a%series(i)%label, esc, en)
                     call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, esc(1:en), &
