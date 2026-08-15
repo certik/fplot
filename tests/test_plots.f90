@@ -34,6 +34,8 @@ program test_plots
     character(len=1), parameter :: mark_codes(n_marks) = &
         ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
     integer :: i, j
+    character(len=8), parameter :: fruit(4) = &
+        ["apple ", "banana", "cherry", "date  "]
     real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
     integer, parameter :: nzr = 8, nzc = 16
     real(dp) :: zimg(nzr, nzc), zlog(nzr, nzc)
@@ -648,6 +650,13 @@ program test_plots
     call colorbar()
     call title("log color norm")
     call save_all("cmap_lognorm")
+
+    ! 56) categories instead of numbers
+    call clf()
+    call bar(fruit, hb(1:4), color="tab:purple")
+    call ylabel("count")
+    call title("categories")
+    call save_all("categorical")
 
     print *, "All test plots written."
 

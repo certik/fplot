@@ -50,6 +50,7 @@ OUT_NAMES = [
     "fill_where",
     "cmap_reversed",
     "cmap_lognorm",
+    "categorical",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -661,6 +662,13 @@ def main() -> None:
     fig.colorbar(im, ax=ax)
     ax.set_title("log color norm")
     save(fig, "cmap_lognorm")
+
+    # 56 categories instead of numbers
+    fig, ax = setup_fig()
+    ax.bar(["apple", "banana", "cherry", "date"], hb[:4], color="tab:purple")
+    ax.set_ylabel("count")
+    ax.set_title("categories")
+    save(fig, "categorical")
 
     print("All matplotlib references written.")
 

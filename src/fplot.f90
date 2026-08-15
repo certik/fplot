@@ -247,10 +247,12 @@ module fplot
         integer :: idx = 0
     contains
         procedure :: sca => ax_sca
-        procedure :: plot => ax_plot
+        procedure, private :: ax_plot, ax_plot_cat
+        generic :: plot => ax_plot, ax_plot_cat
         procedure :: scatter => ax_scatter
-        procedure :: bar => ax_bar
-        procedure :: barh => ax_barh
+        procedure, private :: ax_bar, ax_bar_cat, ax_barh, ax_barh_cat
+        generic :: bar => ax_bar, ax_bar_cat
+        generic :: barh => ax_barh, ax_barh_cat
         procedure :: bar_label => ax_bar_label
         procedure :: hist => ax_hist
         procedure :: fill_between => ax_fill_between
@@ -290,6 +292,20 @@ module fplot
 
     ! subplots(m, n, axs) fills a grid; the rank of axs decides whether the
     ! panels come back shaped or in a row, and a lone axes needs no counts.
+    ! Categories instead of numbers on an axis: the same call with a list
+    ! of names, which are placed at 0, 1, 2, ... and become the tick labels.
+    interface bar
+        module procedure bar_num, bar_cat
+    end interface bar
+
+    interface barh
+        module procedure barh_num, barh_cat
+    end interface barh
+
+    interface plot
+        module procedure plot_num, plot_cat
+    end interface plot
+
     interface subplots
         module procedure subplots_grid, subplots_row, subplots_one
     end interface subplots
@@ -1102,6 +1118,43 @@ contains
         call plot(x, y, fmt, label, lw, color, marker, linestyle, alpha)
     end subroutine ax_plot
 
+    subroutine ax_plot_cat(self, cats, y, fmt, label, lw, color, marker, &
+                           linestyle, alpha)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        call ax_sca(self)
+        call plot(cats, y, fmt, label, lw, color, marker, linestyle, alpha)
+    end subroutine ax_plot_cat
+
+    subroutine ax_bar_cat(self, cats, height, width, color, label, alpha, &
+                          bottom, colors, edgecolor, linewidth)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: height(:)
+        real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call ax_sca(self)
+        call bar(cats, height, width, color, label, alpha, bottom, colors, &
+                 edgecolor, linewidth)
+    end subroutine ax_bar_cat
+
+    subroutine ax_barh_cat(self, cats, width, height, color, label, alpha, &
+                           left, colors, edgecolor, linewidth)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: width(:)
+        real(dp), intent(in), optional :: height, alpha, left(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call ax_sca(self)
+        call barh(cats, width, height, color, label, alpha, left, colors, &
+                  edgecolor, linewidth)
+    end subroutine ax_barh_cat
+
     subroutine ax_scatter(self, x, y, s, c, marker, label, alpha, sizes, cvals, &
                           cmap, vmin, vmax)
         class(axes), intent(in) :: self
@@ -1593,13 +1646,23 @@ contains
         ax(cur_i)%ylim_set = .true.
     end subroutine ylim
 
-    subroutine plot(x, y, fmt, label, lw, color, marker, linestyle, alpha)
+    subroutine plot_num(x, y, fmt, label, lw, color, marker, linestyle, alpha)
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
         real(dp), intent(in), optional :: lw, alpha
         call ensure_fig()
         call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle, alpha)
-    end subroutine plot
+    end subroutine plot_num
+
+    subroutine plot_cat(cats, y, fmt, label, lw, color, marker, linestyle, alpha)
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        call plot_num(category_positions(size(cats)), y, fmt, label, lw, color, &
+                      marker, linestyle, alpha)
+        call xticks(category_positions(size(cats)), cats)
+    end subroutine plot_cat
 
     ! Marker-only plot. s is the marker area in points^2 (matplotlib's
     ! convention), so the marker size is its square root.
@@ -2071,8 +2134,8 @@ contains
     end subroutine step
 
     ! Horizontal bars: y locates each bar and width is its length.
-    subroutine barh(y, width, height, color, label, alpha, left, colors, &
-                    edgecolor, linewidth)
+    subroutine barh_num(y, width, height, color, label, alpha, left, colors, &
+                        edgecolor, linewidth)
         real(dp), intent(in) :: y(:), width(:)
         real(dp), intent(in), optional :: height, alpha, left(:), linewidth
         character(len=*), intent(in), optional :: color, label, edgecolor
@@ -2084,7 +2147,19 @@ contains
         if (is < 1) return
         if (present(height)) ax(cur_i)%series(is)%width = height
         call bar_options(is, left, colors, edgecolor, linewidth)
-    end subroutine barh
+    end subroutine barh_num
+
+    subroutine barh_cat(cats, width, height, color, label, alpha, left, &
+                        colors, edgecolor, linewidth)
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: width(:)
+        real(dp), intent(in), optional :: height, alpha, left(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call barh_num(category_positions(size(cats)), width, height, color, &
+                      label, alpha, left, colors, edgecolor, linewidth)
+        call yticks(category_positions(size(cats)), cats)
+    end subroutine barh_cat
 
     ! Markers on stalks rising from y = 0, with a baseline along the bottom.
     subroutine stem(x, y, color, label, alpha)
@@ -2360,8 +2435,8 @@ contains
     ! Vertical bars of the given heights, centred on x and drawn from y = 0.
     ! bottom stacks this series on top of another; colors gives every bar
     ! its own color, as matplotlib's list-valued color does.
-    subroutine bar(x, height, width, color, label, alpha, bottom, colors, &
-                   edgecolor, linewidth)
+    subroutine bar_num(x, height, width, color, label, alpha, bottom, colors, &
+                       edgecolor, linewidth)
         real(dp), intent(in) :: x(:), height(:)
         real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
         character(len=*), intent(in), optional :: color, label, edgecolor
@@ -2373,7 +2448,29 @@ contains
         if (is < 1) return
         if (present(width)) ax(cur_i)%series(is)%width = width
         call bar_options(is, bottom, colors, edgecolor, linewidth)
-    end subroutine bar
+    end subroutine bar_num
+
+    subroutine bar_cat(cats, height, width, color, label, alpha, bottom, &
+                       colors, edgecolor, linewidth)
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: height(:)
+        real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call bar_num(category_positions(size(cats)), height, width, color, &
+                     label, alpha, bottom, colors, edgecolor, linewidth)
+        call xticks(category_positions(size(cats)), cats)
+    end subroutine bar_cat
+
+    ! Categories sit at 0, 1, 2, ..., as matplotlib places them.
+    pure function category_positions(n) result(v)
+        integer, intent(in) :: n
+        real(dp) :: v(n)
+        integer :: i
+        do i = 1, n
+            v(i) = real(i - 1, dp)
+        end do
+    end function category_positions
 
     subroutine bar_options(is, base, colors, edgecolor, linewidth)
         integer, intent(in) :: is
