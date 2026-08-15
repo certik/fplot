@@ -135,18 +135,19 @@ def main() -> int:
                 print(f"  ok: {label} matches expected {a}")
 
         print(
-            f"  elements mpl:  line={count_tags(ref, 'path')} "
-            f"(paths) text≈{ref.count('<text')}"
+            f"  elements mpl:  path={count_tags(ref, 'path')} "
+            f"use={count_tags(ref, 'use')} text≈{ref.count('<text')}"
         )
         print(
-            f"  elements fplot: polyline={count_tags(out, 'polyline')} "
-            f"circle={count_tags(out, 'circle')} line={count_tags(out, 'line')} "
+            f"  elements fplot: path={count_tags(out, 'path')} "
+            f"rect={count_tags(out, 'rect')} use={count_tags(out, 'use')} "
             f"text={out.count('<text')}"
         )
 
-        # Axes count: matplotlib <g id="axes_N"> vs fplot clip paths.
+        # Both now group each axes as <g id="axes_N">, so the same pattern
+        # reads either file.
         n_ax_mpl = len(re.findall(r'<g id="axes_\d+"', ref))
-        n_ax_fplot = len(re.findall(r'<clipPath id="axclip', out))
+        n_ax_fplot = len(re.findall(r'<g id="axes_\d+"', out))
         if n_ax_mpl == n_ax_fplot:
             print(f"  ok: axes count matches ({n_ax_mpl})")
         else:
