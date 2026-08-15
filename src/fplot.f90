@@ -25,6 +25,7 @@ module fplot
     public :: subplot, suptitle, subplots_adjust, tight_layout
     public :: twinx, twiny
     public :: set_fontsize
+    public :: close, gcf
 
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
@@ -223,6 +224,22 @@ module fplot
     integer, save :: grid_m = 0, grid_n = 0
     logical, save :: fig_initialized = .false.
 
+    ! A parked figure. Holds exactly the module state above, so switching
+    ! figures is a copy in and a copy out rather than threading a figure
+    ! object through every renderer routine. Any new figure-level variable
+    ! must be added here and to stash_fig/unstash_fig.
+    type :: figure_t
+        logical :: live = .false.
+        real(dp) :: w_in, h_in, dpi
+        real(dp) :: left, right, bottom, top, wspace, hspace
+        character(len=256) :: suptitle
+        real(dp) :: d_title, d_label, d_tick, d_legend, suptitle_size
+        type(axes_t), allocatable :: ax(:)
+        integer :: n_ax, cur_i, grid_m, grid_n
+    end type figure_t
+    type(figure_t), allocatable, save :: figs(:)
+    integer, save :: cur_fig = 0
+
     ! Pie wedges and colorbar cells are laid out in figure geometry, not on a
     ! user scale, so they map through a plain linear one.
     type(scale_t), parameter :: linear_scale = scale_t(SCALE_LINEAR, 2.0_dp, 1.0_dp)
@@ -231,6 +248,11 @@ contains
 
     subroutine ensure_fig()
         if (.not. fig_initialized) call clf()
+        if (cur_fig < 1) then
+            cur_fig = next_free_fig()
+            call grow_figs(cur_fig)
+            figs(cur_fig)%live = .true.
+        end if
         ! No axes yet: create a single full-figure axes (pylab default).
         if (cur_i < 1 .or. cur_i > n_ax) then
             call new_axes_grid(1, 1)
@@ -238,8 +260,153 @@ contains
         end if
     end subroutine ensure_fig
 
-    subroutine figure(figsize, dpi)
+    ! Copy the live figure state into slot k of the store, and back out again.
+    ! These two are the only places that know the full field list.
+    subroutine stash_fig(k)
+        integer, intent(in) :: k
+        figs(k)%live = .true.
+        figs(k)%w_in = fig_w_in
+        figs(k)%h_in = fig_h_in
+        figs(k)%dpi = fig_dpi
+        figs(k)%left = fig_left
+        figs(k)%right = fig_right
+        figs(k)%bottom = fig_bottom
+        figs(k)%top = fig_top
+        figs(k)%wspace = fig_wspace
+        figs(k)%hspace = fig_hspace
+        figs(k)%suptitle = fig_suptitle
+        figs(k)%d_title = def_title
+        figs(k)%d_label = def_label
+        figs(k)%d_tick = def_tick
+        figs(k)%d_legend = def_legend
+        figs(k)%suptitle_size = fig_suptitle_size
+        figs(k)%n_ax = n_ax
+        figs(k)%cur_i = cur_i
+        figs(k)%grid_m = grid_m
+        figs(k)%grid_n = grid_n
+        if (allocated(figs(k)%ax)) deallocate (figs(k)%ax)
+        ! Allocated explicitly rather than relying on reallocation on
+        ! assignment, which is not on by default in every compiler.
+        if (allocated(ax)) then
+            allocate (figs(k)%ax(size(ax)))
+            figs(k)%ax = ax
+        end if
+    end subroutine stash_fig
+
+    subroutine unstash_fig(k)
+        integer, intent(in) :: k
+        fig_w_in = figs(k)%w_in
+        fig_h_in = figs(k)%h_in
+        fig_dpi = figs(k)%dpi
+        fig_left = figs(k)%left
+        fig_right = figs(k)%right
+        fig_bottom = figs(k)%bottom
+        fig_top = figs(k)%top
+        fig_wspace = figs(k)%wspace
+        fig_hspace = figs(k)%hspace
+        fig_suptitle = figs(k)%suptitle
+        def_title = figs(k)%d_title
+        def_label = figs(k)%d_label
+        def_tick = figs(k)%d_tick
+        def_legend = figs(k)%d_legend
+        fig_suptitle_size = figs(k)%suptitle_size
+        n_ax = figs(k)%n_ax
+        cur_i = figs(k)%cur_i
+        grid_m = figs(k)%grid_m
+        grid_n = figs(k)%grid_n
+        if (allocated(ax)) deallocate (ax)
+        if (allocated(figs(k)%ax)) then
+            allocate (ax(size(figs(k)%ax)))
+            ax = figs(k)%ax
+        end if
+        fig_initialized = .true.
+    end subroutine unstash_fig
+
+    subroutine grow_figs(k)
+        integer, intent(in) :: k
+        type(figure_t), allocatable :: tmp(:)
+        integer :: i
+        if (.not. allocated(figs)) allocate (figs(0))
+        if (k <= size(figs)) return
+        allocate (tmp(k))
+        do i = 1, size(figs)
+            tmp(i) = figs(i)
+        end do
+        call move_alloc(tmp, figs)
+    end subroutine grow_figs
+
+    ! The number of the active figure, matplotlib's gcf().number.
+    function gcf() result(num)
+        integer :: num
+        call ensure_fig()
+        num = cur_fig
+    end function gcf
+
+    ! close() drops the active figure, close(num) a specific one and
+    ! close(all=.true.) every one, freeing the axes and their series data.
+    subroutine close(num, all)
+        integer, intent(in), optional :: num
+        logical, intent(in), optional :: all
+        integer :: k, i
+        if (present(all)) then
+            if (all) then
+                if (allocated(figs)) deallocate (figs)
+                cur_fig = 0
+                call clf()
+                fig_initialized = .false.
+                return
+            end if
+        end if
+        k = cur_fig
+        if (present(num)) k = num
+        if (k < 1) return
+        if (allocated(figs)) then
+            if (k <= size(figs)) then
+                figs(k)%live = .false.
+                if (allocated(figs(k)%ax)) deallocate (figs(k)%ax)
+            end if
+        end if
+        if (k == cur_fig) then
+            call clf()
+            fig_initialized = .false.
+            cur_fig = 0
+            ! Fall back to whichever figure is still open, as pyplot does.
+            if (allocated(figs)) then
+                do i = size(figs), 1, -1
+                    if (figs(i)%live) then
+                        cur_fig = i
+                        call unstash_fig(i)
+                        exit
+                    end if
+                end do
+            end if
+        end if
+    end subroutine close
+
+    subroutine figure(figsize, dpi, num)
         real(dp), intent(in), optional :: figsize(2), dpi
+        integer, intent(in), optional :: num
+        integer :: k
+        ! Park the figure we are leaving so it can be returned to by number.
+        if (cur_fig > 0 .and. fig_initialized) then
+            call grow_figs(cur_fig)
+            call stash_fig(cur_fig)
+        end if
+        if (present(num)) then
+            if (num < 1) error stop "fplot: figure num must be positive"
+            k = num
+        else
+            k = next_free_fig()
+        end if
+        call grow_figs(k)
+        if (figs(k)%live .and. .not. present(figsize) .and. .not. present(dpi)) then
+            ! Reselecting an existing figure resumes it untouched.
+            cur_fig = k
+            call unstash_fig(k)
+            return
+        end if
+        cur_fig = k
+        figs(k)%live = .true.
         call clf()
         fig_w_in = FIG_W_DEFAULT
         fig_h_in = FIG_H_DEFAULT
@@ -255,6 +422,19 @@ contains
             fig_dpi = dpi
         end if
     end subroutine figure
+
+    ! Lowest number not currently in use, matching pyplot's figure numbering.
+    function next_free_fig() result(k)
+        integer :: k
+        if (.not. allocated(figs)) then
+            k = 1
+            return
+        end if
+        do k = 1, size(figs)
+            if (.not. figs(k)%live) return
+        end do
+        k = size(figs) + 1
+    end function next_free_fig
 
     subroutine clf()
         cur_i = 0
@@ -480,6 +660,56 @@ contains
                                         abs(sin(a%xtick_rot * PI / 180.0_dp))
         if (len_trim(a%xlabel) > 0) v = v + LABEL_BOX * a%xlabel_size
     end function decor_bottom
+
+    ! How far the decorations reach to the right of the axes box. Only a
+    ! colorbar and its labels live out there.
+    function decor_right(a, W) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: W
+        real(dp) :: v, l0, w0
+        v = 0.0_dp
+        if (.not. a%cbar_on) return
+        l0 = a%left * W
+        w0 = (a%right * W - l0) / CBAR_SHRINK
+        v = l0 + (CBAR_X + CBAR_W) * w0 - a%right * W + 7.0_dp
+        if (len_trim(a%cbar_label) > 0) then
+            v = v + 34.0_dp
+        else
+            v = v + 4.0_dp * a%ytick_size
+        end if
+    end function decor_right
+
+    ! Bounding box of everything actually drawn, in canvas points. This is
+    ! what savefig(bbox_inches="tight") crops to, and it is built from the
+    ! same decoration estimates that tight_layout uses.
+    subroutine drawn_bbox(W, H, x0, y0, x1, y1)
+        real(dp), intent(in) :: W, H
+        real(dp), intent(out) :: x0, y0, x1, y1
+        integer :: i
+        real(dp) :: l, r, t, bt
+        x0 = W
+        y0 = H
+        x1 = 0.0_dp
+        y1 = 0.0_dp
+        do i = 1, n_ax
+            l = ax(i)%left * W - decor_left(ax(i))
+            r = ax(i)%right * W + decor_right(ax(i), W)
+            t = (1.0_dp - ax(i)%top) * H - decor_top(ax(i))
+            bt = (1.0_dp - ax(i)%bottom) * H + decor_bottom(ax(i))
+            x0 = min(x0, l)
+            x1 = max(x1, r)
+            y0 = min(y0, t)
+            y1 = max(y1, bt)
+        end do
+        if (len_trim(fig_suptitle) > 0) &
+            y0 = min(y0, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp - fig_suptitle_size)
+        if (x1 <= x0 .or. y1 <= y0) then
+            x0 = 0.0_dp
+            y0 = 0.0_dp
+            x1 = W
+            y1 = H
+        end if
+    end subroutine drawn_bbox
 
     function decor_top(a) result(v)
         type(axes_t), intent(in) :: a
@@ -3382,12 +3612,13 @@ contains
         end if
     end subroutine render_axes
 
-    function render_svg(facecolor, transparent) result(svg)
-        character(len=*), intent(in), optional :: facecolor
+    function render_svg(facecolor, transparent, bbox_inches, pad_inches) result(svg)
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
         logical, intent(in), optional :: transparent
+        real(dp), intent(in), optional :: pad_inches
         character(len=:), allocatable :: svg
         type(svg_builder) :: b
-        real(dp) :: W, H
+        real(dp) :: W, H, vx, vy, vw, vh, bpad
         character(len=512) :: esc
         character(len=7) :: face
         logical :: clear
@@ -3402,27 +3633,55 @@ contains
 
         W = fig_w_in * PT_PER_IN
         H = fig_h_in * PT_PER_IN
+        vx = 0.0_dp
+        vy = 0.0_dp
+        vw = W
+        vh = H
+        if (present(bbox_inches)) then
+            if (lower(trim(bbox_inches)) == "tight") then
+                bpad = 0.1_dp
+                if (present(pad_inches)) bpad = pad_inches
+                bpad = bpad * PT_PER_IN
+                ! Cropping is expressed as a shifted viewBox, so the drawing
+                ! itself needs no translation.
+                call drawn_bbox(W, H, vx, vy, vw, vh)
+                vx = vx - bpad
+                vy = vy - bpad
+                vw = vw - vx + bpad
+                vh = vh - vy + bpad
+            else if (len_trim(bbox_inches) > 0) then
+                error stop "fplot: bbox_inches must be 'tight'"
+            end if
+        end if
 
         call builder_append(b, '<?xml version="1.0" encoding="utf-8" standalone="no"?>')
         call builder_append(b, new_line("a"))
         call builder_append(b, '<svg xmlns="http://www.w3.org/2000/svg" ')
         call builder_append(b, 'xmlns:xlink="http://www.w3.org/1999/xlink" width="')
-        call append_num(b, W)
+        call append_num(b, vw)
         call builder_append(b, 'pt" height="')
-        call append_num(b, H)
-        call builder_append(b, 'pt" viewBox="0 0 ')
-        call append_num(b, W)
+        call append_num(b, vh)
+        call builder_append(b, 'pt" viewBox="')
+        call append_num(b, vx)
         call builder_append(b, " ")
-        call append_num(b, H)
+        call append_num(b, vy)
+        call builder_append(b, " ")
+        call append_num(b, vw)
+        call builder_append(b, " ")
+        call append_num(b, vh)
         call builder_append(b, '" version="1.1">')
         call builder_append(b, new_line("a"))
 
         ! background; transparent drops the figure patch entirely
         if (.not. clear) then
-            call builder_append(b, '<rect x="0" y="0" width="')
-            call append_num(b, W)
+            call builder_append(b, '<rect x="')
+            call append_num(b, vx)
+            call builder_append(b, '" y="')
+            call append_num(b, vy)
+            call builder_append(b, '" width="')
+            call append_num(b, vw)
             call builder_append(b, '" height="')
-            call append_num(b, H)
+            call append_num(b, vh)
             call builder_append(b, '" fill="')
             call builder_append(b, face)
             call builder_append(b, '"/>')
@@ -3477,15 +3736,23 @@ contains
         end do
     end function lower
 
-    subroutine savefig(filename, transparent, facecolor)
+    ! dpi is accepted and remembered, but SVG is resolution independent and
+    ! matplotlib emits the same inches*72 canvas at any dpi, so it does not
+    ! change the output here either.
+    subroutine savefig(filename, transparent, facecolor, dpi, bbox_inches, pad_inches)
         character(len=*), intent(in) :: filename
         logical, intent(in), optional :: transparent
-        character(len=*), intent(in), optional :: facecolor
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        real(dp), intent(in), optional :: dpi, pad_inches
         character(len=:), allocatable :: svg
         integer :: u, ios, n
 
         call check_svg_ext(filename)
-        svg = render_svg(facecolor, transparent)
+        if (present(dpi)) then
+            if (dpi <= 0.0_dp) error stop "fplot: savefig dpi must be positive"
+            fig_dpi = dpi
+        end if
+        svg = render_svg(facecolor, transparent, bbox_inches, pad_inches)
         n = len(svg)
         open (newunit=u, file=trim(filename), status="replace", action="write", &
               form="unformatted", access="stream", iostat=ios)

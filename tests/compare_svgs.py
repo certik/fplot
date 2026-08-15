@@ -53,6 +53,8 @@ CASES = [
     "colors",
     "fontsize",
     "legend_opts",
+    "savefig_tight",
+    "figures",
 ]
 
 
@@ -69,6 +71,18 @@ def parse_canvas(svg: str) -> tuple[str | None, str | None, str | None]:
 
 def count_tags(svg: str, tag: str) -> int:
     return len(re.findall(rf"<{tag}[\s/>]", svg))
+
+
+# bbox_inches="tight" crops to the extent of the drawn text, which matplotlib
+# gets from real glyph metrics and fplot estimates from font size. The canvas
+# is therefore close but not exact, so those cases get a relative tolerance.
+LOOSE_CANVAS = {"savefig_tight": 0.01}
+
+
+def tol(name: str, expected: float) -> float:
+    if name in LOOSE_CANVAS:
+        return LOOSE_CANVAS[name] * expected
+    return 0.05
 
 
 def main() -> int:
@@ -114,7 +128,7 @@ def main() -> int:
             if a is None:
                 print(f"  HARD: could not read {label} from the matplotlib reference")
                 hard_fail += 1
-            elif b is None or abs(a - b) > 0.05:
+            elif b is None or abs(a - b) > tol(name, a):
                 print(f"  HARD: fplot {label}={b} expected ~{a}")
                 hard_fail += 1
             else:

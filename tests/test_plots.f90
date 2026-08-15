@@ -1,6 +1,7 @@
 program test_plots
     use fplot
     implicit none
+    integer :: fig1
 
     integer, parameter :: n = 100
     integer, parameter :: m = 20
@@ -551,6 +552,29 @@ program test_plots
     call legend(loc="upper right", ncol=2, title="series", frameon=.false.)
     call savefig("tests/out/legend_opts.svg")
     print *, "wrote tests/out/legend_opts.svg"
+
+    ! 42) savefig(bbox_inches="tight")
+    call figure()
+    call plot(xb, hb)
+    call title("tight")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/savefig_tight.svg", bbox_inches="tight", dpi=200.0_dp)
+    print *, "wrote tests/out/savefig_tight.svg"
+
+    ! 43) two live figures kept apart, then closed
+    call figure()
+    fig1 = gcf()
+    call plot(xb, hb, "r-")
+    call title("figure one")
+    call figure()
+    call plot(xb, -hb, "b-")
+    call title("figure two")
+    call close()
+    call figure(num=fig1)
+    call savefig("tests/out/figures.svg")
+    print *, "wrote tests/out/figures.svg"
+    call close(all=.true.)
 
     print *, "All test plots written."
 end program test_plots

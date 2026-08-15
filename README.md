@@ -51,6 +51,8 @@ call suptitle("figure title")
   `xticks` / `yticks` with optional labels, `minorticks_on`
 - Font sizes: `fontsize=` on `title` / `xlabel` / `ylabel` / `suptitle`, and
   `set_fontsize(size=, title=, labels=, ticks=, legend=)` to set them globally
+- `savefig(dpi=, bbox_inches="tight", pad_inches=)` to crop to the drawing
+- Several live figures at once: `figure(num=)`, `gcf()`, `close(num=, all=)`
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing

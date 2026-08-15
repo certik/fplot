@@ -55,6 +55,8 @@ OUT_NAMES = [
     "colors",
     "fontsize",
     "legend_opts",
+    "savefig_tight",
+    "figures",
 ]
 
 
@@ -512,6 +514,24 @@ def main() -> None:
     ax.plot(xb, hb * 0.125, label="delta")
     ax.legend(loc="upper right", ncol=2, title="series", frameon=False)
     save(fig, "legend_opts")
+
+    # 42 savefig bbox_inches="tight"
+    fig, ax = setup_fig()
+    ax.plot(xb, hb)
+    ax.set_title("tight")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "savefig_tight", bbox_inches="tight", dpi=200)
+
+    # 43 two live figures kept apart, then closed
+    f1, a1 = setup_fig()
+    a1.plot(xb, hb, "r-")
+    a1.set_title("figure one")
+    f2, a2 = setup_fig()
+    a2.plot(xb, -hb, "b-")
+    a2.set_title("figure two")
+    plt.close(f2)
+    save(f1, "figures")
 
     print("All matplotlib references written.")
 
