@@ -26,6 +26,9 @@ module fplot
     ! Default subplot spacing (matplotlib rcParams), relative to axes size.
     real(dp), parameter :: WSPACE = 0.2_dp
     real(dp), parameter :: HSPACE = 0.2_dp
+    ! Suptitle baseline (matplotlib figure.suptitle default y), in figure
+    ! fractions measured from the bottom.
+    real(dp), parameter :: SUPTITLE_Y = 0.98_dp
 
     type :: series_t
         integer :: n = 0
@@ -100,7 +103,7 @@ contains
     subroutine new_axes_grid(m, n)
         integer, intent(in) :: m, n
         integer :: i, r, c
-        real(dp) :: w, h
+        real(dp) :: w, h, dx, dy
 
         cur_i = 0
         if (allocated(ax)) deallocate (ax)
@@ -108,18 +111,20 @@ contains
         n_ax = m * n
         allocate (ax(n_ax))
 
-        ! Total span available for the grid, in figure fractions.
+        ! Cell size and cell pitch (cell plus gap), in figure fractions.
         w = (MARGIN_RIGHT - MARGIN_LEFT) / &
             (real(n, dp) + WSPACE * real(n - 1, dp))
         h = (MARGIN_TOP - MARGIN_BOTTOM) / &
             (real(m, dp) + HSPACE * real(m - 1, dp))
+        dx = w * (1.0_dp + WSPACE)
+        dy = h * (1.0_dp + HSPACE)
 
         do i = 1, n_ax
             r = (i - 1) / n          ! row from the top
             c = mod(i - 1, n)        ! column from the left
-            ax(i)%left = MARGIN_LEFT + real(c, dp) * (w + WSPACE * w)
+            ax(i)%left = MARGIN_LEFT + real(c, dp) * dx
             ax(i)%right = ax(i)%left + w
-            ax(i)%bottom = MARGIN_BOTTOM + real(m - 1 - r, dp) * (h + HSPACE * h)
+            ax(i)%bottom = MARGIN_BOTTOM + real(m - 1 - r, dp) * dy
             ax(i)%top = ax(i)%bottom + h
         end do
 
@@ -929,7 +934,7 @@ contains
             call builder_append(b, '<text x="')
             call append_num(b, 0.5_dp * W)
             call builder_append(b, '" y="')
-            call append_num(b, (1.0_dp - 0.98_dp) * H + 4.2_dp)
+            call append_num(b, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp)
             call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
             call builder_append(b, 'font-size="12" fill="#000000">')
             call builder_append(b, esc(1:en))
