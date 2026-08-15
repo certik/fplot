@@ -375,5 +375,24 @@ program test_plots
     call savefig("tests/out/scatter_cmap.svg")
     print *, "wrote tests/out/scatter_cmap.svg"
 
+    ! 25) contour lines
+    call figure()
+    call contour(zimg)
+    call title("contour")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/contour.svg")
+    print *, "wrote tests/out/contour.svg"
+
+    ! 26) filled contours with a colorbar
+    call figure()
+    call contourf(zimg, cmap="coolwarm")
+    call colorbar()
+    call title("contourf")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/contourf.svg")
+    print *, "wrote tests/out/contourf.svg"
+
     print *, "All test plots written."
 end program test_plots

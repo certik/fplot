@@ -7,6 +7,7 @@ module fplot_ticks
     integer, parameter, public :: MAX_TICKS = 32
 
     public :: linear_ticks
+    public :: nice_number
     public :: log_ticks
     public :: format_tick_to
 

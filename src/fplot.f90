@@ -2,6 +2,7 @@
 module fplot
     use fplot_style
     use fplot_cmap
+    use fplot_contour
     use fplot_ticks
     use fplot_svg
     implicit none
@@ -12,7 +13,7 @@ module fplot
     public :: bar, hist, fill_between, errorbar, axhline, axvline
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
-    public :: imshow, colorbar
+    public :: imshow, colorbar, contour, contourf
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg
@@ -109,6 +110,13 @@ module fplot
         logical :: xtick_labeled = .false., ytick_labeled = .false.
         character(len=24) :: xtick_lab(MAX_TICKS), ytick_lab(MAX_TICKS)
         ! Image (imshow). One image per axes, as in normal matplotlib use.
+        ! Contour set (contour / contourf).
+        logical :: has_cont = .false.
+        logical :: cont_filled = .false.
+        real(dp), allocatable :: cz(:, :)
+        real(dp), allocatable :: clev(:)
+        integer :: cont_cmap = CMAP_VIRIDIS
+        real(dp) :: cont_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: has_img = .false.
         ! Set by imshow, and by a scatter that maps c values, so that
         ! colorbar() has a range and colormap to draw.
@@ -553,6 +561,68 @@ contains
         if (present(aspect)) ax(cur_i)%aspect_equal = trim(aspect) /= "auto"
     end subroutine imshow
 
+    subroutine contour(z, levels, cmap, extent)
+        real(dp), intent(in) :: z(:, :)
+        real(dp), intent(in), optional :: levels(:), extent(4)
+        character(len=*), intent(in), optional :: cmap
+        call add_contour(z, levels, cmap, extent, .false.)
+    end subroutine contour
+
+    subroutine contourf(z, levels, cmap, extent)
+        real(dp), intent(in) :: z(:, :)
+        real(dp), intent(in), optional :: levels(:), extent(4)
+        character(len=*), intent(in), optional :: cmap
+        call add_contour(z, levels, cmap, extent, .true.)
+    end subroutine contourf
+
+    ! z is indexed (row, column) with row 1 at the bottom, which is how
+    ! matplotlib orients a contour set: unlike imshow, the y axis ascends.
+    subroutine add_contour(z, levels, cmap, extent, filled)
+        real(dp), intent(in) :: z(:, :)
+        real(dp), intent(in), optional :: levels(:), extent(4)
+        character(len=*), intent(in), optional :: cmap
+        logical, intent(in) :: filled
+        integer :: nr, nc, nt
+        real(dp) :: t(MAX_TICKS)
+
+        call ensure_fig()
+        nr = size(z, 1)
+        nc = size(z, 2)
+        if (nr < 2 .or. nc < 2) return
+
+        if (allocated(ax(cur_i)%cz)) deallocate (ax(cur_i)%cz)
+        allocate (ax(cur_i)%cz(nr, nc))
+        ax(cur_i)%cz = z
+        ax(cur_i)%has_cont = .true.
+        ax(cur_i)%cont_filled = filled
+
+        ax(cur_i)%cont_cmap = CMAP_VIRIDIS
+        if (present(cmap)) ax(cur_i)%cont_cmap = cmap_from_str(cmap)
+
+        if (allocated(ax(cur_i)%clev)) deallocate (ax(cur_i)%clev)
+        if (present(levels)) then
+            allocate (ax(cur_i)%clev(size(levels)))
+            ax(cur_i)%clev = levels
+        else
+            ! matplotlib picks round levels spanning the data, which is the
+            ! same nice-number choice the tick locator already makes.
+            call contour_levels(minval(z), maxval(z), 8, t, nt)
+            allocate (ax(cur_i)%clev(nt))
+            ax(cur_i)%clev = t(1:nt)
+        end if
+
+        if (present(extent)) then
+            ax(cur_i)%cont_ext = extent
+        else
+            ax(cur_i)%cont_ext = [0.0_dp, real(nc - 1, dp), 0.0_dp, real(nr - 1, dp)]
+        end if
+
+        ax(cur_i)%has_cmap_src = .true.
+        ax(cur_i)%img_cmap = ax(cur_i)%cont_cmap
+        ax(cur_i)%img_vmin = ax(cur_i)%clev(1)
+        ax(cur_i)%img_vmax = ax(cur_i)%clev(size(ax(cur_i)%clev))
+    end subroutine add_contour
+
     subroutine colorbar(label)
         character(len=*), intent(in), optional :: label
         call ensure_fig()
@@ -912,6 +982,15 @@ contains
             end if
         end do
 
+        if (a%has_cont) then
+            anyx = .true.
+            anyy = .true.
+            xmin = min(xmin, a%cont_ext(1))
+            xmax = max(xmax, a%cont_ext(2))
+            ymin = min(ymin, a%cont_ext(3))
+            ymax = max(ymax, a%cont_ext(4))
+        end if
+
         if (a%has_img) then
             anyx = .true.
             anyy = .true.
@@ -941,6 +1020,17 @@ contains
                 ymax = 1.0_dp
             end if
             call expand_limits(ymin, ymax, a%yscale == SCALE_LOG, sticky_lo, sticky_hi)
+        end if
+
+        if (a%has_cont) then
+            if (.not. a%xlim_set) then
+                xmin = a%cont_ext(1)
+                xmax = a%cont_ext(2)
+            end if
+            if (.not. a%ylim_set) then
+                ymin = a%cont_ext(3)
+                ymax = a%cont_ext(4)
+            end if
         end if
 
         ! An image fits its extent exactly, and origin="upper" puts the first
@@ -1102,12 +1192,13 @@ contains
 
     ! Emit a filled closed polygon, used by the shaped markers and by
     ! fill_between.
-    subroutine append_polygon(b, px, py, np, color, alpha)
+    subroutine append_polygon(b, px, py, np, color, alpha, seal)
         type(svg_builder), intent(inout) :: b
         real(dp), intent(in) :: px(:), py(:)
         integer, intent(in) :: np
         character(len=*), intent(in) :: color
         real(dp), intent(in) :: alpha
+        logical, intent(in), optional :: seal
         integer :: i
         call builder_append(b, '<polygon points="')
         do i = 1, np
@@ -1119,6 +1210,16 @@ contains
         call builder_append(b, '" fill="')
         call builder_append(b, color)
         call append_opacity(b, "fill-opacity", alpha)
+        ! Abutting polygons leave a hairline of background showing through
+        ! where the renderer antialiases both edges, so seal the seam by
+        ! stroking the outline in the fill colour.
+        if (present(seal)) then
+            if (seal) then
+                call builder_append(b, '" stroke="')
+                call builder_append(b, color)
+                call builder_append(b, '" stroke-width="0.5')
+            end if
+        end if
         call builder_append(b, '"/>')
         call builder_append(b, new_line("a"))
     end subroutine append_polygon
@@ -1398,6 +1499,84 @@ contains
         nm = nm + 1
         m(nm) = v
     end subroutine push_minor
+
+    ! Walk every cell as two triangles, emitting filled bands or level lines.
+    subroutine append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        integer :: nr, nc, i, j, k, tri, nq, ns, nlev, v
+        real(dp) :: dx, dy, gx(2), gy(2)
+        real(dp) :: tx(3), ty(3), tv(3)
+        real(dp) :: qx(MAX_POLY), qy(MAX_POLY)
+        real(dp) :: sx(2), sy(2)
+        real(dp) :: px(MAX_POLY), py(MAX_POLY)
+        real(dp) :: lo, hi, t
+
+        nr = size(a%cz, 1)
+        nc = size(a%cz, 2)
+        nlev = size(a%clev)
+        dx = (a%cont_ext(2) - a%cont_ext(1)) / real(nc - 1, dp)
+        dy = (a%cont_ext(4) - a%cont_ext(3)) / real(nr - 1, dp)
+
+        do i = 1, nr - 1
+            gy(1) = a%cont_ext(3) + real(i - 1, dp) * dy
+            gy(2) = gy(1) + dy
+            do j = 1, nc - 1
+                gx(1) = a%cont_ext(1) + real(j - 1, dp) * dx
+                gx(2) = gx(1) + dx
+
+                do tri = 1, 2
+                    call cell_triangle(a%cz, i, j, gx, gy, tri, tx, ty, tv)
+
+                    if (a%cont_filled) then
+                        do k = 1, nlev - 1
+                            lo = a%clev(k)
+                            hi = a%clev(k + 1)
+                            call tri_band(tx, ty, tv, lo, hi, qx, qy, nq)
+                            if (nq < 3) cycle
+                            do v = 1, nq
+                                px(v) = map_x(qx(v), xmin, xmax, ax_l, ax_w, xlog)
+                                py(v) = map_y(qy(v), ymin, ymax, ax_b, ax_h, ylog)
+                            end do
+                            t = (real(k, dp) - 0.5_dp) / real(nlev - 1, dp)
+                            call append_polygon(b, px, py, nq, &
+                                                cmap_color(a%cont_cmap, t), 1.0_dp, seal=.true.)
+                        end do
+                    else
+                        do k = 1, nlev
+                            call tri_level(tx, ty, tv, a%clev(k), sx, sy, ns)
+                            if (ns /= 2) cycle
+                            t = real(k - 1, dp) / real(max(nlev - 1, 1), dp)
+                            call append_stroke_path(b, &
+                                [map_x(sx(1), xmin, xmax, ax_l, ax_w, xlog), &
+                                 map_x(sx(2), xmin, xmax, ax_l, ax_w, xlog)], &
+                                [map_y(sy(1), ymin, ymax, ax_b, ax_h, ylog), &
+                                 map_y(sy(2), ymin, ymax, ax_b, ax_h, ylog)], &
+                                2, cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
+                        end do
+                    end if
+                end do
+            end do
+        end do
+    end subroutine append_contour
+
+    ! The two triangles of cell (i, j), sharing the diagonal.
+    pure subroutine cell_triangle(z, i, j, gx, gy, tri, tx, ty, tv)
+        real(dp), intent(in) :: z(:, :), gx(2), gy(2)
+        integer, intent(in) :: i, j, tri
+        real(dp), intent(out) :: tx(3), ty(3), tv(3)
+        if (tri == 1) then
+            tx = [gx(1), gx(2), gx(2)]
+            ty = [gy(1), gy(1), gy(2)]
+            tv = [z(i, j), z(i, j + 1), z(i + 1, j + 1)]
+        else
+            tx = [gx(1), gx(2), gx(1)]
+            ty = [gy(1), gy(2), gy(2)]
+            tv = [z(i, j), z(i + 1, j + 1), z(i + 1, j)]
+        end if
+    end subroutine cell_triangle
 
     ! One <rect> per sample. SVG has no raster primitive we can reach without
     ! embedding an encoded image, and nearest-neighbour cells are what
@@ -1739,12 +1918,15 @@ contains
             end do
         end if
 
-        if (a%has_img) then
+        if (a%has_img .or. a%has_cont) then
             call builder_append(b, '<g clip-path="url(#axclip')
             call builder_append(b, int_to_str(idx))
             call builder_append(b, ')">')
             call builder_append(b, new_line("a"))
-            call append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+            if (a%has_img) &
+                call append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+            if (a%has_cont) &
+                call append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
             call builder_append(b, "</g>")
             call builder_append(b, new_line("a"))
         end if

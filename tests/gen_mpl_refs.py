@@ -38,6 +38,8 @@ OUT_NAMES = [
     "imshow",
     "imshow_cbar",
     "scatter_cmap",
+    "contour",
+    "contourf",
 ]
 
 
@@ -361,6 +363,22 @@ def main() -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     save(fig, "scatter_cmap")
+
+    # 25/26 contour
+    fig, ax = setup_fig()
+    ax.contour(zimg)
+    ax.set_title("contour")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "contour")
+
+    fig, ax = setup_fig()
+    cf = ax.contourf(zimg, cmap="coolwarm")
+    fig.colorbar(cf)
+    ax.set_title("contourf")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "contourf")
 
     print("All matplotlib references written.")
 

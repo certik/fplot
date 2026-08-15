@@ -36,6 +36,8 @@ CASES = [
     "imshow",
     "imshow_cbar",
     "scatter_cmap",
+    "contour",
+    "contourf",
 ]
 
 
