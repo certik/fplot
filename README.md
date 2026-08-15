@@ -52,6 +52,7 @@ call suptitle("figure title")
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing
 - `subplots_adjust` and `tight_layout`
+- `twinx` and `twiny` for a second y or x axis on the same plot
 - SVG defaults aligned with matplotlib (6.4×4.8 in, tab10 colors, subplot margins)
 
 ## Build

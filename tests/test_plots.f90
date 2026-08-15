@@ -500,5 +500,17 @@ program test_plots
     call savefig("tests/out/subplots_adjust.svg")
     print *, "wrote tests/out/subplots_adjust.svg"
 
+    ! 38) twinx
+    call figure()
+    call plot(xb, hb)
+    call ylabel("left")
+    call xlabel("x")
+    call twinx()
+    call plot(xb, hb * 100.0_dp)
+    call ylabel("right")
+    call title("twinx")
+    call savefig("tests/out/twinx.svg")
+    print *, "wrote tests/out/twinx.svg"
+
     print *, "All test plots written."
 end program test_plots

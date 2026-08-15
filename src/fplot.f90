@@ -22,6 +22,7 @@ module fplot
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg
     public :: subplot, suptitle, subplots_adjust, tight_layout
+    public :: twinx, twiny
 
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
@@ -162,6 +163,13 @@ module fplot
         real(dp) :: xtick_rot = 0.0_dp, ytick_rot = 0.0_dp
         real(dp) :: xtick_size = TICK_FONT, ytick_size = TICK_FONT
         logical :: spine(4) = .true.
+        ! Twin axes: which axes to borrow limits from, and which side this
+        ! one's own ticks and label go on. A twin also lets the axes beneath
+        ! it show through, so it draws no background.
+        integer :: share_x = 0, share_y = 0
+        logical :: y_right = .false., x_top = .false.
+        logical :: xaxis_off = .false., yaxis_off = .false.
+        logical :: patch_off = .false.
         real(dp) :: aspect = 0.0_dp
         logical :: aspect_datalim = .false.
         ! axis("tight"): fit the data exactly, with no 5% margin.
@@ -279,7 +287,7 @@ contains
         dx = w * (1.0_dp + fig_wspace)
         dy = h * (1.0_dp + fig_hspace)
 
-        do i = 1, n_ax
+        do i = 1, min(n_ax, grid_m * grid_n)
             r = (i - 1) / grid_n     ! row from the top
             c = mod(i - 1, grid_n)   ! column from the left
             ax(i)%left = fig_left + real(c, dp) * dx
@@ -287,7 +295,62 @@ contains
             ax(i)%bottom = fig_bottom + real(grid_m - 1 - r, dp) * dy
             ax(i)%top = ax(i)%bottom + h
         end do
+
+        ! Twins sit exactly on top of the axes they were made from.
+        do i = grid_m * grid_n + 1, n_ax
+            r = max(ax(i)%share_x, ax(i)%share_y)
+            if (r < 1) cycle
+            ax(i)%left = ax(r)%left
+            ax(i)%right = ax(r)%right
+            ax(i)%bottom = ax(r)%bottom
+            ax(i)%top = ax(r)%top
+        end do
     end subroutine layout_grid
+
+    ! A second axes over the current one, sharing its x axis and putting its
+    ! own y axis on the right. It becomes the current axes.
+    subroutine twinx()
+        call add_twin(.true.)
+    end subroutine twinx
+
+    subroutine twiny()
+        call add_twin(.false.)
+    end subroutine twiny
+
+    subroutine add_twin(share_x_axis)
+        logical, intent(in) :: share_x_axis
+        type(axes_t), allocatable :: tmp(:)
+        integer :: parent
+
+        call ensure_fig()
+        parent = cur_i
+
+        call move_alloc(ax, tmp)
+        allocate (ax(n_ax + 1))
+        ax(1:n_ax) = tmp
+        n_ax = n_ax + 1
+        cur_i = n_ax
+
+        ax(cur_i)%left = ax(parent)%left
+        ax(cur_i)%right = ax(parent)%right
+        ax(cur_i)%bottom = ax(parent)%bottom
+        ax(cur_i)%top = ax(parent)%top
+        ax(cur_i)%patch_off = .true.
+        if (share_x_axis) then
+            ax(cur_i)%share_x = parent
+            ax(cur_i)%xsc = ax(parent)%xsc
+            ax(cur_i)%xaxis_off = .true.
+            ax(cur_i)%y_right = .true.
+        else
+            ax(cur_i)%share_y = parent
+            ax(cur_i)%ysc = ax(parent)%ysc
+            ax(cur_i)%yaxis_off = .true.
+            ax(cur_i)%x_top = .true.
+        end if
+        ! matplotlib keeps counting through one cycle across twinned axes,
+        ! so the second curve does not come out the same colour as the first.
+        ax(cur_i)%color_cycle = ax(parent)%color_cycle
+    end subroutine add_twin
 
     subroutine subplots_adjust(left, right, bottom, top, wspace, hspace)
         real(dp), intent(in), optional :: left, right, bottom, top, wspace, hspace
@@ -1472,7 +1535,7 @@ contains
         type(axes_t), intent(in) :: a
         real(dp), intent(out) :: xmin, xmax, ymin, ymax
         integer :: i, j
-        real(dp) :: xv, yv, ylo, yhi, dx, dy, hw
+        real(dp) :: xv, yv, ylo, yhi, xlo, xhi, dx, dy, hw
         logical :: anyx, anyy, sticky_lo, sticky_hi, sx_lo, sx_hi
 
         anyx = .false.
@@ -1637,6 +1700,10 @@ contains
                 if (a%img_origin_upper) call swap(ymin, ymax)
             end if
         end if
+        ! A twin borrows the shared axis wholesale, so the two sets of data
+        ! stay registered against each other.
+        if (a%share_x > 0) call compute_limits(ax(a%share_x), xmin, xmax, ylo, yhi)
+        if (a%share_y > 0) call compute_limits(ax(a%share_y), xlo, xhi, ymin, ymax)
     end subroutine compute_limits
 
     pure subroutine grow_about_centre(lo, hi, f)
@@ -2645,6 +2712,7 @@ contains
         real(dp) :: span_x, span_y, sc, new_w, new_h
         integer :: nxt, nyt, nxm, nym, i, j, n, nl
         real(dp) :: px, py, ms, r, mid
+        real(dp) :: x_edge, x_out, y_edge, y_out
         character(len=64) :: lbl
         character(len=64) :: tx, ty
         integer :: tn, tyn
@@ -2726,7 +2794,7 @@ contains
         call builder_append(b, new_line("a"))
 
         ! axes face
-        if (.not. clear) then
+        if (.not. clear .and. .not. a%patch_off) then
             call builder_append(b, '<rect x="')
             call append_num(b, ax_l)
             call builder_append(b, '" y="')
@@ -2936,30 +3004,54 @@ contains
             end if
         end if
 
-        ! x ticks
+        ! x ticks, on the bottom unless this is a twiny
+        if (a%x_top) then
+            x_edge = ax_t
+            x_out = -1.0_dp
+        else
+            x_edge = ax_b
+            x_out = 1.0_dp
+        end if
+        if (a%yaxis_off) nyt = 0
+        if (a%xaxis_off) nxt = 0
+        if (a%xaxis_off) nxm = 0
+        if (a%yaxis_off) nym = 0
+
         do i = 1, nxt
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
-            call append_tick_at(b, px, ax_b, 0.0_dp, 1.0_dp, a%xtick_dir, a%xtick_len)
+            call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, a%xtick_len)
             call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, lbl, ln)
-            call append_tick_text(b, px, ax_b + 16.0_dp, lbl(1:ln), "center", &
+            call append_tick_text(b, px, x_edge + x_out * 16.0_dp - &
+                                  merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
                                   a%xtick_size, a%xtick_rot)
         end do
         do i = 1, nxm
             px = map_x(xminor(i), xmin, xmax, ax_l, ax_w, xsc)
-            call append_tick_at(b, px, ax_b, 0.0_dp, 1.0_dp, a%xtick_dir, MINOR_FRAC * a%xtick_len)
+            call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, &
+                                MINOR_FRAC * a%xtick_len)
         end do
 
-        ! y ticks
+        ! y ticks, on the left unless this is a twinx
+        if (a%y_right) then
+            y_edge = ax_r
+            y_out = 1.0_dp
+        else
+            y_edge = ax_l
+            y_out = -1.0_dp
+        end if
+
         do i = 1, nyt
             py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
-            call append_tick_at(b, ax_l, py, -1.0_dp, 0.0_dp, a%ytick_dir, a%ytick_len)
+            call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, a%ytick_len)
             call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, lbl, ln)
-            call append_tick_text(b, ax_l - 7.0_dp, py + 3.5_dp, lbl(1:ln), "right", &
+            call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, lbl(1:ln), &
+                                  merge("left ", "right", a%y_right), &
                                   a%ytick_size, a%ytick_rot)
         end do
         do i = 1, nym
             py = map_y(yminor(i), ymin, ymax, ax_b, ax_h, ysc)
-            call append_tick_at(b, ax_l, py, -1.0_dp, 0.0_dp, a%ytick_dir, MINOR_FRAC * a%ytick_len)
+            call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, &
+                                MINOR_FRAC * a%ytick_len)
         end do
 
         if (len_trim(a%xlabel) > 0) then
@@ -2970,11 +3062,15 @@ contains
 
         if (len_trim(a%ylabel) > 0) then
             call xml_escape_to(a%ylabel, esc, en)
-            call fmt_num(ax_l - 34.0_dp, tx, tn)
+            ! The right-hand label of a twinx faces the other way, so that it
+            ! reads from outside the axes just as the left-hand one does.
+            mid = y_edge + y_out * 34.0_dp
+            call fmt_num(mid, tx, tn)
             call fmt_num(0.5_dp * (ax_t + ax_b), ty, tyn)
-            call append_text(b, ax_l - 34.0_dp, 0.5_dp * (ax_t + ax_b), esc(1:en), &
+            call append_text(b, mid, 0.5_dp * (ax_t + ax_b), esc(1:en), &
                              "center", 11.0_dp, "#000000", &
-                             "rotate(-90 " // tx(1:tn) // " " // ty(1:tyn) // ")")
+                             "rotate(" // merge("90 ", "-90", a%y_right) // " " // &
+                             tx(1:tn) // " " // ty(1:tyn) // ")")
         end if
 
         ! title

@@ -49,6 +49,7 @@ CASES = [
     "tick_style",
     "tight_layout",
     "subplots_adjust",
+    "twinx",
 ]
 
 

@@ -51,6 +51,7 @@ OUT_NAMES = [
     "tick_style",
     "tight_layout",
     "subplots_adjust",
+    "twinx",
 ]
 
 
@@ -468,6 +469,17 @@ def main() -> None:
     axs[1].plot(xb, hb)
     fig.subplots_adjust(left=0.2, hspace=0.5)
     save(fig, "subplots_adjust")
+
+    # 38 twinx
+    fig, ax = setup_fig()
+    ax.plot(xb, hb)
+    ax.set_ylabel("left")
+    ax.set_xlabel("x")
+    ax2 = ax.twinx()
+    ax2.plot(xb, hb * 100.0, color="C1")
+    ax2.set_ylabel("right")
+    ax.set_title("twinx")
+    save(fig, "twinx")
 
     print("All matplotlib references written.")
 
