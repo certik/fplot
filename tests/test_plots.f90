@@ -46,7 +46,7 @@ program test_plots
         11.0_dp, 12.0_dp, 13.0_dp, 14.0_dp, 15.0_dp, 16.0_dp, 17.0_dp, &
         18.0_dp, 19.0_dp]
     real(dp) :: qx(64), qy(64), qu(64), qv(64)
-    real(dp) :: hx(500), hy(500)
+    real(dp) :: hx(500), hy(500), mz(6, 6), ev(40)
     real(dp), parameter :: yedge(nzr + 1) = [ &
         0.0_dp, 1.0_dp, 2.0_dp, 4.0_dp, 6.0_dp, 6.5_dp, 7.0_dp, 8.0_dp, 10.0_dp]
     real(dp) :: svals(ns), cvals(ns)
@@ -782,6 +782,34 @@ program test_plots
     call hexbin(hx, hy, gridsize=15)
     call title("hexbin")
     call save_all("hexbin")
+
+! 69) a matrix as an image
+    call clf()
+    do i = 1, 6
+        do j = 1, 6
+            mz(i, j) = real(i*j, dp)
+        end do
+    end do
+    call matshow(mz)
+    call save_all("matshow")
+
+! 70) a row of events
+    call clf()
+    do i = 1, 40
+        ev(i) = 10.0_dp*(gauss(real(i, dp)*3.7_dp) + 1.0_dp)
+    end do
+    call eventplot(ev, color="C0")
+    call title("eventplot")
+    call save_all("eventplot")
+
+! 71) bars broken into pieces
+    call clf()
+    call broken_barh(reshape([1.0_dp, 4.0_dp, 7.0_dp, 2.0_dp, 2.0_dp, 3.0_dp], [3, 2]), &
+                     [1.0_dp, 0.8_dp], color="C0")
+    call broken_barh(reshape([2.0_dp, 6.0_dp, 3.0_dp, 3.0_dp], [2, 2]), &
+                     [2.5_dp, 0.8_dp], color="C1")
+    call title("broken_barh")
+    call save_all("broken_barh")
 
     print *, "All test plots written."
 

@@ -21,6 +21,7 @@ module fplot
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
     public :: pcolormesh, pcolor, hist2d, hexbin
+    public :: matshow, eventplot, broken_barh
     public :: add_axes, secondary_xaxis, secondary_yaxis
     public :: add_rectangle, add_circle, add_ellipse, add_polygon
     public :: polar, set_polar
@@ -132,6 +133,9 @@ module fplot
         ! only when edgecolor names one, as in matplotlib, where a patch is
         ! filled and edgeless unless asked otherwise.
         logical :: patch_fill = .true.
+        ! Most patches never ask for room of their own; the ones a plotting
+        ! call makes for itself, such as broken_barh, do.
+        logical :: patch_scales = .false.
         ! QUIVER: the vector at each point, and how it is drawn. A negative
         ! scale or width means matplotlib's autoscale.
         real(dp), allocatable :: qu(:), qv(:)
@@ -272,6 +276,10 @@ module fplot
         integer :: link_x = 0, link_y = 0
         logical :: xticklabels_off = .false., yticklabels_off = .false.
         logical :: y_right = .false., x_top = .false.
+        ! Room a plotting call asks for beyond what it draws. eventplot
+        ! keeps a whole line length clear above and below its strokes.
+        logical :: yroom_set = .false.
+        real(dp) :: yroom(2) = 0.0_dp
         logical :: xaxis_off = .false., yaxis_off = .false.
         logical :: patch_off = .false.
         real(dp) :: aspect = 0.0_dp
@@ -2399,6 +2407,59 @@ contains
         end if
     end subroutine imshow
 
+    ! matshow: an image of a matrix. The first row is at the top, the
+    ! cells are square and the column numbers run along the top, which is
+    ! how a matrix is written down.
+    subroutine matshow(z, cmap, vmin, vmax)
+        real(dp), intent(in) :: z(:, :)
+        character(len=*), intent(in), optional :: cmap
+        real(dp), intent(in), optional :: vmin, vmax
+
+        call imshow(z, cmap, vmin, vmax, aspect="equal")
+        ax(cur_i)%x_top = .true.
+    end subroutine matshow
+
+    ! A row of events, each drawn as a stroke across the line it sits on.
+    subroutine eventplot(positions, lineoffset, linelength, color, lw)
+        real(dp), intent(in) :: positions(:)
+        real(dp), intent(in), optional :: lineoffset, linelength, lw
+        character(len=*), intent(in), optional :: color
+        real(dp) :: off, len_
+
+        off = 1.0_dp
+        len_ = 1.0_dp
+        if (present(lineoffset)) off = lineoffset
+        if (present(linelength)) len_ = linelength
+        call vlines(positions, off - 0.5_dp*len_, off + 0.5_dp*len_, &
+                    color=color, lw=lw)
+        ! matplotlib keeps a whole line length of room either side of the
+        ! row, not the half it actually draws.
+        if (ax(cur_i)%yroom_set) then
+            ax(cur_i)%yroom = [min(ax(cur_i)%yroom(1), off - len_), &
+                               max(ax(cur_i)%yroom(2), off + len_)]
+        else
+            ax(cur_i)%yroom = [off - len_, off + len_]
+            ax(cur_i)%yroom_set = .true.
+        end if
+    end subroutine eventplot
+
+    ! Bars along one row: each range is a start and a width, and the row
+    ! is a bottom and a height.
+    subroutine broken_barh(xranges, yrange, color, alpha, edgecolor, lw)
+        real(dp), intent(in) :: xranges(:, :), yrange(2)
+        character(len=*), intent(in), optional :: color, edgecolor
+        real(dp), intent(in), optional :: alpha, lw
+        integer :: i, is
+
+        call ensure_fig()
+        do i = 1, size(xranges, 1)
+            call add_rectangle([xranges(i, 1), yrange(1)], xranges(i, 2), yrange(2), &
+                               facecolor=color, edgecolor=edgecolor, lw=lw, alpha=alpha)
+            is = ax(cur_i)%n_series
+            if (is > 0) ax(cur_i)%series(is)%patch_scales = .true.
+        end do
+    end subroutine broken_barh
+
     ! A two dimensional histogram: count the points into a grid of cells
     ! and hand the counts to pcolormesh, which is how matplotlib draws one.
     subroutine hist2d(x, y, bins, cmap, vmin, vmax)
@@ -3837,7 +3898,7 @@ contains
             ! matplotlib leaves an axes holding nothing but patches at its
             ! default square, and only stretches to them once something
             ! else has autoscaled it.
-            if (a%series(i)%kind == SERIES_PATCH) then
+            if (a%series(i)%kind == SERIES_PATCH .and. .not. a%series(i)%patch_scales) then
                 do j = 1, a%series(i)%n
                     pxlo = min(pxlo, a%series(i)%x(j))
                     pxhi = max(pxhi, a%series(i)%x(j))
@@ -3993,6 +4054,11 @@ contains
         if (anyy .and. pyhi >= pylo) then
             ymin = min(ymin, pylo)
             ymax = max(ymax, pyhi)
+        end if
+        if (a%yroom_set) then
+            anyy = .true.
+            ymin = min(ymin, a%yroom(1))
+            ymax = max(ymax, a%yroom(2))
         end if
 
         if (a%xlim_set) then

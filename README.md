@@ -68,6 +68,7 @@ call suptitle("figure title")
 - `add_axes` for an axes placed by hand, `inset_axes` for a small axes
   inside another, and `secondary_xaxis`/`secondary_yaxis` for a second
   scale along an edge
+- `matshow`, `eventplot` and `broken_barh`
 - `hist2d` and `hexbin` for counting points into square or hexagonal bins
 - `imshow(interpolation="bilinear")` to smooth an image instead of
   showing it as blocks

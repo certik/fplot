@@ -66,6 +66,9 @@ OUT_NAMES = [
     "interp",
     "hist2d",
     "hexbin",
+    "matshow",
+    "eventplot",
+    "broken_barh",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -792,6 +795,29 @@ def main() -> None:
     ax.hexbin(hxx, hyy, gridsize=15)
     ax.set_title("hexbin")
     save(fig, "hexbin")
+
+    # 69 a matrix as an image
+    fig, ax = setup_fig()
+    zm = np.array([[float(i * j) for j in range(1, 7)] for i in range(1, 7)])
+    ax.matshow(zm)
+    save(fig, "matshow")
+
+    # 70 a row of events
+    fig, ax = setup_fig()
+    seed = np.arange(1, 41, dtype=float) * 3.7
+    ea = np.sin(seed) * 43758.5453
+    eb = np.sin(seed + 1.0) * 43758.5453
+    ev = 10.0 * ((ea - np.floor(ea)) + (eb - np.floor(eb)))
+    ax.eventplot(ev, color="C0")
+    ax.set_title("eventplot")
+    save(fig, "eventplot")
+
+    # 71 bars broken into pieces
+    fig, ax = setup_fig()
+    ax.broken_barh([(1.0, 2.0), (4.0, 2.0), (7.0, 3.0)], (1.0, 0.8), color="C0")
+    ax.broken_barh([(2.0, 3.0), (6.0, 3.0)], (2.5, 0.8), color="C1")
+    ax.set_title("broken_barh")
+    save(fig, "broken_barh")
 
     print("All matplotlib references written.")
 
