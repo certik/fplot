@@ -39,6 +39,12 @@ program test_plots
     real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
     integer, parameter :: nzr = 8, nzc = 16
     real(dp) :: zimg(nzr, nzc), zlog(nzr, nzc)
+    real(dp), parameter :: xedge(nzc + 1) = [ &
+        0.0_dp, 0.5_dp, 1.5_dp, 3.0_dp, 5.0_dp, 8.0_dp, 9.0_dp, 10.0_dp, &
+        11.0_dp, 12.0_dp, 13.0_dp, 14.0_dp, 15.0_dp, 16.0_dp, 17.0_dp, &
+        18.0_dp, 19.0_dp]
+    real(dp), parameter :: yedge(nzr + 1) = [ &
+        0.0_dp, 1.0_dp, 2.0_dp, 4.0_dp, 6.0_dp, 6.5_dp, 7.0_dp, 8.0_dp, 10.0_dp]
     real(dp) :: svals(ns), cvals(ns)
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
@@ -665,6 +671,13 @@ program test_plots
     call ylabel("$E = mc^{2}$")
     call title("$10^{-3} < T^{2}_{n} < 10^{3}$")
     call save_all("mathtext")
+
+    ! 58) a mesh with uneven cells
+    call clf()
+    call pcolormesh(xedge, yedge, zimg, cmap="viridis")
+    call colorbar()
+    call title("pcolormesh")
+    call save_all("pcolormesh")
 
     print *, "All test plots written."
 

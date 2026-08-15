@@ -19,6 +19,7 @@ module fplot
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
+    public :: pcolormesh, pcolor
     public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
     public :: axis, set_aspect, tick_params, spines
@@ -191,6 +192,10 @@ module fplot
         logical :: img_log_norm = .false.
         real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: img_origin_upper = .true.
+        ! pcolormesh keeps the same samples in img, but with its own cell
+        ! edges instead of an evenly divided extent.
+        logical :: has_mesh = .false.
+        real(dp), allocatable :: mesh_x(:), mesh_y(:)
         ! Data units per point in y over the same in x. Zero means auto.
         ! adjustable="box" shrinks the axes to suit; "datalim" widens the
         ! limits instead, which is what matplotlib's axis("equal") does.
@@ -264,6 +269,8 @@ module fplot
         procedure :: step => ax_step
         procedure :: stem => ax_stem
         procedure :: imshow => ax_imshow
+        procedure :: pcolormesh => ax_pcolormesh
+        procedure :: pcolor => ax_pcolormesh
         procedure :: contour => ax_contour
         procedure :: contourf => ax_contourf
         procedure :: colorbar => ax_colorbar
@@ -1286,6 +1293,15 @@ contains
         call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm)
     end subroutine ax_imshow
 
+    subroutine ax_pcolormesh(self, x, y, c, cmap, vmin, vmax, norm)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), c(:, :)
+        character(len=*), intent(in), optional :: cmap, norm
+        real(dp), intent(in), optional :: vmin, vmax
+        call ax_sca(self)
+        call pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+    end subroutine ax_pcolormesh
+
     subroutine ax_contour(self, z, levels, cmap, extent)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: z(:, :)
@@ -2018,6 +2034,7 @@ contains
         ax(cur_i)%img_vmin = lo
         ax(cur_i)%img_vmax = hi
 
+        ax(cur_i)%has_mesh = .false.
         ax(cur_i)%img_origin_upper = .true.
         if (present(origin)) ax(cur_i)%img_origin_upper = trim(origin) /= "lower"
 
@@ -2034,6 +2051,94 @@ contains
             if (trim(aspect) == "auto") ax(cur_i)%aspect = 0.0_dp
         end if
     end subroutine imshow
+
+    ! A grid of coloured cells with edges of the caller's choosing. x and
+    ! y are the edges, one more than the samples along that direction; if
+    ! they are the same length as the samples they are taken as centres,
+    ! which is matplotlib's shading="nearest".
+    subroutine pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+        real(dp), intent(in) :: x(:), y(:), c(:, :)
+        character(len=*), intent(in), optional :: cmap, norm
+        real(dp), intent(in), optional :: vmin, vmax
+        integer :: nr, nc
+        real(dp) :: lo, hi
+
+        call ensure_fig()
+        nr = size(c, 1)
+        nc = size(c, 2)
+        if (nr < 1 .or. nc < 1) return
+        if (size(x) < nc .or. size(y) < nr) return
+
+        if (allocated(ax(cur_i)%img)) deallocate (ax(cur_i)%img)
+        allocate (ax(cur_i)%img(nr, nc))
+        ax(cur_i)%img = c
+        ax(cur_i)%has_img = .true.
+        ax(cur_i)%has_mesh = .true.
+        ax(cur_i)%has_cmap_src = .true.
+        ax(cur_i)%img_origin_upper = .false.
+
+        if (allocated(ax(cur_i)%mesh_x)) deallocate (ax(cur_i)%mesh_x)
+        if (allocated(ax(cur_i)%mesh_y)) deallocate (ax(cur_i)%mesh_y)
+        call cell_edges(x, nc, ax(cur_i)%mesh_x)
+        call cell_edges(y, nr, ax(cur_i)%mesh_y)
+
+        ax(cur_i)%img_cmap = CMAP_VIRIDIS
+        if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
+        ax(cur_i)%img_log_norm = .false.
+        if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
+
+        if (ax(cur_i)%img_log_norm) then
+            lo = huge(1.0_dp)
+            if (any(c > 0.0_dp)) lo = minval(c, mask=(c > 0.0_dp))
+            hi = maxval(c)
+        else
+            lo = minval(c)
+            hi = maxval(c)
+        end if
+        if (present(vmin)) lo = vmin
+        if (present(vmax)) hi = vmax
+        if (hi <= lo) hi = lo + 1.0_dp
+        ax(cur_i)%img_vmin = lo
+        ax(cur_i)%img_vmax = hi
+
+        ax(cur_i)%img_ext = [minval(ax(cur_i)%mesh_x), maxval(ax(cur_i)%mesh_x), &
+                             minval(ax(cur_i)%mesh_y), maxval(ax(cur_i)%mesh_y)]
+        ! A mesh does not force a square aspect, unlike an image.
+        ax(cur_i)%aspect = 0.0_dp
+    end subroutine pcolormesh
+
+    ! matplotlib's pcolor differs from pcolormesh only in how it is drawn,
+    ! and both come out of one cell loop here.
+    subroutine pcolor(x, y, c, cmap, vmin, vmax, norm)
+        real(dp), intent(in) :: x(:), y(:), c(:, :)
+        character(len=*), intent(in), optional :: cmap, norm
+        real(dp), intent(in), optional :: vmin, vmax
+        call pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+    end subroutine pcolor
+
+    ! n+1 edges from either the edges themselves or the n cell centres.
+    subroutine cell_edges(v, n, e)
+        real(dp), intent(in) :: v(:)
+        integer, intent(in) :: n
+        real(dp), allocatable, intent(out) :: e(:)
+        integer :: i
+
+        allocate (e(n + 1))
+        if (size(v) >= n + 1) then
+            e = v(1:n + 1)
+            return
+        end if
+        do i = 2, n
+            e(i) = 0.5_dp*(v(i - 1) + v(i))
+        end do
+        if (n == 1) then
+            e(1) = v(1) - 0.5_dp
+            e(2) = v(1) + 0.5_dp
+        else
+            e(1) = v(1) - 0.5_dp*(v(2) - v(1))
+            e(n + 1) = v(n) + 0.5_dp*(v(n) - v(n - 1))
+        end if
+    end subroutine cell_edges
 
     subroutine contour(z, levels, cmap, extent)
         real(dp), intent(in) :: z(:, :)
@@ -3279,7 +3384,7 @@ contains
             if (.not. a%ylim_set) then
                 ymin = a%img_ext(3)
                 ymax = a%img_ext(4)
-                if (a%img_origin_upper) call swap(ymin, ymax)
+                if (a%img_origin_upper .and. .not. a%has_mesh) call swap(ymin, ymax)
             end if
         end if
         ! A twin borrows the shared axis wholesale, so the two sets of data
@@ -4334,7 +4439,7 @@ contains
         type(paint_t) :: p
         logical :: flip_x, flip_y
 
-        if (xsc%kind /= SCALE_LINEAR .or. ysc%kind /= SCALE_LINEAR) then
+        if (a%has_mesh .or. xsc%kind /= SCALE_LINEAR .or. ysc%kind /= SCALE_LINEAR) then
             call append_image_cells(b, a, xmin, xmax, ymin, ymax, &
                                     ax_l, ax_w, ax_b, ax_h, xsc, ysc)
             return
@@ -4412,13 +4517,23 @@ contains
         dyc = (a%img_ext(4) - a%img_ext(3)) / real(nr, dp)
 
         do i = 1, nr
-            ye0 = a%img_ext(3) + real(i - 1, dp) * dyc
-            ye1 = ye0 + dyc
+            if (a%has_mesh) then
+                ye0 = a%mesh_y(i)
+                ye1 = a%mesh_y(i + 1)
+            else
+                ye0 = a%img_ext(3) + real(i - 1, dp) * dyc
+                ye1 = ye0 + dyc
+            end if
             py0 = map_y(ye0, ymin, ymax, ax_b, ax_h, ysc)
             py1 = map_y(ye1, ymin, ymax, ax_b, ax_h, ysc)
             do j = 1, nc
-                xe0 = a%img_ext(1) + real(j - 1, dp) * dxc
-                xe1 = xe0 + dxc
+                if (a%has_mesh) then
+                    xe0 = a%mesh_x(j)
+                    xe1 = a%mesh_x(j + 1)
+                else
+                    xe0 = a%img_ext(1) + real(j - 1, dp) * dxc
+                    xe1 = xe0 + dxc
+                end if
                 px0 = map_x(xe0, xmin, xmax, ax_l, ax_w, xsc)
                 px1 = map_x(xe1, xmin, xmax, ax_l, ax_w, xsc)
                 t = cmap_t(a, a%img(i, j))
@@ -4449,7 +4564,7 @@ contains
         real(dp), intent(in) :: W, H
         real(dp) :: bx, bw, bt, bb, bh, y0, y1, t, v, py
         real(dp) :: cb_ticks(MAX_TICKS), lo, hi
-        integer :: i, nt, ln
+        integer :: i, nt, ln, dec
         character(len=64) :: lbl
         character(len=512) :: esc
         real(dp) :: w0, l0
@@ -4482,14 +4597,21 @@ contains
         if (a%img_log_norm) then
             call log_ticks(lo, hi, cb_ticks, nt)
         else
-            call linear_ticks(lo, hi, 6, cb_ticks, nt)
+            call linear_ticks(lo, hi, tick_space(bh, a%ytick_size, .false.), &
+                              cb_ticks, nt)
         end if
+        dec = -1
+        if (.not. a%img_log_norm) dec = tick_decimals(cb_ticks, nt)
         do i = 1, nt
             v = cb_ticks(i)
             if (v < lo .or. v > hi) cycle
             py = bb - cmap_t(a, v) * bh
             call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
-            call format_tick_to(v, a%img_log_norm, lbl, ln)
+            if (a%img_log_norm) then
+                call format_tick_to(v, .true., lbl, ln)
+            else
+                call format_tick_fixed(v, dec, lbl, ln)
+            end if
             call append_text(b, bx + bw + 7.0_dp, py + 3.5_dp, lbl(1:ln), &
                              "left", a%ytick_size, rc_text_color)
         end do

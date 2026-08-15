@@ -52,6 +52,7 @@ OUT_NAMES = [
     "cmap_lognorm",
     "categorical",
     "mathtext",
+    "pcolormesh",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -678,6 +679,16 @@ def main() -> None:
     ax.set_ylabel(r"$E = mc^{2}$")
     ax.set_title(r"$10^{-3} < T^{2}_{n} < 10^{3}$")
     save(fig, "mathtext")
+
+    # 58 a mesh with uneven cells
+    fig, ax = setup_fig()
+    xe = np.array([0.0, 0.5, 1.5, 3.0, 5.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+                   13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0])
+    ye = np.array([0.0, 1.0, 2.0, 4.0, 6.0, 6.5, 7.0, 8.0, 10.0])
+    m = ax.pcolormesh(xe, ye, zimg, cmap="viridis")
+    fig.colorbar(m, ax=ax)
+    ax.set_title("pcolormesh")
+    save(fig, "pcolormesh")
 
     print("All matplotlib references written.")
 
