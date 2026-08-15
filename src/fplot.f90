@@ -30,6 +30,7 @@ module fplot
     public :: twinx, twiny
     public :: set_fontsize
     public :: close, gcf
+    public :: axes, subplots, sca
 
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
@@ -183,6 +184,12 @@ module fplot
         ! one's own ticks and label go on. A twin also lets the axes beneath
         ! it show through, so it draws no background.
         integer :: share_x = 0, share_y = 0
+        ! Shared axes (subplots(sharex=)). Unlike a twin, which borrows the
+        ! other axes' limits wholesale, a share group takes the union of what
+        ! all its members hold, so every panel shows the same span. link_x is
+        ! the index of the axes the group is named after.
+        integer :: link_x = 0, link_y = 0
+        logical :: xticklabels_off = .false., yticklabels_off = .false.
         logical :: y_right = .false., x_top = .false.
         logical :: xaxis_off = .false., yaxis_off = .false.
         logical :: patch_off = .false.
@@ -203,6 +210,60 @@ module fplot
         real(dp) :: left = MARGIN_LEFT, right = MARGIN_RIGHT
         real(dp) :: bottom = MARGIN_BOTTOM, top = MARGIN_TOP
     end type axes_t
+
+    ! A handle to one axes of the current figure, so that a script can say
+    ! ax%plot(...) instead of selecting an axes and then drawing into it.
+    !
+    ! It holds an index, not a copy: fplot is stateful, and every binding is
+    ! "make this the current axes, then call the module procedure of the same
+    ! name". That keeps one implementation of each plot type rather than two,
+    ! and means the two styles can be mixed freely. Anything without a
+    ! binding is still reachable by making the axes current with sca.
+    type :: axes
+        integer :: idx = 0
+    contains
+        procedure :: sca => ax_sca
+        procedure :: plot => ax_plot
+        procedure :: scatter => ax_scatter
+        procedure :: bar => ax_bar
+        procedure :: barh => ax_barh
+        procedure :: hist => ax_hist
+        procedure :: fill_between => ax_fill_between
+        procedure :: errorbar => ax_errorbar
+        procedure :: step => ax_step
+        procedure :: stem => ax_stem
+        procedure :: imshow => ax_imshow
+        procedure :: contour => ax_contour
+        procedure :: contourf => ax_contourf
+        procedure :: colorbar => ax_colorbar
+        procedure :: axhline => ax_axhline
+        procedure :: axvline => ax_axvline
+        procedure :: text => ax_text
+        procedure :: annotate => ax_annotate
+        procedure :: set_title => ax_set_title
+        procedure :: set_xlabel => ax_set_xlabel
+        procedure :: set_ylabel => ax_set_ylabel
+        procedure :: set_xlim => ax_set_xlim
+        procedure :: set_ylim => ax_set_ylim
+        procedure :: set_xscale => ax_set_xscale
+        procedure :: set_yscale => ax_set_yscale
+        procedure :: set_xticks => ax_set_xticks
+        procedure :: set_yticks => ax_set_yticks
+        procedure :: set_aspect => ax_set_aspect
+        procedure :: grid => ax_grid
+        procedure :: legend => ax_legend
+        procedure :: tick_params => ax_tick_params
+        procedure :: spines => ax_spines
+        procedure :: axis => ax_axis
+        procedure :: twinx => ax_twinx
+        procedure :: twiny => ax_twiny
+    end type axes
+
+    ! subplots(m, n, axs) fills a grid; the rank of axs decides whether the
+    ! panels come back shaped or in a row, and a lone axes needs no counts.
+    interface subplots
+        module procedure subplots_grid, subplots_row, subplots_one
+    end interface subplots
 
     ! Figure state (pylab current figure)
     real(dp), save :: fig_w_in = FIG_W_DEFAULT
@@ -758,6 +819,385 @@ contains
         if (grid_m /= m .or. grid_n /= n) call new_axes_grid(m, n)
         cur_i = i
     end subroutine subplot
+
+    ! ----------------------------------------------------------------------
+    ! Axes handles. subplots makes a new figure, as matplotlib's does, and
+    ! hands back one handle per panel.
+    ! ----------------------------------------------------------------------
+
+    subroutine subplots_grid(nrows, ncols, axs, sharex, sharey)
+        integer, intent(in) :: nrows, ncols
+        type(axes), allocatable, intent(out) :: axs(:, :)
+        logical, intent(in), optional :: sharex, sharey
+        integer :: r, c
+
+        call make_grid(nrows, ncols, sharex, sharey)
+        allocate (axs(nrows, ncols))
+        do r = 1, nrows
+            do c = 1, ncols
+                axs(r, c)%idx = (r - 1)*ncols + c
+            end do
+        end do
+    end subroutine subplots_grid
+
+    subroutine subplots_row(nrows, ncols, axs, sharex, sharey)
+        integer, intent(in) :: nrows, ncols
+        type(axes), allocatable, intent(out) :: axs(:)
+        logical, intent(in), optional :: sharex, sharey
+        integer :: i
+
+        call make_grid(nrows, ncols, sharex, sharey)
+        allocate (axs(nrows*ncols))
+        do i = 1, nrows*ncols
+            axs(i)%idx = i
+        end do
+    end subroutine subplots_row
+
+    subroutine subplots_one(ax_out)
+        type(axes), intent(out) :: ax_out
+
+        call make_grid(1, 1)
+        ax_out%idx = 1
+    end subroutine subplots_one
+
+    ! Sharing is expressed on the axes themselves: a group is named after its
+    ! first member, and only the outer panels keep their tick labels, which
+    ! is most of why anyone asks for it.
+    subroutine make_grid(m, n, sharex, sharey)
+        integer, intent(in) :: m, n
+        logical, intent(in), optional :: sharex, sharey
+        integer :: i, r, c
+        logical :: sx, sy
+
+        sx = .false.
+        sy = .false.
+        if (present(sharex)) sx = sharex
+        if (present(sharey)) sy = sharey
+
+        call figure()
+        if (m /= 1 .or. n /= 1) call new_axes_grid(m, n)
+        cur_i = 1
+
+        do i = 1, n_ax
+            r = (i - 1)/n + 1
+            c = i - (r - 1)*n
+            if (sx) then
+                ax(i)%link_x = 1
+                ax(i)%xticklabels_off = r < m
+            end if
+            if (sy) then
+                ax(i)%link_y = 1
+                ax(i)%yticklabels_off = c > 1
+            end if
+        end do
+    end subroutine make_grid
+
+    ! Make an axes current: the module-level spelling of matplotlib's sca,
+    ! and the way to reach anything that has no binding on the handle.
+    subroutine sca(a)
+        type(axes), intent(in) :: a
+
+        call ensure_fig()
+        if (a%idx >= 1 .and. a%idx <= n_ax) cur_i = a%idx
+    end subroutine sca
+
+    subroutine ax_sca(self)
+        class(axes), intent(in) :: self
+
+        call ensure_fig()
+        if (self%idx >= 1 .and. self%idx <= n_ax) cur_i = self%idx
+    end subroutine ax_sca
+
+    subroutine ax_plot(self, x, y, fmt, label, lw, color, marker, linestyle, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        call ax_sca(self)
+        call plot(x, y, fmt, label, lw, color, marker, linestyle, alpha)
+    end subroutine ax_plot
+
+    subroutine ax_scatter(self, x, y, s, c, marker, label, alpha, sizes, cvals, &
+                          cmap, vmin, vmax)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: s, alpha, vmin, vmax
+        real(dp), intent(in), optional :: sizes(:), cvals(:)
+        character(len=*), intent(in), optional :: c, marker, label, cmap
+        call ax_sca(self)
+        call scatter(x, y, s, c, marker, label, alpha, sizes, cvals, cmap, vmin, vmax)
+    end subroutine ax_scatter
+
+    subroutine ax_bar(self, x, height, width, color, label, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), height(:)
+        real(dp), intent(in), optional :: width, alpha
+        character(len=*), intent(in), optional :: color, label
+        call ax_sca(self)
+        call bar(x, height, width, color, label, alpha)
+    end subroutine ax_bar
+
+    subroutine ax_barh(self, y, width, height, color, label, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y(:), width(:)
+        real(dp), intent(in), optional :: height, alpha
+        character(len=*), intent(in), optional :: color, label
+        call ax_sca(self)
+        call barh(y, width, height, color, label, alpha)
+    end subroutine ax_barh
+
+    subroutine ax_hist(self, x, bins, color, label, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:)
+        integer, intent(in), optional :: bins
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        call ax_sca(self)
+        call hist(x, bins, color, label, alpha)
+    end subroutine ax_hist
+
+    subroutine ax_fill_between(self, x, y1, y2, color, label, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y1(:)
+        real(dp), intent(in), optional :: y2(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        call ax_sca(self)
+        call fill_between(x, y1, y2, color, label, alpha)
+    end subroutine ax_fill_between
+
+    subroutine ax_errorbar(self, x, y, yerr, fmt, color, label, capsize, marker)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), yerr(:)
+        character(len=*), intent(in), optional :: fmt, color, label, marker
+        real(dp), intent(in), optional :: capsize
+        call ax_sca(self)
+        call errorbar(x, y, yerr, fmt, color, label, capsize, marker)
+    end subroutine ax_errorbar
+
+    subroutine ax_step(self, x, y, where, label, color, lw, linestyle, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: where, label, color, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        call ax_sca(self)
+        call step(x, y, where, label, color, lw, linestyle, alpha)
+    end subroutine ax_step
+
+    subroutine ax_stem(self, x, y, color, label, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        call ax_sca(self)
+        call stem(x, y, color, label, alpha)
+    end subroutine ax_stem
+
+    subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z(:, :)
+        character(len=*), intent(in), optional :: cmap, origin, aspect
+        real(dp), intent(in), optional :: vmin, vmax, extent(4)
+        call ax_sca(self)
+        call imshow(z, cmap, vmin, vmax, extent, origin, aspect)
+    end subroutine ax_imshow
+
+    subroutine ax_contour(self, z, levels, cmap, extent)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z(:, :)
+        real(dp), intent(in), optional :: levels(:), extent(4)
+        character(len=*), intent(in), optional :: cmap
+        call ax_sca(self)
+        call contour(z, levels, cmap, extent)
+    end subroutine ax_contour
+
+    subroutine ax_contourf(self, z, levels, cmap, extent)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z(:, :)
+        real(dp), intent(in), optional :: levels(:), extent(4)
+        character(len=*), intent(in), optional :: cmap
+        call ax_sca(self)
+        call contourf(z, levels, cmap, extent)
+    end subroutine ax_contourf
+
+    subroutine ax_colorbar(self, label)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: label
+        call ax_sca(self)
+        call colorbar(label)
+    end subroutine ax_colorbar
+
+    subroutine ax_axhline(self, y, color, linestyle, lw, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call axhline(y, color, linestyle, lw, label)
+    end subroutine ax_axhline
+
+    subroutine ax_axvline(self, x, color, linestyle, lw, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call axvline(x, color, linestyle, lw, label)
+    end subroutine ax_axvline
+
+    subroutine ax_text(self, x, y, s, color, fontsize, ha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x, y
+        character(len=*), intent(in) :: s
+        character(len=*), intent(in), optional :: color, ha
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call text(x, y, s, color, fontsize, ha)
+    end subroutine ax_text
+
+    subroutine ax_annotate(self, s, x, y, xtext, ytext, color, fontsize, ha)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: s
+        real(dp), intent(in) :: x, y
+        real(dp), intent(in), optional :: xtext, ytext, fontsize
+        character(len=*), intent(in), optional :: color, ha
+        call ax_sca(self)
+        call annotate(s, x, y, xtext, ytext, color, fontsize, ha)
+    end subroutine ax_annotate
+
+    subroutine ax_set_title(self, s, fontsize)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call title(s, fontsize)
+    end subroutine ax_set_title
+
+    subroutine ax_set_xlabel(self, s, fontsize)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call xlabel(s, fontsize)
+    end subroutine ax_set_xlabel
+
+    subroutine ax_set_ylabel(self, s, fontsize)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call ylabel(s, fontsize)
+    end subroutine ax_set_ylabel
+
+    subroutine ax_set_xlim(self, xmin, xmax)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xmin, xmax
+        call ax_sca(self)
+        call xlim(xmin, xmax)
+    end subroutine ax_set_xlim
+
+    subroutine ax_set_ylim(self, ymin, ymax)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: ymin, ymax
+        call ax_sca(self)
+        call ylim(ymin, ymax)
+    end subroutine ax_set_ylim
+
+    subroutine ax_set_xscale(self, name, linthresh, linscale)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: name
+        real(dp), intent(in), optional :: linthresh, linscale
+        call ax_sca(self)
+        call set_xscale(name, linthresh, linscale)
+    end subroutine ax_set_xscale
+
+    subroutine ax_set_yscale(self, name, linthresh, linscale)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: name
+        real(dp), intent(in), optional :: linthresh, linscale
+        call ax_sca(self)
+        call set_yscale(name, linthresh, linscale)
+    end subroutine ax_set_yscale
+
+    subroutine ax_set_xticks(self, vals, labels)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        call ax_sca(self)
+        call xticks(vals, labels)
+    end subroutine ax_set_xticks
+
+    subroutine ax_set_yticks(self, vals, labels)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        call ax_sca(self)
+        call yticks(vals, labels)
+    end subroutine ax_set_yticks
+
+    subroutine ax_set_aspect(self, ratio, adjustable)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: ratio
+        character(len=*), intent(in), optional :: adjustable
+        call ax_sca(self)
+        call set_aspect(ratio, adjustable)
+    end subroutine ax_set_aspect
+
+    subroutine ax_grid(self, on)
+        class(axes), intent(in) :: self
+        logical, intent(in) :: on
+        call ax_sca(self)
+        call grid(on)
+    end subroutine ax_grid
+
+    subroutine ax_legend(self, loc, fontsize, ncol, frameon, title, bbox_to_anchor)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: loc, title
+        real(dp), intent(in), optional :: fontsize, bbox_to_anchor(2)
+        integer, intent(in), optional :: ncol
+        logical, intent(in), optional :: frameon
+        call ax_sca(self)
+        call legend(loc, fontsize, ncol, frameon, title, bbox_to_anchor)
+    end subroutine ax_legend
+
+    subroutine ax_tick_params(self, axis, direction, length, labelsize, rotation)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: axis, direction
+        real(dp), intent(in), optional :: length, labelsize, rotation
+        call ax_sca(self)
+        call tick_params(axis, direction, length, labelsize, rotation)
+    end subroutine ax_tick_params
+
+    subroutine ax_spines(self, left, right, bottom, top)
+        class(axes), intent(in) :: self
+        logical, intent(in), optional :: left, right, bottom, top
+        call ax_sca(self)
+        call spines(left, right, bottom, top)
+    end subroutine ax_spines
+
+    subroutine ax_axis(self, mode)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: mode
+        call ax_sca(self)
+        call axis(mode)
+    end subroutine ax_axis
+
+    ! A twin is a new axes, so it comes back as its own handle.
+    function ax_twinx(self) result(t)
+        class(axes), intent(in) :: self
+        type(axes) :: t
+        call ax_sca(self)
+        call twinx()
+        t%idx = cur_i
+    end function ax_twinx
+
+    function ax_twiny(self) result(t)
+        class(axes), intent(in) :: self
+        type(axes) :: t
+        call ax_sca(self)
+        call twiny()
+        t%idx = cur_i
+    end function ax_twiny
 
     subroutine suptitle(s, fontsize)
         character(len=*), intent(in) :: s
@@ -2120,7 +2560,41 @@ contains
         ! stay registered against each other.
         if (a%share_x > 0) call compute_limits(ax(a%share_x), xmin, xmax, ylo, yhi)
         if (a%share_y > 0) call compute_limits(ax(a%share_y), xlo, xhi, ymin, ymax)
+        ! A share group spans everything its members hold, so the panels line
+        ! up and a feature at one x is at the same place in all of them.
+        if (a%link_x > 0) call union_limits(a%link_x, .true., xmin, xmax)
+        if (a%link_y > 0) call union_limits(a%link_y, .false., ymin, ymax)
     end subroutine compute_limits
+
+    ! The limits of one axis across a share group. Each member is measured
+    ! with its own link cleared, which is what stops this coming back here.
+    recursive subroutine union_limits(root, is_x, lo, hi)
+        integer, intent(in) :: root
+        logical, intent(in) :: is_x
+        real(dp), intent(inout) :: lo, hi
+        type(axes_t) :: m
+        real(dp) :: x0, x1, y0, y1
+        integer :: i
+
+        do i = 1, n_ax
+            if (is_x) then
+                if (ax(i)%link_x /= root) cycle
+            else
+                if (ax(i)%link_y /= root) cycle
+            end if
+            m = ax(i)
+            m%link_x = 0
+            m%link_y = 0
+            call compute_limits(m, x0, x1, y0, y1)
+            if (is_x) then
+                lo = min(lo, x0)
+                hi = max(hi, x1)
+            else
+                lo = min(lo, y0)
+                hi = max(hi, y1)
+            end if
+        end do
+    end subroutine union_limits
 
     pure subroutine grow_about_centre(lo, hi, f)
         real(dp), intent(inout) :: lo, hi
@@ -3545,10 +4019,12 @@ contains
         do i = 1, nxt
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
             call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, a%xtick_len)
-            call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, lbl, ln)
-            call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
-                                  merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
-                                  a%xtick_size, a%xtick_rot)
+            if (.not. a%xticklabels_off) then
+                call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, lbl, ln)
+                call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
+                                      merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
+                                      a%xtick_size, a%xtick_rot)
+            end if
         end do
         do i = 1, nxm
             px = map_x(xminor(i), xmin, xmax, ax_l, ax_w, xsc)
@@ -3568,10 +4044,12 @@ contains
         do i = 1, nyt
             py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
             call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, a%ytick_len)
-            call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, lbl, ln)
-            call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, lbl(1:ln), &
-                                  merge("left ", "right", a%y_right), &
-                                  a%ytick_size, a%ytick_rot)
+            if (.not. a%yticklabels_off) then
+                call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, lbl, ln)
+                call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, lbl(1:ln), &
+                                      merge("left ", "right", a%y_right), &
+                                      a%ytick_size, a%ytick_rot)
+            end if
         end do
         do i = 1, nym
             py = map_y(yminor(i), ymin, ymax, ax_b, ax_h, ysc)

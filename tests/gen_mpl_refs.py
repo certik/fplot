@@ -38,6 +38,7 @@ OUT_NAMES = [
     "imshow",
     "imshow_cbar",
     "imshow_log",
+    "subplots_shared",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -545,6 +546,21 @@ def main() -> None:
     ax.set_xscale("log")
     ax.set_title("imshow on a log axis")
     save(fig, "imshow_log")
+
+    # 45 subplots with axes handles and a shared x axis
+    fig, axs = plt.subplots(2, 2, sharex=True, figsize=(6.4, 4.8))
+    axs[0, 0].plot(x, y, "b-", label="sin")
+    axs[0, 0].set_title("one")
+    axs[0, 0].legend()
+    axs[0, 1].scatter(xs, ys, s=18.0, c="r")
+    axs[0, 1].set_title("two")
+    axs[1, 0].bar(xb, hb, color="g")
+    axs[1, 0].set_xlabel("x")
+    axs[1, 1].plot(x, y3, "m--")
+    axs[1, 1].grid(True)
+    axs[1, 1].set_xlabel("x")
+    fig.suptitle("subplots with handles")
+    save(fig, "subplots_shared")
 
     print("All matplotlib references written.")
 

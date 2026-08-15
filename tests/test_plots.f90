@@ -2,6 +2,7 @@ program test_plots
     use fplot
     implicit none
     integer :: fig1
+    type(axes), allocatable :: axs(:, :)
 
     integer, parameter :: n = 100
     integer, parameter :: m = 20
@@ -540,6 +541,21 @@ program test_plots
     call set_xscale("log")
     call title("imshow on a log axis")
     call save_all("imshow_log")
+
+    ! 45) subplots with axes handles and a shared x axis
+    call subplots(2, 2, axs, sharex=.true.)
+    call axs(1, 1)%plot(x, y, "b-", label="sin")
+    call axs(1, 1)%set_title("one")
+    call axs(1, 1)%legend()
+    call axs(1, 2)%scatter(xs, ys, s=18.0_dp, c="r")
+    call axs(1, 2)%set_title("two")
+    call axs(2, 1)%bar(xb, hb, color="g")
+    call axs(2, 1)%set_xlabel("x")
+    call axs(2, 2)%plot(x, y3, "m--")
+    call axs(2, 2)%grid(.true.)
+    call axs(2, 2)%set_xlabel("x")
+    call suptitle("subplots with handles")
+    call save_all("subplots_shared")
 
     print *, "All test plots written."
 

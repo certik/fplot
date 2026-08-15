@@ -55,6 +55,9 @@ call suptitle("figure title")
   `set_fontsize(size=, title=, labels=, ticks=, legend=)` to set them globally
 - `savefig(dpi=, bbox_inches="tight", pad_inches=)` to crop to the drawing
 - Several live figures at once: `figure(num=)`, `gcf()`, `close(num=, all=)`
+- `subplots(m, n, axs, sharex=, sharey=)` hands back axes handles, so
+  `call axs(1,2)%plot(x, y)` works alongside the stateful `subplot` style;
+  shared axes span the union of the group and drop their inner tick labels
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing
