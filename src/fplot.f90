@@ -181,13 +181,9 @@ contains
     ! Select (or create) the i-th axes of an m x n grid.
     ! Forms: subplot(m, n, i), subplot(m, n) [i=1], subplot(231) [code].
     subroutine subplot(m, n, i)
-        integer, intent(in), optional :: m, n, i
+        integer, intent(in) :: m
+        integer, intent(in), optional :: n, i
         integer :: mm, nn, ii
-
-        if (.not. present(m)) then
-            print *, "fplot: subplot requires at least one argument"
-            return
-        end if
 
         if (present(n)) then
             ! subplot(m, n[, i]) form
