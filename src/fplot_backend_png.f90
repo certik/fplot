@@ -39,6 +39,12 @@ module fplot_backend_png
         real(dp) :: dpi = DEFAULT_DPI
         real(dp) :: ox = 0.0_dp, oy = 0.0_dp     ! canvas origin, in points
         character(len=:), allocatable :: out
+        ! An animation wants the pixels, not a PNG of them. Off by default
+        ! so that an ordinary savefig does not carry a second copy of the
+        ! frame around.
+        logical :: keep_pixels = .false.
+        integer :: pw = 0, ph = 0
+        character(len=:), allocatable :: rgb
     contains
         procedure :: open_canvas => png_open_canvas
         procedure :: close_canvas => png_close_canvas
@@ -102,10 +108,37 @@ contains
 
         if (.not. self%is_open) return
         rgba = canvas_rgba(self%cv)
-        self%out = png_encode(self%cv%w, self%cv%h, rgba)
+        if (self%keep_pixels) then
+            call pack_rgb(self, rgba)
+        else
+            self%out = png_encode(self%cv%w, self%cv%h, rgba)
+        end if
         call canvas_free(self%cv)
         self%is_open = .false.
     end subroutine png_close_canvas
+
+    ! GIF has no alpha to speak of, so the frame is flattened onto white
+    ! here, which is what a viewer would do with it anyway.
+    subroutine pack_rgb(self, rgba)
+        class(png_renderer_t), intent(inout) :: self
+        integer, intent(in) :: rgba(:, :, :)
+        integer :: x, y, c, k, a, v
+
+        self%pw = self%cv%w
+        self%ph = self%cv%h
+        allocate (character(len=3*self%pw*self%ph) :: self%rgb)
+        k = 0
+        do y = 1, self%ph
+            do x = 1, self%pw
+                a = rgba(4, x, y)
+                do c = 1, 3
+                    v = (rgba(c, x, y)*a + 255*(255 - a))/255
+                    k = k + 1
+                    self%rgb(k:k) = achar(min(255, max(0, v)))
+                end do
+            end do
+        end do
+    end subroutine pack_rgb
 
     function png_bytes(self) result(b)
         class(png_renderer_t), intent(in) :: self

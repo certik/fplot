@@ -839,6 +839,17 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 74) an animation: the same line redrawn at a moving phase
+    do i = 1, 20
+        call clf()
+        call plot(x, sin(x + real(i - 1, dp)*0.3_dp), "b-")
+        call ylim(-1.5_dp, 1.5_dp)
+        call title("anim_sine")
+        call add_frame()
+    end do
+    call save_animation("tests/out/anim_sine.gif", fps=10.0_dp)
+    print *, "wrote tests/out/anim_sine.gif"
+
     print *, "All test plots written."
 
 contains

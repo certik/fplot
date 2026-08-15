@@ -11,6 +11,7 @@ module fplot
     use fplot_backend_svg
     use fplot_backend_pdf
     use fplot_backend_eps
+    use fplot_gif, only: gif_encode
     use fplot_backend_png
     use fplot_mathtext
     use fplot_dates
@@ -35,7 +36,8 @@ module fplot
     public :: imshow, colorbar, contour, contourf, clabel
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
-    public :: render_svg, render_pdf, render_png
+    public :: render_svg, render_pdf, render_png, render_eps
+    public :: add_frame, save_animation
     public :: subplot, subplot2grid, suptitle, subplots_adjust, tight_layout
     public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
@@ -432,6 +434,16 @@ module fplot
     real(dp), save :: fig_bottom = MARGIN_BOTTOM, fig_top = MARGIN_TOP
     real(dp), save :: fig_wspace = WSPACE, fig_hspace = HSPACE
     character(len=256), save :: fig_suptitle = ""
+    ! Animation frames, packed RGB, all frames end to end. Kept as bytes
+    ! rather than as figures because a figure cannot be replayed: the caller
+    ! redraws and calls add_frame, exactly as a matplotlib update function
+    ! redraws and returns.
+    character(len=:), allocatable, save :: anim_pix
+    integer, save :: anim_n = 0, anim_w = 0, anim_h = 0
+    ! Filled length of anim_pix. The reel is grown by doubling and written
+    ! into in place: appending with // would build a temporary as large as
+    ! the whole animation on every frame.
+    integer, save :: anim_len = 0
     ! Font sizes for anything not set on an individual axes. New axes take
     ! their sizes from here, so set_fontsize before or after plotting behaves
     ! the same way.
@@ -7307,7 +7319,6 @@ contains
         character(len=*), intent(in), optional :: facecolor, bbox_inches
         real(dp), intent(in), optional :: dpi, pad_inches
         character(len=:), allocatable :: svg
-        integer :: u, ios, n
         real(dp) :: saved_dpi
 
         ! dpi given here applies to this file only, as it does in matplotlib;
@@ -7331,7 +7342,13 @@ contains
             return
         end select
         fig_dpi = saved_dpi
-        n = len(svg)
+        call write_bytes(filename, svg)
+    end subroutine savefig
+
+    subroutine write_bytes(filename, data)
+        character(len=*), intent(in) :: filename, data
+        integer :: u, ios
+
         open (newunit=u, file=trim(filename), status="replace", action="write", &
               form="unformatted", access="stream", iostat=ios)
         if (ios /= 0) then
@@ -7342,13 +7359,100 @@ contains
                 print *, "fplot: failed to open ", trim(filename)
                 return
             end if
-            write (u, "(A)") svg
+            write (u, "(A)") data
             close (u)
             return
         end if
-        if (n > 0) write (u) svg
+        if (len(data) > 0) write (u) data
         close (u)
-    end subroutine savefig
+    end subroutine write_bytes
+
+    ! ------------------------------------------------------------------
+    ! Animation. matplotlib builds an Animation object around a callback;
+    ! Fortran has loops, so the loop stays in the caller and each pass adds
+    ! the figure as it stands to the reel.
+    ! ------------------------------------------------------------------
+
+    subroutine add_frame(facecolor, dpi)
+        character(len=*), intent(in), optional :: facecolor
+        real(dp), intent(in), optional :: dpi
+        type(png_renderer_t) :: r
+        real(dp) :: saved_dpi
+
+        saved_dpi = fig_dpi
+        if (present(dpi)) fig_dpi = dpi
+        r%keep_pixels = .true.
+        call r%set_dpi(fig_dpi)
+        call render_figure(r, facecolor)
+        fig_dpi = saved_dpi
+
+        if (anim_n > 0) then
+            if (r%pw /= anim_w .or. r%ph /= anim_h) then
+                print *, "fplot: add_frame ignored, frame size changed"
+                return
+            end if
+        end if
+        anim_w = r%pw
+        anim_h = r%ph
+        call anim_append(r%rgb)
+        anim_n = anim_n + 1
+    end subroutine add_frame
+
+    subroutine anim_append(frame)
+        character(len=*), intent(in) :: frame
+        character(len=:), allocatable :: bigger
+        integer :: cap, need
+
+        need = anim_len + len(frame)
+        cap = 0
+        if (allocated(anim_pix)) cap = len(anim_pix)
+        if (cap < need) then
+            cap = max(2*cap, need)
+            allocate (character(len=cap) :: bigger)
+            if (anim_len > 0) bigger(1:anim_len) = anim_pix(1:anim_len)
+            call move_alloc(bigger, anim_pix)
+        end if
+        anim_pix(anim_len + 1:need) = frame
+        anim_len = need
+    end subroutine anim_append
+
+    ! Writes the frames collected so far and starts a new reel, so that a
+    ! program can make several animations without a reset call.
+    subroutine save_animation(filename, fps, loop)
+        character(len=*), intent(in) :: filename
+        real(dp), intent(in), optional :: fps
+        logical, intent(in), optional :: loop
+        real(dp) :: rate
+        logical :: rep
+        integer :: delay
+
+        if (anim_n == 0) then
+            print *, "fplot: no frames; call add_frame before save_animation"
+            return
+        end if
+        if (file_ext(filename) /= "gif") then
+            print *, "fplot: save_animation writes .gif, not .", file_ext(filename)
+            return
+        end if
+        rate = 5.0_dp
+        if (present(fps)) then
+            if (fps <= 0.0_dp) error stop "fplot: save_animation fps must be positive"
+            rate = fps
+        end if
+        rep = .true.
+        if (present(loop)) rep = loop
+
+        ! GIF counts delays in hundredths of a second and viewers treat 0 as
+        ! "as fast as you like", so a frame never asks for less than one.
+        delay = max(1, nint(100.0_dp/rate))
+        call write_bytes(filename, gif_encode(anim_w, anim_h, anim_n, &
+                                              anim_pix(1:anim_len), delay, rep))
+        anim_n = 0
+        anim_w = 0
+        anim_h = 0
+        anim_len = 0
+        deallocate (anim_pix)
+    end subroutine save_animation
 
     subroutine show()
         ! File backend. In LFortran Jupyter notebooks, prefer:

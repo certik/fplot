@@ -13,7 +13,10 @@ from matplotlib.colors import LogNorm
 import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon
 import datetime
+import io
+
 import numpy as np
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
@@ -838,6 +841,28 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 74 an animation. matplotlib's own PillowWriter is exactly this: every
+    # frame saved as a PNG and handed to Pillow, which quantizes and writes
+    # the GIF.
+    frames = []
+    for k in range(20):
+        fig, ax = setup_fig()
+        ax.plot(x, np.sin(x + k * 0.3), "b-")
+        ax.set_ylim(-1.5, 1.5)
+        ax.set_title("anim_sine")
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        frames.append(Image.open(buf).convert("RGB"))
+    frames[0].save(
+        REF / "anim_sine.gif",
+        save_all=True,
+        append_images=frames[1:],
+        duration=100,
+        loop=0,
+    )
+    print("wrote tests/refs/anim_sine.gif")
 
     print("All matplotlib references written.")
 

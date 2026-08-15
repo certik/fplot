@@ -17,8 +17,8 @@ demo-lfortran = "bash scripts/build_lfortran.sh && ./build/lfortran/demo"
 
 mpl-refs = "python tests/gen_mpl_refs.py"
 
-# The four comparisons share their setup, so it is expressed once as a
-# dependency rather than repeated in each command and run four times.
+# The five comparisons share their setup, so it is expressed once as a
+# dependency rather than repeated in each command and run five times.
 [tasks.compare]
 cmd = "python tests/compare_svgs.py"
 depends-on = ["mpl-refs", "test-flang"]
@@ -33,6 +33,10 @@ depends-on = ["mpl-refs", "test-flang"]
 
 [tasks.compare-eps]
 cmd = "python tests/compare_eps.py"
+depends-on = ["mpl-refs", "test-flang"]
+
+[tasks.compare-gif]
+cmd = "python tests/compare_gif.py"
 depends-on = ["mpl-refs", "test-flang"]
 
 [dependencies]

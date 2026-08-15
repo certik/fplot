@@ -70,6 +70,7 @@ call suptitle("figure title")
   scale along an edge
 - `table` for a block of text below (or above) the axes
 - `streamplot` for the streamlines of a vector field
+- `add_frame` / `save_animation(file, fps=, loop=)` to write an animated GIF
 - `matshow`, `eventplot` and `broken_barh`
 - `hist2d` and `hexbin` for counting points into square or hexagonal bins
 - `imshow(interpolation="bilinear")` to smooth an image instead of
@@ -131,6 +132,7 @@ pixi run compare       # SVG, structurally
 pixi run compare-png   # PNG, pixel by pixel
 pixi run compare-pdf   # PDF, rasterized by pdftoppm
 pixi run compare-eps   # EPS, rasterized by ghostscript
+pixi run compare-gif   # GIF, frame by frame
 ```
 
 The SVG comparison is structural because a viewer, not fplot, decides what an
@@ -138,7 +140,7 @@ SVG looks like. PNG, PDF and EPS are compared as pixels, since there fplot
 decides.
 
 CI (Linux) runs `pixi run test-flang` and `pixi run test-lfortran`, then all
-four comparisons.
+five comparisons.
 
 ## Layout
 
