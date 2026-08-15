@@ -194,10 +194,12 @@ contains
                     s = "10"
                     n = 2
                 else
+                    ! matplotlib's LogFormatterSciNotation writes the
+                    ! power as mathtext, and so do we.
                     if (v < 0.0_dp) then
-                        write (tmp, '("-1e",I0)') expn
+                        write (tmp, '("$-10^{",I0,"}$")') expn
                     else
-                        write (tmp, '("1e",I0)') expn
+                        write (tmp, '("$10^{",I0,"}$")') expn
                     end if
                     n = len_trim(tmp)
                     s(1:n) = tmp(1:n)

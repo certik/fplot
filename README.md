@@ -65,6 +65,8 @@ call suptitle("figure title")
 - `twinx` and `twiny` for a second y or x axis on the same plot
 - Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
   color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
+- Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$` in any label, laid out
+  once and drawn by every backend
 - Categorical axes: `plot`, `bar` and `barh` take a list of names in place
   of the numbers, and place them at 0, 1, 2, ... with the names as ticks
 - 49 matplotlib colormaps, any of them reversed with a `_r` suffix, and

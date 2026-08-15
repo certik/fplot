@@ -11,6 +11,7 @@ module fplot
     use fplot_backend_svg
     use fplot_backend_pdf
     use fplot_backend_png
+    use fplot_mathtext
     implicit none
     private
 
@@ -1001,7 +1002,11 @@ contains
                         a%ysc, t, nt)
         do i = 1, nt
             call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, lbl, ln)
-            v = max(v, real(ln, dp) * DIGIT_W * a%ytick_size)
+            if (math_is(lbl(1:ln))) then
+                v = max(v, math_width(lbl(1:ln), a%ytick_size))
+            else
+                v = max(v, real(ln, dp) * DIGIT_W * a%ytick_size)
+            end if
         end do
     end function tick_label_width
 
@@ -3682,8 +3687,47 @@ contains
         ang = 0.0_dp
         ! The API turns angles clockwise, matplotlib counterclockwise.
         if (present(rot)) ang = -rot
-        call b%draw_text(x, y, s, f, brush(color), an, BASE_ALPHABETIC, ang)
+        if (math_is(s)) then
+            call append_math(b, x, y, s, f, brush(color), an, ang)
+        else
+            call b%draw_text(x, y, s, f, brush(color), an, BASE_ALPHABETIC, ang)
+        end if
     end subroutine append_text
+
+    ! Mathtext is laid out into plain runs here, so that the backends only
+    ! ever see text they already know how to draw. The runs are placed
+    ! along the text direction, which is why the offsets are rotated by
+    ! the same angle as the string itself.
+    subroutine append_math(b, x, y, s, f, p, anchor, ang)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: x, y, ang
+        character(len=*), intent(in) :: s
+        type(font_t), intent(in) :: f
+        type(paint_t), intent(in) :: p
+        integer, intent(in) :: anchor
+        type(mrun_t) :: runs(MAX_RUNS)
+        type(font_t) :: rf
+        integer :: nr, i
+        real(dp) :: w, x0, ca, sa, rad
+
+        call math_layout(s, f%size, runs, nr, w)
+        select case (anchor)
+        case (ANCHOR_MIDDLE); x0 = -0.5_dp*w
+        case (ANCHOR_END); x0 = -w
+        case default; x0 = 0.0_dp
+        end select
+        rad = ang*PI/180.0_dp
+        ca = cos(rad)
+        sa = sin(rad)
+        rf = f
+        do i = 1, nr
+            rf%size = runs(i)%size
+            call b%draw_text(x + (x0 + runs(i)%dx)*ca - runs(i)%dy*sa, &
+                             y + (x0 + runs(i)%dx)*sa + runs(i)%dy*ca, &
+                             runs(i)%s(1:runs(i)%n), rf, p, ANCHOR_START, &
+                             BASE_ALPHABETIC, ang)
+        end do
+    end subroutine append_math
 
     ! Straight line segment in pixel coordinates.
     subroutine append_line(b, x1, y1, x2, y2, color, lw, ls, alpha)

@@ -51,6 +51,7 @@ OUT_NAMES = [
     "cmap_reversed",
     "cmap_lognorm",
     "categorical",
+    "mathtext",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -669,6 +670,14 @@ def main() -> None:
     ax.set_ylabel("count")
     ax.set_title("categories")
     save(fig, "categorical")
+
+    # 57 mathtext in the labels
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.set_xlabel(r"$x_{i}$ [m]")
+    ax.set_ylabel(r"$E = mc^{2}$")
+    ax.set_title(r"$10^{-3} < T^{2}_{n} < 10^{3}$")
+    save(fig, "mathtext")
 
     print("All matplotlib references written.")
 

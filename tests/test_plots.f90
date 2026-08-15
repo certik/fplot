@@ -658,6 +658,14 @@ program test_plots
     call title("categories")
     call save_all("categorical")
 
+    ! 57) mathtext in the labels
+    call clf()
+    call plot(x, y)
+    call xlabel("$x_{i}$ [m]")
+    call ylabel("$E = mc^{2}$")
+    call title("$10^{-3} < T^{2}_{n} < 10^{3}$")
+    call save_all("mathtext")
+
     print *, "All test plots written."
 
 contains
