@@ -4151,6 +4151,7 @@ contains
         integer, intent(in) :: i, j
         real(dp), allocatable :: w(:)
         if (present(v)) then
+            allocate (w(max(0, j - i + 1)))
             w = v(i:j)
         else
             allocate (w(0))
