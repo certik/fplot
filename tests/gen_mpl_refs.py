@@ -43,6 +43,8 @@ OUT_NAMES = [
     "spans",
     "bar_stacked",
     "bar_colors",
+    "hist_opts",
+    "hist_bins",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -603,6 +605,23 @@ def main() -> None:
     ax.bar_label(ax.containers[-1], padding=2)
     ax.set_title("bars in their own colors")
     save(fig, "bar_colors")
+
+    # 50 histogram options
+    fig, ax = setup_fig()
+    ax.hist(dist1, bins=12, density=True, color="tab:blue", alpha=0.6,
+            label="density")
+    ax.hist(dist1, bins=12, density=True, histtype="step", color="k",
+            label="step")
+    ax.legend()
+    ax.set_title("histogram options")
+    save(fig, "hist_opts")
+
+    # 51 uneven bins, cumulative
+    fig, ax = setup_fig()
+    ax.hist(dist1, bins=[-3.0, -1.0, 0.0, 1.5, 3.0], cumulative=True,
+            color="tab:green")
+    ax.set_title("uneven bins, cumulative")
+    save(fig, "hist_bins")
 
     print("All matplotlib references written.")
 

@@ -122,6 +122,8 @@ module fplot
         real(dp), allocatable :: psize(:)
         character(len=7), allocatable :: pcolor(:)
         real(dp) :: width = 0.8_dp
+        ! Per-bar width, for a histogram with uneven bins.
+        real(dp), allocatable :: bwidth(:)
         real(dp) :: alpha = 1.0_dp
         ! bar_label: written at draw time, when the bar top is known in
         ! points and the padding can be honoured exactly.
@@ -1138,14 +1140,17 @@ contains
         call bar_label(fmt, padding, fontsize)
     end subroutine ax_bar_label
 
-    subroutine ax_hist(self, x, bins, color, label, alpha)
+    subroutine ax_hist(self, x, bins, color, label, alpha, bin_edges, &
+                       density, cumulative, histtype)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:)
         integer, intent(in), optional :: bins
-        character(len=*), intent(in), optional :: color, label
-        real(dp), intent(in), optional :: alpha
+        character(len=*), intent(in), optional :: color, label, histtype
+        real(dp), intent(in), optional :: alpha, bin_edges(:)
+        logical, intent(in), optional :: density, cumulative
         call ax_sca(self)
-        call hist(x, bins, color, label, alpha)
+        call hist(x, bins, color, label, alpha, bin_edges, density, &
+                  cumulative, histtype)
     end subroutine ax_hist
 
     subroutine ax_fill_between(self, x, y1, y2, color, label, alpha)
@@ -2394,46 +2399,130 @@ contains
         end do
     end subroutine bar_label
 
+    ! Half the width of bar j, which uneven histogram bins make per-bar.
+    pure function bar_hw(s, j) result(v)
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp) :: v
+        v = 0.5_dp * s%width
+        if (allocated(s%bwidth)) v = 0.5_dp * s%bwidth(j)
+    end function bar_hw
+
     ! Histogram of x using `bins` equal-width bins over the data range.
-    subroutine hist(x, bins, color, label, alpha)
+    subroutine hist(x, bins, color, label, alpha, bin_edges, density, &
+                    cumulative, histtype)
         real(dp), intent(in) :: x(:)
         integer, intent(in), optional :: bins
-        character(len=*), intent(in), optional :: color, label
-        real(dp), intent(in), optional :: alpha
+        character(len=*), intent(in), optional :: color, label, histtype
+        real(dp), intent(in), optional :: alpha, bin_edges(:)
+        logical, intent(in), optional :: density, cumulative
         integer :: nb, i, k, n, is
-        real(dp) :: lo, hi, w
-        real(dp), allocatable :: centers(:), counts(:)
+        real(dp) :: lo, hi, w, tot
+        real(dp), allocatable :: edges(:), centers(:), counts(:), widths(:)
+        real(dp), allocatable :: sx(:), sy(:)
+        logical :: norm, cum
+        character(len=16) :: ht
 
         n = size(x)
         if (n <= 0) return
-        nb = 10
-        if (present(bins)) nb = bins
-        if (nb < 1) return
+        norm = .false.
+        cum = .false.
+        if (present(density)) norm = density
+        if (present(cumulative)) cum = cumulative
+        ht = "bar"
+        if (present(histtype)) ht = histtype
 
-        lo = minval(x)
-        hi = maxval(x)
-        if (hi <= lo) then
-            lo = lo - 0.5_dp
-            hi = hi + 0.5_dp
+        if (present(bin_edges)) then
+            nb = size(bin_edges) - 1
+            if (nb < 1) return
+            allocate (edges(nb + 1))
+            edges = bin_edges
+        else
+            nb = 10
+            if (present(bins)) nb = bins
+            if (nb < 1) return
+            lo = minval(x)
+            hi = maxval(x)
+            if (hi <= lo) then
+                lo = lo - 0.5_dp
+                hi = hi + 0.5_dp
+            end if
+            w = (hi - lo) / real(nb, dp)
+            allocate (edges(nb + 1))
+            do i = 1, nb + 1
+                edges(i) = lo + real(i - 1, dp) * w
+            end do
         end if
-        w = (hi - lo) / real(nb, dp)
 
-        allocate (centers(nb), counts(nb))
+        allocate (centers(nb), counts(nb), widths(nb))
         counts = 0.0_dp
         do i = 1, nb
-            centers(i) = lo + (real(i, dp) - 0.5_dp) * w
+            centers(i) = 0.5_dp * (edges(i) + edges(i + 1))
+            widths(i) = edges(i + 1) - edges(i)
         end do
         do i = 1, n
-            k = int((x(i) - lo) / w) + 1
-            if (k < 1) k = 1
-            if (k > nb) k = nb          ! the top edge belongs to the last bin
+            if (x(i) < edges(1) .or. x(i) > edges(nb + 1)) cycle
+            k = bin_of(x(i), edges, nb)
             counts(k) = counts(k) + 1.0_dp
         end do
 
+        ! density normalises by the total area, so the bars integrate to one
+        ! even when the bins are of different widths.
+        if (norm) then
+            tot = sum(counts)
+            if (tot > 0.0_dp) counts = counts / (tot * widths)
+        end if
+        if (cum) then
+            do i = 2, nb
+                counts(i) = counts(i) + counts(i - 1)
+            end do
+        end if
+
         call ensure_fig()
-        is = new_shape_series(SERIES_BAR, centers, counts, color, label, alpha)
-        if (is >= 1) ax(cur_i)%series(is)%width = w
+        select case (trim(ht))
+        case ("step", "stepfilled")
+            ! The outline of the same bars: up at every left edge, across
+            ! the top, and back down to the baseline at both ends.
+            allocate (sx(2*nb + 2), sy(2*nb + 2))
+            sx(1) = edges(1)
+            sy(1) = 0.0_dp
+            do i = 1, nb
+                sx(2*i) = edges(i)
+                sy(2*i) = counts(i)
+                sx(2*i + 1) = edges(i + 1)
+                sy(2*i + 1) = counts(i)
+            end do
+            sx(2*nb + 2) = edges(nb + 1)
+            sy(2*nb + 2) = 0.0_dp
+            if (trim(ht) == "stepfilled") then
+                call fill_between(sx, sy, spread(0.0_dp, 1, 2*nb + 2), color, &
+                                  label, alpha)
+            else
+                is = new_shape_series(SERIES_LINE, sx, sy, color, label, alpha)
+            end if
+        case default
+            is = new_shape_series(SERIES_BAR, centers, counts, color, label, alpha)
+            if (is >= 1) then
+                ! Histogram bars touch, so a contrasting edge would show up
+                ! as a seam between them.
+                ax(cur_i)%series(is)%edgecolor = ax(cur_i)%series(is)%color
+                ax(cur_i)%series(is)%width = widths(1)
+                allocate (ax(cur_i)%series(is)%bwidth(nb))
+                ax(cur_i)%series(is)%bwidth = widths
+            end if
+        end select
     end subroutine hist
+
+    ! The bin of v, with the top edge belonging to the last bin.
+    pure function bin_of(v, edges, nb) result(k)
+        real(dp), intent(in) :: v, edges(:)
+        integer, intent(in) :: nb
+        integer :: k
+        do k = 1, nb - 1
+            if (v < edges(k + 1)) return
+        end do
+        k = nb
+    end function bin_of
 
     ! Shade between y1 and y2 (default 0).
     subroutine fill_between(x, y1, y2, color, label, alpha)
@@ -2837,8 +2926,8 @@ contains
                 cycle
             end if
             if (a%series(i)%kind == SERIES_BARH) then
-                hw = 0.5_dp * a%series(i)%width
                 do j = 1, a%series(i)%n
+                    hw = bar_hw(a%series(i), j)
                     anyx = .true.
                     anyy = .true.
                     xmin = min(xmin, bar_base(a%series(i), j), &
@@ -2855,6 +2944,7 @@ contains
 
             do j = 1, a%series(i)%n
                 if (a%series(i)%kind /= SERIES_HLINE) then
+                    if (a%series(i)%kind == SERIES_BAR) hw = bar_hw(a%series(i), j)
                     xv = a%series(i)%x(j)
                     if (.not. (a%xsc%kind == SCALE_LOG .and. xv - hw <= 0.0_dp)) then
                         anyx = .true.
@@ -3457,6 +3547,7 @@ contains
         real(dp) :: xa, xb, ya, yb, hw
 
         hw = 0.5_dp * s%width
+        if (allocated(s%bwidth)) hw = 0.5_dp * s%bwidth(j)
         if (s%kind == SERIES_BARH) then
             ! x holds the bar position and y its length, so the roles of the
             ! two axes are simply swapped.

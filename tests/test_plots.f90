@@ -34,6 +34,7 @@ program test_plots
     character(len=1), parameter :: mark_codes(n_marks) = &
         ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
     integer :: i, j
+    real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
     integer, parameter :: nzr = 8, nzc = 16
     real(dp) :: zimg(nzr, nzc)
     real(dp) :: svals(ns), cvals(ns)
@@ -598,6 +599,22 @@ program test_plots
     call bar_label(padding=2.0_dp)
     call title("bars in their own colors")
     call save_all("bar_colors")
+
+    ! 50) histogram options
+    call clf()
+    call hist(dist1, bins=12, density=.true., color="tab:blue", alpha=0.6_dp, &
+              label="density")
+    call hist(dist1, bins=12, density=.true., histtype="step", color="k", &
+              label="step")
+    call legend()
+    call title("histogram options")
+    call save_all("hist_opts")
+
+    ! 51) uneven bins, cumulative
+    call clf()
+    call hist(dist1, bin_edges=hedges, cumulative=.true., color="tab:green")
+    call title("uneven bins, cumulative")
+    call save_all("hist_bins")
 
     print *, "All test plots written."
 

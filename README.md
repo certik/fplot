@@ -65,6 +65,7 @@ call suptitle("figure title")
 - `twinx` and `twiny` for a second y or x axis on the same plot
 - Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
   color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
+- `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled")`
 - `axhspan`/`axvspan` shaded bands and `hlines`/`vlines` line runs
 - `style_use("ggplot")` and friends (`seaborn`, `fivethirtyeight`,
   `dark_background`, `grayscale`, `default`), or `rc(figsize=, dpi=,
