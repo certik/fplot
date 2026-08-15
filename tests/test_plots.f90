@@ -105,7 +105,7 @@ program test_plots
     print *, "wrote tests/out/loglog.svg"
 
     ! 7) subplots_2x1 (two rows, one column; exercises subplot(m,n,i),
-    !    the 3-digit code form, per-axes state, and suptitle)
+    !    per-axes state, and suptitle)
     call clf()
     call subplot(2, 1, 1)
     call plot(x, y, "b-", label="sin")
@@ -115,7 +115,7 @@ program test_plots
     call grid(.true.)
     call legend()
 
-    call subplot(212)
+    call subplot(2, 1, 2)
     call plot(x, y2, "r--", label="cos")
     call title("bottom: cos")
     call xlabel("x")

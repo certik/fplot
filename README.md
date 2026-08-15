@@ -17,10 +17,10 @@ call show()               ! Jupyter (LFortran) or writes fplot_show.svg
 
 ! subplots
 call clf()
-call subplot(2, 1, 1)      ! or the code form: call subplot(211)
+call subplot(2, 1, 1)
 call plot(x, y, "b-", label="sin")
 call title("top")
-call subplot(212)
+call subplot(2, 1, 2)
 call plot(x, y2, "r--", label="cos")
 call title("bottom")
 call suptitle("figure title")
@@ -32,9 +32,9 @@ call suptitle("figure title")
 - Format strings: colors `bgrcmykw` / `C0`–`C9`, markers `ox.`, linestyles `-` `--` `:` `-.`
 - Optional `label=`, `lw=`, `color=`
 - Title, axis labels, grid, legend, `xlim` / `ylim`, `clf` / `figure`
-- Subplots: `subplot(m, n, i)` (or 3-digit code form like `subplot(212)`) and
-  figure-level `suptitle`; per-axes state (series, labels, grid, legend,
-  scale, limits) with matplotlib's default subplot spacing
+- Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
+  (series, labels, grid, legend, scale, limits) with matplotlib's default
+  subplot spacing
 - SVG defaults aligned with matplotlib (6.4×4.8 in, tab10 colors, subplot margins)
 
 ## Build

@@ -17,7 +17,6 @@ module fplot
     integer, parameter :: SCALE_LOG = 1
     integer, parameter :: MAX_SERIES = 32
     integer, parameter :: MAX_POINTS = 100000
-    integer, parameter :: MAX_AXES = 16
 
     ! Default figure margins (matplotlib rcParams), in figure fractions.
     real(dp), parameter :: MARGIN_LEFT = 0.125_dp
@@ -128,56 +127,19 @@ contains
         grid_n = n
     end subroutine new_axes_grid
 
-    ! Select (or create) the i-th axes of an m x n grid.
-    ! Forms: subplot(m, n, i), subplot(m, n) [i=1], subplot(231) [code].
+    ! Select the i-th axes (row-major) of an m x n grid, creating the grid
+    ! if it differs from the current one.
     subroutine subplot(m, n, i)
-        integer, intent(in) :: m
-        integer, intent(in), optional :: n, i
-        integer :: mm, nn, ii
+        integer, intent(in) :: m, n, i
 
-        if (present(n)) then
-            ! subplot(m, n[, i]) form
-            mm = m
-            nn = n
-            if (present(i)) then
-                ii = i
-            else
-                ii = 1
-            end if
-        else
-            ! Single-integer form: subplot(1) or a 3-digit code like 231.
-            mm = m
-            if (mm == 1) then
-                nn = 1
-                ii = 1
-            else if (mm >= 100 .and. mm <= 999) then
-                ii = mod(mm, 10)
-                nn = (mm / 10) - 10 * (mm / 100)
-                mm = mm / 100
-            else
-                print *, "fplot: subplot single argument must be 1 or a 3-digit code (e.g. 231)"
-                return
-            end if
-        end if
-
-        if (mm < 1 .or. nn < 1 .or. ii < 1 .or. ii > mm * nn) then
-            print *, "fplot: invalid subplot indices (m=", mm, ", n=", nn, &
-                     ", i=", ii, ")"
-            return
-        end if
-        if (mm * nn > MAX_AXES) then
-            print *, "fplot: too many subplots (max ", MAX_AXES, ")"
-            return
+        if (m < 1 .or. n < 1 .or. i < 1 .or. i > m * n) then
+            print *, "fplot: invalid subplot indices: m=", m, " n=", n, " i=", i
+            error stop
         end if
 
         if (.not. fig_initialized) call clf()
-
-        if (n_ax == mm * nn .and. grid_m == mm .and. grid_n == nn) then
-            cur_i = ii
-        else
-            call new_axes_grid(mm, nn)
-            cur_i = ii
-        end if
+        if (grid_m /= m .or. grid_n /= n) call new_axes_grid(m, n)
+        cur_i = i
     end subroutine subplot
 
     subroutine suptitle(s)
