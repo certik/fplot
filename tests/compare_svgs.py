@@ -42,6 +42,8 @@ CASES = [
     "stem",
     "barh",
     "pie",
+    "boxplot",
+    "violinplot",
 ]
 
 

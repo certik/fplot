@@ -44,6 +44,8 @@ OUT_NAMES = [
     "stem",
     "barh",
     "pie",
+    "boxplot",
+    "violinplot",
 ]
 
 
@@ -404,6 +406,21 @@ def main() -> None:
     ax.pie(hb, labels=["a", "b", "c", "d", "e", "f"])
     ax.set_title("pie")
     save(fig, "pie")
+
+    # 31-32 boxplot / violinplot
+    k = np.arange(1, 41, dtype=float)
+    dist1 = np.sin(k) + 0.3 * np.cos(2.7 * k)
+    dist2 = 1.0 + 2.0 * np.sin(0.7 * k) ** 3
+
+    fig, ax = setup_fig()
+    ax.boxplot([dist1, dist2])
+    ax.set_title("boxplot")
+    save(fig, "boxplot")
+
+    fig, ax = setup_fig()
+    ax.violinplot([dist1, dist2])
+    ax.set_title("violinplot")
+    save(fig, "violinplot")
 
     print("All matplotlib references written.")
 

@@ -11,7 +11,7 @@ module fplot
     public :: dp
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
-    public :: step, stem, pie, axis_off
+    public :: step, stem, pie, axis_off, boxplot, violinplot
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
     public :: imshow, colorbar, contour, contourf
@@ -64,6 +64,8 @@ module fplot
     integer, parameter :: SERIES_BARH = 6
     integer, parameter :: SERIES_STEM = 7
     integer, parameter :: SERIES_PIE = 8
+    integer, parameter :: SERIES_BOX = 9
+    integer, parameter :: SERIES_VIOLIN = 10
 
     type :: series_t
         integer :: kind = SERIES_LINE
@@ -72,6 +74,8 @@ module fplot
         real(dp), allocatable :: y(:)
         ! FILL: lower edge. ERRORBAR: symmetric y error.
         real(dp), allocatable :: y2(:)
+        ! BOX/VIOLIN: the position on the category axis.
+        real(dp) :: pos = 1.0_dp
         character(len=7) :: color = "#1f77b4"
         integer :: marker = MARKER_NONE
         integer :: linestyle = LINE_SOLID
@@ -773,6 +777,92 @@ contains
         ax(cur_i)%frame_off = .true.
     end subroutine axis_off
 
+    ! One box per call. Fortran has no ragged arrays, so a group of datasets
+    ! of differing sizes is built by calling this once per dataset rather than
+    ! by passing matplotlib's list.
+    subroutine boxplot(y, position, width, color, label)
+        real(dp), intent(in) :: y(:)
+        real(dp), intent(in), optional :: position, width
+        character(len=*), intent(in), optional :: color, label
+        call add_dist_series(SERIES_BOX, y, position, width, color, label, 0.15_dp)
+    end subroutine boxplot
+
+    subroutine violinplot(y, position, width, color, label)
+        real(dp), intent(in) :: y(:)
+        real(dp), intent(in), optional :: position, width
+        character(len=*), intent(in), optional :: color, label
+        call add_dist_series(SERIES_VIOLIN, y, position, width, color, label, 0.5_dp)
+    end subroutine violinplot
+
+    subroutine add_dist_series(kd, y, position, width, color, label, wdefault)
+        integer, intent(in) :: kd
+        real(dp), intent(in) :: y(:), wdefault
+        real(dp), intent(in), optional :: position, width
+        character(len=*), intent(in), optional :: color, label
+        integer :: is, i, nd
+
+        call ensure_fig()
+        if (size(y) < 1) return
+
+        ! Unpositioned distributions line up at 1, 2, 3, ... in the order added.
+        nd = 0
+        do i = 1, ax(cur_i)%n_series
+            if (ax(cur_i)%series(i)%kind == SERIES_BOX .or. &
+                ax(cur_i)%series(i)%kind == SERIES_VIOLIN) nd = nd + 1
+        end do
+
+        is = new_shape_series(kd, y, y, color, label)
+        if (is < 1) return
+        call sort_in_place(ax(cur_i)%series(is)%y)
+        ax(cur_i)%series(is)%pos = real(nd + 1, dp)
+        if (present(position)) ax(cur_i)%series(is)%pos = position
+        ax(cur_i)%series(is)%width = wdefault
+        if (present(width)) ax(cur_i)%series(is)%width = width
+        ! Neither kind takes a turn in the colour cycle: matplotlib draws box
+        ! furniture in black and every violin in the first cycle colour.
+        if (.not. present(color)) then
+            if (kd == SERIES_BOX) then
+                ax(cur_i)%series(is)%color = "#000000"
+            else
+                ax(cur_i)%series(is)%color = color_from_C(0)
+            end if
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+    end subroutine add_dist_series
+
+    ! Insertion sort. The samples behind one box are few and already close to
+    ! sorted often enough that anything cleverer would not pay for itself.
+    pure subroutine sort_in_place(v)
+        real(dp), intent(inout) :: v(:)
+        integer :: i, j
+        real(dp) :: t
+        do i = 2, size(v)
+            t = v(i)
+            j = i - 1
+            do while (j >= 1)
+                if (v(j) <= t) exit
+                v(j + 1) = v(j)
+                j = j - 1
+            end do
+            v(j + 1) = t
+        end do
+    end subroutine sort_in_place
+
+    ! Linear-interpolated quantile of an already sorted sample, matching the
+    ! default of numpy.percentile.
+    pure function quantile(v, q) result(r)
+        real(dp), intent(in) :: v(:), q
+        real(dp) :: r, h
+        integer :: lo
+        h = q * real(size(v) - 1, dp)
+        lo = min(max(int(floor(h)), 0), size(v) - 1)
+        if (lo + 1 >= size(v)) then
+            r = v(size(v))
+        else
+            r = v(lo + 1) + (h - real(lo, dp)) * (v(lo + 2) - v(lo + 1))
+        end if
+    end function quantile
+
     subroutine colorbar(label)
         character(len=*), intent(in), optional :: label
         call ensure_fig()
@@ -1095,6 +1185,28 @@ contains
             ! A pie sets its own limits, and horizontal bars use the two axes
             ! the other way round, so neither fits the loop below.
             if (a%series(i)%kind == SERIES_PIE) cycle
+            if (a%series(i)%kind == SERIES_BOX .or. &
+                a%series(i)%kind == SERIES_VIOLIN) then
+                anyx = .true.
+                if (a%series(i)%kind == SERIES_BOX) then
+                    ! matplotlib pins the category axis half a slot beyond the
+                    ! outermost box, with no extra margin. A violin instead
+                    ! autoscales to its own body like any other artist.
+                    sx_lo = .true.
+                    sx_hi = .true.
+                    xmin = min(xmin, a%series(i)%pos - 0.5_dp)
+                    xmax = max(xmax, a%series(i)%pos + 0.5_dp)
+                else
+                    xmin = min(xmin, a%series(i)%pos - 0.5_dp * a%series(i)%width)
+                    xmax = max(xmax, a%series(i)%pos + 0.5_dp * a%series(i)%width)
+                end if
+                do j = 1, a%series(i)%n
+                    anyy = .true.
+                    ymin = min(ymin, a%series(i)%y(j))
+                    ymax = max(ymax, a%series(i)%y(j))
+                end do
+                cycle
+            end if
             if (a%series(i)%kind == SERIES_BARH) then
                 hw = 0.5_dp * a%series(i)%width
                 do j = 1, a%series(i)%n
@@ -1679,6 +1791,139 @@ contains
         m(nm) = v
     end subroutine push_minor
 
+    ! Box, median, whiskers at 1.5 IQR clipped to the data, and the outliers
+    ! beyond them as open circles.
+    subroutine append_box(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        real(dp) :: q1, q2, q3, iqr, wlo, whi, hw, cw
+        real(dp) :: xl, xr, cl, cr, xc, y1, y3, ym, yl, yh
+        integer :: j
+
+        q1 = quantile(s%y(1:s%n), 0.25_dp)
+        q2 = quantile(s%y(1:s%n), 0.5_dp)
+        q3 = quantile(s%y(1:s%n), 0.75_dp)
+        iqr = q3 - q1
+        wlo = q1
+        whi = q3
+        do j = 1, s%n
+            if (s%y(j) >= q1 - 1.5_dp * iqr) then
+                wlo = s%y(j)
+                exit
+            end if
+        end do
+        do j = s%n, 1, -1
+            if (s%y(j) <= q3 + 1.5_dp * iqr) then
+                whi = s%y(j)
+                exit
+            end if
+        end do
+
+        hw = 0.5_dp * s%width
+        cw = 0.25_dp * s%width
+        xl = map_x(s%pos - hw, xmin, xmax, ax_l, ax_w, xlog)
+        xr = map_x(s%pos + hw, xmin, xmax, ax_l, ax_w, xlog)
+        cl = map_x(s%pos - cw, xmin, xmax, ax_l, ax_w, xlog)
+        cr = map_x(s%pos + cw, xmin, xmax, ax_l, ax_w, xlog)
+        xc = map_x(s%pos, xmin, xmax, ax_l, ax_w, xlog)
+        y1 = map_y(q1, ymin, ymax, ax_b, ax_h, ylog)
+        y3 = map_y(q3, ymin, ymax, ax_b, ax_h, ylog)
+        ym = map_y(q2, ymin, ymax, ax_b, ax_h, ylog)
+        yl = map_y(wlo, ymin, ymax, ax_b, ax_h, ylog)
+        yh = map_y(whi, ymin, ymax, ax_b, ax_h, ylog)
+
+        call append_stroke_path(b, [xl, xr, xr, xl, xl], [y1, y1, y3, y3, y1], 5, &
+                                trim(s%color), 1.0_dp, s%alpha)
+        call append_line(b, xc, y1, xc, yl, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+        call append_line(b, xc, y3, xc, yh, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+        call append_line(b, cl, yl, cr, yl, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+        call append_line(b, cl, yh, cr, yh, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+        call append_line(b, xl, ym, xr, ym, "#ff7f0e", 1.0_dp, LINE_SOLID, s%alpha)
+
+        do j = 1, s%n
+            if (s%y(j) >= wlo .and. s%y(j) <= whi) cycle
+            call append_open_circle(b, xc, map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog), &
+                                    3.0_dp, trim(s%color))
+        end do
+    end subroutine append_box
+
+    subroutine append_open_circle(b, cx, cy, r, color)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: cx, cy, r
+        character(len=*), intent(in) :: color
+        call builder_append(b, '<circle cx="')
+        call append_num(b, cx)
+        call builder_append(b, '" cy="')
+        call append_num(b, cy)
+        call builder_append(b, '" r="')
+        call append_num(b, r)
+        call builder_append(b, '" fill="none" stroke="')
+        call builder_append(b, color)
+        call builder_append(b, '" stroke-width="1"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_open_circle
+
+    ! Mirrored Gaussian kernel density estimate, plus the min/max/range bars
+    ! matplotlib draws over it.
+    subroutine append_violin(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        integer, parameter :: NK = 100
+        real(dp) :: g(NK), d(NK)
+        real(dp) :: px(2 * NK), py(2 * NK)
+        real(dp) :: lo, hi, mu, var, h, dmax, hw, cw, u
+        integer :: i, j
+
+        lo = s%y(1)
+        hi = s%y(s%n)
+        if (hi <= lo) return
+
+        mu = sum(s%y(1:s%n)) / real(s%n, dp)
+        var = sum((s%y(1:s%n) - mu)**2) / real(s%n - 1, dp)
+        ! Scott's rule, as used by scipy's gaussian_kde and so by matplotlib.
+        h = sqrt(var) * real(s%n, dp)**(-0.2_dp)
+        if (h <= 0.0_dp) return
+
+        do i = 1, NK
+            g(i) = lo + (hi - lo) * real(i - 1, dp) / real(NK - 1, dp)
+            d(i) = 0.0_dp
+            do j = 1, s%n
+                u = (g(i) - s%y(j)) / h
+                d(i) = d(i) + exp(-0.5_dp * u * u)
+            end do
+        end do
+        dmax = maxval(d)
+        if (dmax <= 0.0_dp) return
+
+        hw = 0.5_dp * s%width
+        do i = 1, NK
+            px(i) = map_x(s%pos - hw * d(i) / dmax, xmin, xmax, ax_l, ax_w, xlog)
+            py(i) = map_y(g(i), ymin, ymax, ax_b, ax_h, ylog)
+            px(2 * NK + 1 - i) = map_x(s%pos + hw * d(i) / dmax, xmin, xmax, ax_l, ax_w, xlog)
+            py(2 * NK + 1 - i) = py(i)
+        end do
+        call append_polygon(b, px, py, 2 * NK, trim(s%color), 0.3_dp)
+
+        cw = 0.5_dp * hw
+        call append_line(b, map_x(s%pos, xmin, xmax, ax_l, ax_w, xlog), &
+                         map_y(lo, ymin, ymax, ax_b, ax_h, ylog), &
+                         map_x(s%pos, xmin, xmax, ax_l, ax_w, xlog), &
+                         map_y(hi, ymin, ymax, ax_b, ax_h, ylog), &
+                         trim(s%color), 1.5_dp, LINE_SOLID, 1.0_dp)
+        do i = 1, 2
+            u = merge(lo, hi, i == 1)
+            call append_line(b, map_x(s%pos - cw, xmin, xmax, ax_l, ax_w, xlog), &
+                             map_y(u, ymin, ymax, ax_b, ax_h, ylog), &
+                             map_x(s%pos + cw, xmin, xmax, ax_l, ax_w, xlog), &
+                             map_y(u, ymin, ymax, ax_b, ax_h, ylog), &
+                             trim(s%color), 1.5_dp, LINE_SOLID, 1.0_dp)
+        end do
+    end subroutine append_violin
+
     ! One <path> per wedge: a radius out, the arc, and back to the centre.
     subroutine append_pie(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
         type(svg_builder), intent(inout) :: b
@@ -2177,6 +2422,14 @@ contains
             if (n <= 0) cycle
 
             select case (a%series(i)%kind)
+            case (SERIES_BOX)
+                call append_box(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                cycle
+            case (SERIES_VIOLIN)
+                call append_violin(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                   ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                cycle
             case (SERIES_PIE)
                 call append_pie(b, a%series(i), xmin, xmax, ymin, ymax, &
                                 ax_l, ax_w, ax_b, ax_h)

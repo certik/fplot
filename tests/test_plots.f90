@@ -14,6 +14,8 @@ program test_plots
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
     real(dp) :: xs(ns), ys(ns)
+    integer, parameter :: nd = 40
+    real(dp) :: dist1(nd), dist2(nd)
     real(dp) :: xe(ne), ye(ne), ee(ne)
     real(dp), parameter :: xb(nb) = [1.0_dp, 2.0_dp, 3.0_dp, 4.0_dp, 5.0_dp, 6.0_dp]
     real(dp), parameter :: hb(nb) = [3.0_dp, 5.0_dp, 2.0_dp, 7.0_dp, 4.0_dp, 6.0_dp]
@@ -421,6 +423,27 @@ program test_plots
     call title("pie")
     call savefig("tests/out/pie.svg")
     print *, "wrote tests/out/pie.svg"
+
+    do i = 1, nd
+        dist1(i) = sin(real(i, dp)) + 0.3_dp * cos(2.7_dp * real(i, dp))
+        dist2(i) = 1.0_dp + 2.0_dp * sin(0.7_dp * real(i, dp))**3
+    end do
+
+    ! 31) boxplot
+    call figure()
+    call boxplot(dist1)
+    call boxplot(dist2)
+    call title("boxplot")
+    call savefig("tests/out/boxplot.svg")
+    print *, "wrote tests/out/boxplot.svg"
+
+    ! 32) violinplot
+    call figure()
+    call violinplot(dist1)
+    call violinplot(dist2)
+    call title("violinplot")
+    call savefig("tests/out/violinplot.svg")
+    print *, "wrote tests/out/violinplot.svg"
 
     print *, "All test plots written."
 end program test_plots
