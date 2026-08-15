@@ -7,7 +7,7 @@ module fplot
     private
 
     public :: dp
-    public :: plot, semilogx, semilogy, loglog
+    public :: plot, scatter, semilogx, semilogy, loglog
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg
@@ -34,15 +34,29 @@ module fplot
     real(dp), parameter :: LEGEND_CHAR_W = 5.6_dp
     real(dp), parameter :: PI = 3.141592653589793_dp
 
+    ! What a series draws. LINE covers plot/scatter/semilog*; the rest are
+    ! the shape-based plot types.
+    integer, parameter :: SERIES_LINE = 0
+    integer, parameter :: SERIES_BAR = 1
+    integer, parameter :: SERIES_FILL = 2
+    integer, parameter :: SERIES_ERRORBAR = 3
+    integer, parameter :: SERIES_HLINE = 4
+    integer, parameter :: SERIES_VLINE = 5
+
     type :: series_t
+        integer :: kind = SERIES_LINE
         integer :: n = 0
         real(dp), allocatable :: x(:)
         real(dp), allocatable :: y(:)
+        ! FILL: lower edge. ERRORBAR: symmetric y error.
+        real(dp), allocatable :: y2(:)
         character(len=7) :: color = "#1f77b4"
         integer :: marker = MARKER_NONE
         integer :: linestyle = LINE_SOLID
         real(dp) :: linewidth = 1.5_dp
         real(dp) :: markersize = 6.0_dp
+        real(dp) :: width = 0.8_dp
+        real(dp) :: alpha = 1.0_dp
         character(len=128) :: label = ""
     end type series_t
 
@@ -210,6 +224,28 @@ contains
         call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle)
     end subroutine plot
 
+    ! Marker-only plot. s is the marker area in points^2 (matplotlib's
+    ! convention), so the marker size is its square root.
+    subroutine scatter(x, y, s, c, marker, label)
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: s
+        character(len=*), intent(in), optional :: c, marker, label
+        integer :: is
+
+        call ensure_fig()
+        if (present(marker)) then
+            call add_series(cur_i, x, y, label=label, color=c, marker=marker, &
+                            linestyle="None")
+        else
+            call add_series(cur_i, x, y, label=label, color=c, marker="o", &
+                            linestyle="None")
+        end if
+        is = ax(cur_i)%n_series
+        if (is >= 1) then
+            if (present(s)) ax(cur_i)%series(is)%markersize = sqrt(max(s, 0.0_dp))
+        end if
+    end subroutine scatter
+
     subroutine semilogx(x, y, fmt, label, lw, color)
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: fmt, label, color
@@ -343,85 +379,110 @@ contains
         type(axes_t), intent(in) :: a
         real(dp), intent(out) :: xmin, xmax, ymin, ymax
         integer :: i, j
-        real(dp) :: xv, yv, dx, dy
-        logical :: any
+        real(dp) :: xv, yv, ylo, yhi, dx, dy, hw
+        logical :: anyx, anyy, sticky_lo, sticky_hi
+
+        anyx = .false.
+        anyy = .false.
+        sticky_lo = .false.
+        sticky_hi = .false.
+        xmin = huge(1.0_dp)
+        xmax = -huge(1.0_dp)
+        ymin = huge(1.0_dp)
+        ymax = -huge(1.0_dp)
+
+        do i = 1, a%n_series
+            ! Bars occupy a span in x; a hline/vline constrains one axis only.
+            hw = 0.0_dp
+            if (a%series(i)%kind == SERIES_BAR) hw = 0.5_dp * a%series(i)%width
+
+            do j = 1, a%series(i)%n
+                if (a%series(i)%kind /= SERIES_HLINE) then
+                    xv = a%series(i)%x(j)
+                    if (.not. (a%xscale == SCALE_LOG .and. xv - hw <= 0.0_dp)) then
+                        anyx = .true.
+                        xmin = min(xmin, xv - hw)
+                        xmax = max(xmax, xv + hw)
+                    end if
+                end if
+
+                if (a%series(i)%kind /= SERIES_VLINE) then
+                    yv = a%series(i)%y(j)
+                    ylo = yv
+                    yhi = yv
+                    select case (a%series(i)%kind)
+                    case (SERIES_BAR)
+                        ! Bars are drawn from the y=0 baseline.
+                        ylo = min(0.0_dp, yv)
+                        yhi = max(0.0_dp, yv)
+                    case (SERIES_FILL)
+                        ylo = min(yv, a%series(i)%y2(j))
+                        yhi = max(yv, a%series(i)%y2(j))
+                    case (SERIES_ERRORBAR)
+                        ylo = yv - a%series(i)%y2(j)
+                        yhi = yv + a%series(i)%y2(j)
+                    end select
+                    if (.not. (a%yscale == SCALE_LOG .and. yhi <= 0.0_dp)) then
+                        anyy = .true.
+                        ymin = min(ymin, ylo)
+                        ymax = max(ymax, yhi)
+                    end if
+                end if
+            end do
+
+            ! Matplotlib treats the bar baseline as a sticky edge: no margin
+            ! is added on the side the bars grow from.
+            if (a%series(i)%kind == SERIES_BAR .and. a%series(i)%n > 0) then
+                if (ymin >= 0.0_dp) sticky_lo = .true.
+                if (ymax <= 0.0_dp) sticky_hi = .true.
+            end if
+        end do
 
         if (a%xlim_set) then
             xmin = a%xmin_user
             xmax = a%xmax_user
         else
-            any = .false.
-            xmin = huge(1.0_dp)
-            xmax = -huge(1.0_dp)
-            do i = 1, a%n_series
-                do j = 1, a%series(i)%n
-                    xv = a%series(i)%x(j)
-                    if (a%xscale == SCALE_LOG .and. xv <= 0.0_dp) cycle
-                    any = .true.
-                    if (xv < xmin) xmin = xv
-                    if (xv > xmax) xmax = xv
-                end do
-            end do
-            if (.not. any) then
+            if (.not. anyx) then
                 xmin = 0.0_dp
                 xmax = 1.0_dp
             end if
+            call expand_limits(xmin, xmax, a%xscale == SCALE_LOG, .false., .false.)
         end if
 
         if (a%ylim_set) then
             ymin = a%ymin_user
             ymax = a%ymax_user
         else
-            any = .false.
-            ymin = huge(1.0_dp)
-            ymax = -huge(1.0_dp)
-            do i = 1, a%n_series
-                do j = 1, a%series(i)%n
-                    yv = a%series(i)%y(j)
-                    if (a%yscale == SCALE_LOG .and. yv <= 0.0_dp) cycle
-                    any = .true.
-                    if (yv < ymin) ymin = yv
-                    if (yv > ymax) ymax = yv
-                end do
-            end do
-            if (.not. any) then
+            if (.not. anyy) then
                 ymin = 0.0_dp
                 ymax = 1.0_dp
             end if
-        end if
-
-        if (.not. a%xlim_set) then
-            if (a%xscale == SCALE_LOG) then
-                if (xmin <= 0.0_dp) xmin = tiny(1.0_dp)
-                if (xmax <= xmin) xmax = xmin * 10.0_dp
-                dx = log10(xmax / xmin)
-                if (dx <= 0.0_dp) dx = 1.0_dp
-                xmin = xmin / (10.0_dp ** (0.05_dp * dx))
-                xmax = xmax * (10.0_dp ** (0.05_dp * dx))
-            else
-                dx = xmax - xmin
-                if (abs(dx) < 1.0e-30_dp) dx = 1.0_dp
-                xmin = xmin - 0.05_dp * dx
-                xmax = xmax + 0.05_dp * dx
-            end if
-        end if
-
-        if (.not. a%ylim_set) then
-            if (a%yscale == SCALE_LOG) then
-                if (ymin <= 0.0_dp) ymin = tiny(1.0_dp)
-                if (ymax <= ymin) ymax = ymin * 10.0_dp
-                dy = log10(ymax / ymin)
-                if (dy <= 0.0_dp) dy = 1.0_dp
-                ymin = ymin / (10.0_dp ** (0.05_dp * dy))
-                ymax = ymax * (10.0_dp ** (0.05_dp * dy))
-            else
-                dy = ymax - ymin
-                if (abs(dy) < 1.0e-30_dp) dy = 1.0_dp
-                ymin = ymin - 0.05_dp * dy
-                ymax = ymax + 0.05_dp * dy
-            end if
+            call expand_limits(ymin, ymax, a%yscale == SCALE_LOG, sticky_lo, sticky_hi)
         end if
     end subroutine compute_limits
+
+    ! Pad a data range by matplotlib's 5% margin. A sticky edge (the bar
+    ! baseline) is left exactly where it is.
+    subroutine expand_limits(lo, hi, is_log, sticky_lo, sticky_hi)
+        real(dp), intent(inout) :: lo, hi
+        logical, intent(in) :: is_log, sticky_lo, sticky_hi
+        real(dp) :: d, f
+
+        if (is_log) then
+            if (lo <= 0.0_dp) lo = tiny(1.0_dp)
+            if (hi <= lo) hi = lo * 10.0_dp
+            d = log10(hi / lo)
+            if (d <= 0.0_dp) d = 1.0_dp
+            f = 10.0_dp ** (0.05_dp * d)
+            if (.not. sticky_lo) lo = lo / f
+            if (.not. sticky_hi) hi = hi * f
+        else
+            d = hi - lo
+            if (abs(d) < 1.0e-30_dp) d = 1.0_dp
+            if (.not. sticky_lo) lo = lo - 0.05_dp * d
+            if (.not. sticky_hi) hi = hi + 0.05_dp * d
+        end if
+    end subroutine expand_limits
 
     pure function map_x(x, xmin, xmax, ax_l, ax_w, is_log) result(px)
         real(dp), intent(in) :: x, xmin, xmax, ax_l, ax_w
