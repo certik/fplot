@@ -23,6 +23,10 @@ module fplot
     integer, parameter :: MAX_MINOR = 256
     integer, parameter :: MAX_POINTS = 100000
 
+    real(dp), parameter :: FIG_W_DEFAULT = 6.4_dp
+    real(dp), parameter :: FIG_H_DEFAULT = 4.8_dp
+    real(dp), parameter :: DPI_DEFAULT = 100.0_dp
+
     ! Default figure margins (matplotlib rcParams), in figure fractions.
     real(dp), parameter :: MARGIN_LEFT = 0.125_dp
     real(dp), parameter :: MARGIN_RIGHT = 0.9_dp
@@ -106,8 +110,11 @@ module fplot
     end type axes_t
 
     ! Figure state (pylab current figure)
-    real(dp), save :: fig_w_in = 6.4_dp
-    real(dp), save :: fig_h_in = 4.8_dp
+    real(dp), save :: fig_w_in = FIG_W_DEFAULT
+    real(dp), save :: fig_h_in = FIG_H_DEFAULT
+    ! Kept for savefig backends that rasterize; SVG is resolution independent,
+    ! so matplotlib emits the same inches*72 pt canvas at any dpi.
+    real(dp), save :: fig_dpi = DPI_DEFAULT
     character(len=256), save :: fig_suptitle = ""
     type(axes_t), allocatable, save :: ax(:)
     integer, save :: n_ax = 0
@@ -126,8 +133,22 @@ contains
         end if
     end subroutine ensure_fig
 
-    subroutine figure()
+    subroutine figure(figsize, dpi)
+        real(dp), intent(in), optional :: figsize(2), dpi
         call clf()
+        fig_w_in = FIG_W_DEFAULT
+        fig_h_in = FIG_H_DEFAULT
+        fig_dpi = DPI_DEFAULT
+        if (present(figsize)) then
+            if (figsize(1) <= 0.0_dp .or. figsize(2) <= 0.0_dp) &
+                error stop "fplot: figure figsize must be positive"
+            fig_w_in = figsize(1)
+            fig_h_in = figsize(2)
+        end if
+        if (present(dpi)) then
+            if (dpi <= 0.0_dp) error stop "fplot: figure dpi must be positive"
+            fig_dpi = dpi
+        end if
     end subroutine figure
 
     subroutine clf()
@@ -136,8 +157,6 @@ contains
         n_ax = 0
         grid_m = 0
         grid_n = 0
-        fig_w_in = 6.4_dp
-        fig_h_in = 4.8_dp
         fig_suptitle = ""
         fig_initialized = .true.
     end subroutine clf

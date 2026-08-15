@@ -31,6 +31,7 @@ OUT_NAMES = [
     "hv_lines",
     "text_annotate",
     "ticks_legend",
+    "figsize",
 ]
 
 
@@ -283,6 +284,16 @@ def main() -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     save(fig, "ticks_legend")
+
+    # 18 figsize
+    fig, ax = plt.subplots(figsize=(8.0, 3.0))
+    ax.plot(x, y, "b-", label="sin")
+    ax.set_title("Wide figure")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    ax.legend()
+    save(fig, "figsize")
 
     print("All matplotlib references written.")
 

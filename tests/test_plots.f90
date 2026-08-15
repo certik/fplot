@@ -288,5 +288,16 @@ program test_plots
     call savefig("tests/out/ticks_legend.svg")
     print *, "wrote tests/out/ticks_legend.svg"
 
+    ! 18) a non-default figure size
+    call figure(figsize=[8.0_dp, 3.0_dp])
+    call plot(x, y, "b-", label="sin")
+    call title("Wide figure")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call legend()
+    call savefig("tests/out/figsize.svg")
+    print *, "wrote tests/out/figsize.svg"
+
     print *, "All test plots written."
 end program test_plots

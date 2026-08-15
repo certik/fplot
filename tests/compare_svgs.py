@@ -29,6 +29,7 @@ CASES = [
     "hv_lines",
     "text_annotate",
     "ticks_legend",
+    "figsize",
 ]
 
 
@@ -75,24 +76,26 @@ def main() -> int:
         print(f"  matplotlib canvas: width={rw} height={rh} viewBox={rvb}")
         print(f"  fplot canvas:      width={ow} height={oh} viewBox={ovb}")
 
-        # Expect 460.8 x 345.6 pt
+        # The matplotlib reference defines the expected canvas, so cases with a
+        # non-default figsize are checked against their own reference.
         def num(s: str | None) -> float | None:
             if s is None:
                 return None
             m = re.match(r"([0-9.]+)", s)
             return float(m.group(1)) if m else None
 
-        for label, a, b, expect in [
-            ("width", num(rw), num(ow), 460.8),
-            ("height", num(rh), num(oh), 345.6),
+        for label, a, b in [
+            ("width", num(rw), num(ow)),
+            ("height", num(rh), num(oh)),
         ]:
-            if b is None or abs(b - expect) > 0.05:
-                print(f"  HARD: fplot {label}={b} expected ~{expect}")
+            if a is None:
+                print(f"  HARD: could not read {label} from the matplotlib reference")
                 hard_fail += 1
-            elif a is not None and abs(a - b) > 0.05:
-                print(f"  note: {label} differs mpl={a} fplot={b}")
+            elif b is None or abs(a - b) > 0.05:
+                print(f"  HARD: fplot {label}={b} expected ~{a}")
+                hard_fail += 1
             else:
-                print(f"  ok: {label} matches expected {expect}")
+                print(f"  ok: {label} matches expected {a}")
 
         print(
             f"  elements mpl:  line={count_tags(ref, 'path')} "
