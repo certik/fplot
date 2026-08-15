@@ -59,10 +59,7 @@ program test_plots
     call legend()
     call xlim(0.0_dp, 2.0_dp * pi)
     call ylim(-1.2_dp, 1.2_dp)
-    call savefig("tests/out/basic_line.svg")
-    call savefig("tests/out/basic_line.pdf")
-    call savefig("tests/out/basic_line.png")
-    print *, "wrote tests/out/basic_line.svg"
+    call save_all("basic_line")
 
     ! 2) multi_style
     call clf()
@@ -76,10 +73,7 @@ program test_plots
     call legend()
     call xlim(0.0_dp, 2.0_dp * pi)
     call ylim(-1.5_dp, 1.5_dp)
-    call savefig("tests/out/multi_style.svg")
-    call savefig("tests/out/multi_style.pdf")
-    call savefig("tests/out/multi_style.png")
-    print *, "wrote tests/out/multi_style.svg"
+    call save_all("multi_style")
 
     ! 3) markers_only
     call clf()
@@ -92,10 +86,7 @@ program test_plots
     call legend()
     call xlim(0.0_dp, 2.0_dp * pi)
     call ylim(-1.5_dp, 1.5_dp)
-    call savefig("tests/out/markers_only.svg")
-    call savefig("tests/out/markers_only.pdf")
-    call savefig("tests/out/markers_only.png")
-    print *, "wrote tests/out/markers_only.svg"
+    call save_all("markers_only")
 
     ! 4) semilogx
     call clf()
@@ -107,10 +98,7 @@ program test_plots
     call legend()
     call xlim(0.1_dp, 10.0_dp)
     call ylim(0.0_dp, 120.0_dp)
-    call savefig("tests/out/semilogx.svg")
-    call savefig("tests/out/semilogx.pdf")
-    call savefig("tests/out/semilogx.png")
-    print *, "wrote tests/out/semilogx.svg"
+    call save_all("semilogx")
 
     ! 5) semilogy
     call clf()
@@ -122,10 +110,7 @@ program test_plots
     call legend()
     call xlim(0.1_dp, 10.0_dp)
     call ylim(1.0e-4_dp, 20.0_dp)
-    call savefig("tests/out/semilogy.svg")
-    call savefig("tests/out/semilogy.pdf")
-    call savefig("tests/out/semilogy.png")
-    print *, "wrote tests/out/semilogy.svg"
+    call save_all("semilogy")
 
     ! 6) loglog
     call clf()
@@ -137,10 +122,7 @@ program test_plots
     call legend()
     call xlim(0.1_dp, 10.0_dp)
     call ylim(0.01_dp, 100.0_dp)
-    call savefig("tests/out/loglog.svg")
-    call savefig("tests/out/loglog.pdf")
-    call savefig("tests/out/loglog.png")
-    print *, "wrote tests/out/loglog.svg"
+    call save_all("loglog")
 
     ! 7) subplots_2x1 (two rows, one column; exercises subplot(m,n,i),
     !    per-axes state, and suptitle)
@@ -162,10 +144,7 @@ program test_plots
     call legend()
 
     call suptitle("fplot subplots")
-    call savefig("tests/out/subplots_2x1.svg")
-    call savefig("tests/out/subplots_2x1.pdf")
-    call savefig("tests/out/subplots_2x1.png")
-    print *, "wrote tests/out/subplots_2x1.svg"
+    call save_all("subplots_2x1")
 
     ! 8) subplots_2x2 (four panels; also checks per-axes log scale)
     call clf()
@@ -190,10 +169,7 @@ program test_plots
     call grid(.true.)
 
     call suptitle("fplot 2x2 subplots")
-    call savefig("tests/out/subplots_2x2.svg")
-    call savefig("tests/out/subplots_2x2.pdf")
-    call savefig("tests/out/subplots_2x2.png")
-    print *, "wrote tests/out/subplots_2x2.svg"
+    call save_all("subplots_2x2")
 
     ! 9) markers gallery (one row per marker code)
     call clf()
@@ -208,10 +184,7 @@ program test_plots
     call title("Markers")
     call xlim(0.0_dp, real(mk + 1, dp))
     call ylim(0.0_dp, real(n_marks + 1, dp))
-    call savefig("tests/out/markers_gallery.svg")
-    call savefig("tests/out/markers_gallery.pdf")
-    call savefig("tests/out/markers_gallery.png")
-    print *, "wrote tests/out/markers_gallery.svg"
+    call save_all("markers_gallery")
 
     ! 10) scatter
     call clf()
@@ -225,10 +198,7 @@ program test_plots
     call ylabel("y")
     call grid(.true.)
     call legend()
-    call savefig("tests/out/scatter.svg")
-    call savefig("tests/out/scatter.pdf")
-    call savefig("tests/out/scatter.png")
-    print *, "wrote tests/out/scatter.svg"
+    call save_all("scatter")
 
     ! 11) bar
     call clf()
@@ -237,10 +207,7 @@ program test_plots
     call xlabel("category")
     call ylabel("value")
     call legend()
-    call savefig("tests/out/bar.svg")
-    call savefig("tests/out/bar.pdf")
-    call savefig("tests/out/bar.png")
-    print *, "wrote tests/out/bar.svg"
+    call save_all("bar")
 
     ! 12) hist
     call clf()
@@ -249,10 +216,7 @@ program test_plots
     call xlabel("value")
     call ylabel("count")
     call legend()
-    call savefig("tests/out/hist.svg")
-    call savefig("tests/out/hist.pdf")
-    call savefig("tests/out/hist.png")
-    print *, "wrote tests/out/hist.svg"
+    call save_all("hist")
 
     ! 13) fill_between
     call clf()
@@ -263,10 +227,7 @@ program test_plots
     call ylabel("y")
     call grid(.true.)
     call legend()
-    call savefig("tests/out/fill_between.svg")
-    call savefig("tests/out/fill_between.pdf")
-    call savefig("tests/out/fill_between.png")
-    print *, "wrote tests/out/fill_between.svg"
+    call save_all("fill_between")
 
     ! 14) errorbar
     call clf()
@@ -281,10 +242,7 @@ program test_plots
     call ylabel("y")
     call grid(.true.)
     call legend()
-    call savefig("tests/out/errorbar.svg")
-    call savefig("tests/out/errorbar.pdf")
-    call savefig("tests/out/errorbar.png")
-    print *, "wrote tests/out/errorbar.svg"
+    call save_all("errorbar")
 
     ! 15) hv_lines
     call clf()
@@ -296,10 +254,7 @@ program test_plots
     call ylabel("y")
     call grid(.true.)
     call legend()
-    call savefig("tests/out/hv_lines.svg")
-    call savefig("tests/out/hv_lines.pdf")
-    call savefig("tests/out/hv_lines.png")
-    print *, "wrote tests/out/hv_lines.svg"
+    call save_all("hv_lines")
 
     ! 16) text and annotate
     call clf()
@@ -310,10 +265,7 @@ program test_plots
     call xlabel("x")
     call ylabel("y")
     call grid(.true.)
-    call savefig("tests/out/text_annotate.svg")
-    call savefig("tests/out/text_annotate.pdf")
-    call savefig("tests/out/text_annotate.png")
-    print *, "wrote tests/out/text_annotate.svg"
+    call save_all("text_annotate")
 
     ! 17) custom ticks, minor ticks and legend placement
     call clf()
@@ -327,10 +279,7 @@ program test_plots
     call title("Ticks and legend placement")
     call xlabel("x")
     call ylabel("y")
-    call savefig("tests/out/ticks_legend.svg")
-    call savefig("tests/out/ticks_legend.pdf")
-    call savefig("tests/out/ticks_legend.png")
-    print *, "wrote tests/out/ticks_legend.svg"
+    call save_all("ticks_legend")
 
     ! 18) a non-default figure size
     call figure(figsize=[8.0_dp, 3.0_dp])
@@ -340,10 +289,7 @@ program test_plots
     call ylabel("y")
     call grid(.true.)
     call legend()
-    call savefig("tests/out/figsize.svg")
-    call savefig("tests/out/figsize.pdf")
-    call savefig("tests/out/figsize.png")
-    print *, "wrote tests/out/figsize.svg"
+    call save_all("figsize")
 
     ! 19) more series than the old fixed 32-slot cap.
     ! figure(), not clf(), because clf() keeps the previous canvas size.
@@ -354,10 +300,7 @@ program test_plots
     call title("Forty series")
     call xlabel("x")
     call ylabel("y")
-    call savefig("tests/out/many_series.svg")
-    call savefig("tests/out/many_series.pdf")
-    call savefig("tests/out/many_series.png")
-    print *, "wrote tests/out/many_series.svg"
+    call save_all("many_series")
 
     ! 20) alpha on lines and markers
     call figure()
@@ -368,10 +311,7 @@ program test_plots
     call xlabel("x")
     call ylabel("y")
     call legend()
-    call savefig("tests/out/alpha.svg")
-    call savefig("tests/out/alpha.pdf")
-    call savefig("tests/out/alpha.png")
-    print *, "wrote tests/out/alpha.svg"
+    call save_all("alpha")
 
     ! 21) a non-default figure facecolor
     call figure()
@@ -380,10 +320,7 @@ program test_plots
     call xlabel("x")
     call ylabel("y")
     call grid(.true.)
-    call savefig("tests/out/facecolor.svg", facecolor="#eeeeee")
-    call savefig("tests/out/facecolor.pdf", facecolor="#eeeeee")
-    call savefig("tests/out/facecolor.png", facecolor="#eeeeee")
-    print *, "wrote tests/out/facecolor.svg"
+    call save_all("facecolor", facecolor="#eeeeee")
 
     do i = 1, nzr
         do j = 1, nzc
@@ -400,10 +337,7 @@ program test_plots
     call figure()
     call imshow(zimg)
     call title("imshow")
-    call savefig("tests/out/imshow.svg")
-    call savefig("tests/out/imshow.pdf")
-    call savefig("tests/out/imshow.png")
-    print *, "wrote tests/out/imshow.svg"
+    call save_all("imshow")
 
     ! 23) imshow with an extent, lower origin and a colorbar
     call figure()
@@ -413,10 +347,7 @@ program test_plots
     call title("imshow with colorbar")
     call xlabel("x")
     call ylabel("y")
-    call savefig("tests/out/imshow_cbar.svg")
-    call savefig("tests/out/imshow_cbar.pdf")
-    call savefig("tests/out/imshow_cbar.png")
-    print *, "wrote tests/out/imshow_cbar.svg"
+    call save_all("imshow_cbar")
 
     ! 24) scatter with per-point sizes and color-mapped values
     call figure()
@@ -425,10 +356,7 @@ program test_plots
     call title("Scatter with c and s arrays")
     call xlabel("x")
     call ylabel("y")
-    call savefig("tests/out/scatter_cmap.svg")
-    call savefig("tests/out/scatter_cmap.pdf")
-    call savefig("tests/out/scatter_cmap.png")
-    print *, "wrote tests/out/scatter_cmap.svg"
+    call save_all("scatter_cmap")
 
     ! 25) contour lines
     call figure()
@@ -436,10 +364,7 @@ program test_plots
     call title("contour")
     call xlabel("x")
     call ylabel("y")
-    call savefig("tests/out/contour.svg")
-    call savefig("tests/out/contour.pdf")
-    call savefig("tests/out/contour.png")
-    print *, "wrote tests/out/contour.svg"
+    call save_all("contour")
 
     ! 26) filled contours with a colorbar
     call figure()
@@ -448,46 +373,31 @@ program test_plots
     call title("contourf")
     call xlabel("x")
     call ylabel("y")
-    call savefig("tests/out/contourf.svg")
-    call savefig("tests/out/contourf.pdf")
-    call savefig("tests/out/contourf.png")
-    print *, "wrote tests/out/contourf.svg"
+    call save_all("contourf")
 
     ! 27) step
     call figure()
     call step(xb, hb, where="mid")
     call title("step")
-    call savefig("tests/out/step.svg")
-    call savefig("tests/out/step.pdf")
-    call savefig("tests/out/step.png")
-    print *, "wrote tests/out/step.svg"
+    call save_all("step")
 
     ! 28) stem
     call figure()
     call stem(xb, hb)
     call title("stem")
-    call savefig("tests/out/stem.svg")
-    call savefig("tests/out/stem.pdf")
-    call savefig("tests/out/stem.png")
-    print *, "wrote tests/out/stem.svg"
+    call save_all("stem")
 
     ! 29) barh
     call figure()
     call barh(xb, hb)
     call title("barh")
-    call savefig("tests/out/barh.svg")
-    call savefig("tests/out/barh.pdf")
-    call savefig("tests/out/barh.png")
-    print *, "wrote tests/out/barh.svg"
+    call save_all("barh")
 
     ! 30) pie
     call figure()
     call pie(hb, labels=["a", "b", "c", "d", "e", "f"])
     call title("pie")
-    call savefig("tests/out/pie.svg")
-    call savefig("tests/out/pie.pdf")
-    call savefig("tests/out/pie.png")
-    print *, "wrote tests/out/pie.svg"
+    call save_all("pie")
 
     do i = 1, nd
         dist1(i) = sin(real(i, dp)) + 0.3_dp * cos(2.7_dp * real(i, dp))
@@ -499,20 +409,14 @@ program test_plots
     call boxplot(dist1)
     call boxplot(dist2)
     call title("boxplot")
-    call savefig("tests/out/boxplot.svg")
-    call savefig("tests/out/boxplot.pdf")
-    call savefig("tests/out/boxplot.png")
-    print *, "wrote tests/out/boxplot.svg"
+    call save_all("boxplot")
 
     ! 32) violinplot
     call figure()
     call violinplot(dist1)
     call violinplot(dist2)
     call title("violinplot")
-    call savefig("tests/out/violinplot.svg")
-    call savefig("tests/out/violinplot.pdf")
-    call savefig("tests/out/violinplot.png")
-    print *, "wrote tests/out/violinplot.svg"
+    call save_all("violinplot")
 
     do i = 1, nsym
         xsym(i) = -100.0_dp + real(i - 1, dp)
@@ -523,20 +427,14 @@ program test_plots
     call plot(xsym, xsym)
     call set_yscale("symlog")
     call title("symlog")
-    call savefig("tests/out/symlog.svg")
-    call savefig("tests/out/symlog.pdf")
-    call savefig("tests/out/symlog.png")
-    print *, "wrote tests/out/symlog.svg"
+    call save_all("symlog")
 
     ! 34) axis("equal")
     call figure()
     call plot(xb, hb, marker="o")
     call axis("equal")
     call title("axis equal")
-    call savefig("tests/out/axis_equal.svg")
-    call savefig("tests/out/axis_equal.pdf")
-    call savefig("tests/out/axis_equal.png")
-    print *, "wrote tests/out/axis_equal.svg"
+    call save_all("axis_equal")
 
     ! 35) tick styling and hidden spines
     call figure()
@@ -545,10 +443,7 @@ program test_plots
     call tick_params(axis="x", rotation=45.0_dp)
     call spines(top=.false., right=.false.)
     call title("tick_params")
-    call savefig("tests/out/tick_style.svg")
-    call savefig("tests/out/tick_style.pdf")
-    call savefig("tests/out/tick_style.png")
-    print *, "wrote tests/out/tick_style.svg"
+    call save_all("tick_style")
 
     ! 36) tight_layout with long tick labels
     call figure()
@@ -560,10 +455,7 @@ program test_plots
     call plot(xb, hb)
     call xlabel("category")
     call tight_layout()
-    call savefig("tests/out/tight_layout.svg")
-    call savefig("tests/out/tight_layout.pdf")
-    call savefig("tests/out/tight_layout.png")
-    print *, "wrote tests/out/tight_layout.svg"
+    call save_all("tight_layout")
 
     ! 37) subplots_adjust
     call figure()
@@ -572,10 +464,7 @@ program test_plots
     call subplot(2, 1, 2)
     call plot(xb, hb)
     call subplots_adjust(left=0.2_dp, hspace=0.5_dp)
-    call savefig("tests/out/subplots_adjust.svg")
-    call savefig("tests/out/subplots_adjust.pdf")
-    call savefig("tests/out/subplots_adjust.png")
-    print *, "wrote tests/out/subplots_adjust.svg"
+    call save_all("subplots_adjust")
 
     ! 38) twinx
     call figure()
@@ -586,10 +475,7 @@ program test_plots
     call plot(xb, hb * 100.0_dp)
     call ylabel("right")
     call title("twinx")
-    call savefig("tests/out/twinx.svg")
-    call savefig("tests/out/twinx.pdf")
-    call savefig("tests/out/twinx.png")
-    print *, "wrote tests/out/twinx.svg"
+    call save_all("twinx")
 
     ! 39) color spellings
     call figure()
@@ -605,10 +491,7 @@ program test_plots
         end select
     end do
     call title("color names")
-    call savefig("tests/out/colors.svg")
-    call savefig("tests/out/colors.pdf")
-    call savefig("tests/out/colors.png")
-    print *, "wrote tests/out/colors.svg"
+    call save_all("colors")
 
     ! 40) font sizes
     call figure()
@@ -618,10 +501,7 @@ program test_plots
     call ylabel("y axis", fontsize=14.0_dp)
     call tick_params(labelsize=13.0_dp)
     call legend(fontsize=12.0_dp)
-    call savefig("tests/out/fontsize.svg")
-    call savefig("tests/out/fontsize.pdf")
-    call savefig("tests/out/fontsize.png")
-    print *, "wrote tests/out/fontsize.svg"
+    call save_all("fontsize")
 
     ! 41) legend options
     call figure()
@@ -630,10 +510,7 @@ program test_plots
     call plot(xb, hb * 0.25_dp, label="gamma")
     call plot(xb, hb * 0.125_dp, label="delta")
     call legend(loc="upper right", ncol=2, title="series", frameon=.false.)
-    call savefig("tests/out/legend_opts.svg")
-    call savefig("tests/out/legend_opts.pdf")
-    call savefig("tests/out/legend_opts.png")
-    print *, "wrote tests/out/legend_opts.svg"
+    call save_all("legend_opts")
 
     ! 42) savefig(bbox_inches="tight")
     call figure()
@@ -641,10 +518,7 @@ program test_plots
     call title("tight")
     call xlabel("x")
     call ylabel("y")
-    call savefig("tests/out/savefig_tight.svg", bbox_inches="tight", dpi=200.0_dp)
-    call savefig("tests/out/savefig_tight.pdf", bbox_inches="tight", dpi=200.0_dp)
-    call savefig("tests/out/savefig_tight.png", bbox_inches="tight", dpi=200.0_dp)
-    print *, "wrote tests/out/savefig_tight.svg"
+    call save_all("savefig_tight", bbox_inches="tight", dpi=200.0_dp)
 
     ! 43) two live figures kept apart, then closed
     call figure()
@@ -656,11 +530,29 @@ program test_plots
     call title("figure two")
     call close()
     call figure(num=fig1)
-    call savefig("tests/out/figures.svg")
-    call savefig("tests/out/figures.pdf")
-    call savefig("tests/out/figures.png")
-    print *, "wrote tests/out/figures.svg"
+    call save_all("figures")
     call close(all=.true.)
 
     print *, "All test plots written."
+
+contains
+
+    ! Every case is written in all three formats, so the three savefig calls
+    ! and the line that reports them are stated once here rather than once
+    ! per case. The options are passed straight through: an absent optional
+    ! stays absent, so a plain case says nothing about facecolor or dpi.
+    subroutine save_all(stem, facecolor, bbox_inches, dpi)
+        character(len=*), intent(in) :: stem
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        real(dp), intent(in), optional :: dpi
+
+        call savefig("tests/out/"//stem//".svg", facecolor=facecolor, &
+                     bbox_inches=bbox_inches, dpi=dpi)
+        call savefig("tests/out/"//stem//".pdf", facecolor=facecolor, &
+                     bbox_inches=bbox_inches, dpi=dpi)
+        call savefig("tests/out/"//stem//".png", facecolor=facecolor, &
+                     bbox_inches=bbox_inches, dpi=dpi)
+        print *, "wrote tests/out/"//stem//".svg, .pdf and .png"
+    end subroutine save_all
+
 end program test_plots
