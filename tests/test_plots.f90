@@ -830,6 +830,15 @@ program test_plots
     call title("streamplot")
     call save_all("streamplot")
 
+! 73) a table below the axes
+    call clf()
+    call table(reshape(["100", "200", "300", "400", "500", "600"], [2, 3]), &
+               col_labels=["a", "b", "c"], row_labels=["x", "y"])
+    call xticks([real(dp) ::])
+    call yticks([real(dp) ::])
+    call title("table")
+    call save_all("table")
+
     print *, "All test plots written."
 
 contains

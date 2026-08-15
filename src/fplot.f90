@@ -21,7 +21,7 @@ module fplot
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
     public :: pcolormesh, pcolor, hist2d, hexbin
-    public :: matshow, eventplot, broken_barh, streamplot
+    public :: matshow, eventplot, broken_barh, streamplot, table
     public :: add_axes, secondary_xaxis, secondary_yaxis
     public :: add_rectangle, add_circle, add_ellipse, add_polygon
     public :: polar, set_polar
@@ -300,6 +300,12 @@ module fplot
         ! keeps a whole line length clear above and below its strokes.
         logical :: yroom_set = .false.
         real(dp) :: yroom(2) = 0.0_dp
+        ! A table of text below (or above) the axes.
+        logical :: has_table = .false.
+        character(len=32), allocatable :: tbl_cells(:, :), tbl_col(:), tbl_row(:)
+        real(dp), allocatable :: tbl_w(:)
+        real(dp) :: tbl_size = 10.0_dp
+        character(len=16) :: tbl_loc = "bottom"
         logical :: xroom_set = .false.
         real(dp) :: xroom(2) = 0.0_dp
         ! Whether that room is a sticky edge, taking no margin beyond it.
@@ -2031,6 +2037,13 @@ contains
         logical, intent(out) :: labeled
         character(len=24), intent(out) :: lab(MAX_TICKS)
         integer :: i
+        ! An empty list means no ticks at all, which is not the same as
+        ! never having asked for any.
+        if (size(vals) == 0) then
+            n = -1
+            labeled = .false.
+            return
+        end if
         n = min(size(vals), MAX_TICKS)
         labeled = present(labels)
         do i = 1, n
@@ -2483,6 +2496,60 @@ contains
             if (is > 0) ax(cur_i)%series(is)%patch_scales = .true.
         end do
     end subroutine broken_barh
+
+    ! A table of text, laid out the way matplotlib lays one out: every cell
+    ! the same height, a fixed fraction of the axes wide unless told
+    ! otherwise, and the whole block placed against an edge of the axes.
+    subroutine table(cell_text, col_labels, row_labels, col_widths, loc, fontsize)
+        character(len=*), intent(in) :: cell_text(:, :)
+        character(len=*), intent(in), optional :: col_labels(:), row_labels(:), loc
+        real(dp), intent(in), optional :: col_widths(:), fontsize
+        integer :: nr, nc, i, j
+
+        call ensure_fig()
+        nr = size(cell_text, 1)
+        nc = size(cell_text, 2)
+        if (nr < 1 .or. nc < 1) return
+
+        if (allocated(ax(cur_i)%tbl_cells)) deallocate (ax(cur_i)%tbl_cells)
+        allocate (ax(cur_i)%tbl_cells(nr, nc))
+        do i = 1, nr
+            do j = 1, nc
+                ax(cur_i)%tbl_cells(i, j) = cell_text(i, j)
+            end do
+        end do
+
+        if (allocated(ax(cur_i)%tbl_col)) deallocate (ax(cur_i)%tbl_col)
+        if (present(col_labels)) then
+            allocate (ax(cur_i)%tbl_col(nc))
+            do j = 1, min(nc, size(col_labels))
+                ax(cur_i)%tbl_col(j) = col_labels(j)
+            end do
+        end if
+
+        if (allocated(ax(cur_i)%tbl_row)) deallocate (ax(cur_i)%tbl_row)
+        if (present(row_labels)) then
+            allocate (ax(cur_i)%tbl_row(nr))
+            do i = 1, min(nr, size(row_labels))
+                ax(cur_i)%tbl_row(i) = row_labels(i)
+            end do
+        end if
+
+        if (allocated(ax(cur_i)%tbl_w)) deallocate (ax(cur_i)%tbl_w)
+        allocate (ax(cur_i)%tbl_w(nc))
+        ax(cur_i)%tbl_w = 1.0_dp/real(nc, dp)
+        if (present(col_widths)) then
+            do j = 1, min(nc, size(col_widths))
+                ax(cur_i)%tbl_w(j) = col_widths(j)
+            end do
+        end if
+
+        ax(cur_i)%tbl_size = 10.0_dp
+        if (present(fontsize)) ax(cur_i)%tbl_size = fontsize
+        ax(cur_i)%tbl_loc = "bottom"
+        if (present(loc)) ax(cur_i)%tbl_loc = loc
+        ax(cur_i)%has_table = .true.
+    end subroutine table
 
     ! Streamlines of a vector field. This follows matplotlib closely: the
     ! field is integrated with an adaptive Heun step in grid coordinates,
@@ -5259,6 +5326,95 @@ contains
     ! matplotlib draws these as a FancyArrowPatch with the "-|>" style at a
     ! mutation scale of ten: a filled triangle four points long and four
     ! points across, with its tip on the curve.
+    ! Draw the table. Cells are a fixed 1.2 line heights tall, the text is
+    ! right aligned in the body, left in the row labels and centered in the
+    ! column headings, each a tenth of a cell in from its edge.
+    subroutine render_table(b, a, ax_l, ax_w, ax_b, ax_h)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: ax_l, ax_w, ax_b, ax_h
+        real(dp), parameter :: PAD = 0.1_dp
+        real(dp) :: fs, ch, rlw, tw, x0, y0, cx, cy
+        real(dp), allocatable :: cw(:)
+        integer :: nr, nc, nrows, i, j, r
+        character(len=32) :: txt
+
+        if (.not. a%has_table) return
+        nr = size(a%tbl_cells, 1)
+        nc = size(a%tbl_cells, 2)
+        nrows = nr
+        if (allocated(a%tbl_col)) nrows = nrows + 1
+
+        fs = a%tbl_size
+        ch = 1.2_dp*fs
+        allocate (cw(nc))
+        cw = a%tbl_w*ax_w
+        tw = sum(cw)
+
+        ! The row labels get whatever width their text needs, as matplotlib
+        ! sizes that column automatically.
+        rlw = 0.0_dp
+        if (allocated(a%tbl_row)) then
+            do i = 1, nr
+                rlw = max(rlw, math_width(trim(a%tbl_row(i)), fs)*(1.0_dp + 2.0_dp*PAD))
+            end do
+        end if
+
+        x0 = ax_l + 0.5_dp*ax_w - 0.5_dp*tw
+        select case (trim(a%tbl_loc))
+        case ("top")
+            y0 = ax_b - ax_h - real(nrows, dp)*ch
+        case ("center")
+            y0 = ax_b - 0.5_dp*ax_h - 0.5_dp*real(nrows, dp)*ch
+        case default
+            y0 = ax_b
+        end select
+
+        do r = 1, nrows
+            cy = y0 + real(r - 1, dp)*ch
+            cx = x0
+            if (allocated(a%tbl_row) .and. r > nrows - nr) then
+                call table_cell(b, cx - rlw, cy, rlw, ch, &
+                                trim(a%tbl_row(r - (nrows - nr))), "left", fs, PAD)
+            end if
+            do j = 1, nc
+                if (r == 1 .and. allocated(a%tbl_col)) then
+                    txt = a%tbl_col(j)
+                    call table_cell(b, cx, cy, cw(j), ch, trim(txt), "center", fs, PAD)
+                else
+                    i = r - (nrows - nr)
+                    txt = a%tbl_cells(i, j)
+                    call table_cell(b, cx, cy, cw(j), ch, trim(txt), "right", fs, PAD)
+                end if
+                cx = cx + cw(j)
+            end do
+        end do
+    end subroutine render_table
+
+    ! One cell: a white box with a black edge, and its text placed by loc.
+    subroutine table_cell(b, x, y, w, h, s, loc, fs, pad)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: x, y, w, h, fs, pad
+        character(len=*), intent(in) :: s, loc
+        real(dp) :: xs(5), ys(5), tx
+
+        if (w <= 0.0_dp) return
+        xs = [x, x + w, x + w, x, x]
+        ys = [y, y, y + h, y + h, y]
+        call append_polygon(b, xs, ys, 4, "#ffffff", 1.0_dp)
+        call append_stroke_path(b, xs, ys, 5, "#000000", 1.0_dp, 1.0_dp)
+        if (len_trim(s) == 0) return
+        select case (loc)
+        case ("left")
+            tx = x + pad*w
+        case ("center")
+            tx = x + 0.5_dp*w
+        case default
+            tx = x + (1.0_dp - pad)*w
+        end select
+        call append_text(b, tx, y + 0.5_dp*h + 0.36_dp*fs, s, loc, fs, "#000000")
+    end subroutine table_cell
+
     subroutine append_arrowheads(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
@@ -5408,7 +5564,9 @@ contains
         integer, intent(out) :: date_unit
 
         date_unit = 0
-        if (n_user > 0) then
+        if (n_user < 0) then
+            nt = 0
+        else if (n_user > 0) then
             nt = n_user
             t(1:nt) = user_pos(1:nt)
         else if (is_date) then
@@ -6975,6 +7133,8 @@ contains
                 end do
             end if
         end if
+
+        call render_table(b, a, ax_l, ax_w, ax_b, ax_h)
     end subroutine render_axes
 
     ! Draw the whole figure into any backend. Everything above this point is

@@ -70,6 +70,7 @@ OUT_NAMES = [
     "eventplot",
     "broken_barh",
     "streamplot",
+    "table",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -827,6 +828,15 @@ def main() -> None:
     ax.streamplot(sg, sg, -1.0 - sxx**2 + syy, 1.0 + sxx - syy**2)
     ax.set_title("streamplot")
     save(fig, "streamplot")
+
+    # 73 a table below the axes
+    fig, ax = setup_fig()
+    ax.table(cellText=[["100", "300", "500"], ["200", "400", "600"]],
+             colLabels=["a", "b", "c"], rowLabels=["x", "y"])
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title("table")
+    save(fig, "table")
 
     print("All matplotlib references written.")
 
