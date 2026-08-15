@@ -204,6 +204,10 @@ module fplot
         integer :: cont_cmap = CMAP_VIRIDIS
         real(dp) :: cont_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: has_img = .false.
+        ! imshow(interpolation=): "nearest", the default, hands the samples
+        ! over as they are; "bilinear" resamples them at the size the image
+        ! is drawn.
+        logical :: img_bilinear = .false.
         ! Set by imshow, and by a scatter that maps c values, so that
         ! colorbar() has a range and colormap to draw.
         logical :: has_cmap_src = .false.
@@ -2333,9 +2337,9 @@ contains
     ! Draw z as an image. z is indexed (row, column) and, with the default
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
     ! a descending y axis exactly as matplotlib does.
-    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm)
+    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, interpolation)
         real(dp), intent(in) :: z(:, :)
-        character(len=*), intent(in), optional :: cmap, origin, aspect, norm
+        character(len=*), intent(in), optional :: cmap, origin, aspect, norm, interpolation
         real(dp), intent(in), optional :: vmin, vmax, extent(4)
         integer :: nr, nc
         real(dp) :: lo, hi
@@ -2353,6 +2357,10 @@ contains
 
         ax(cur_i)%img_cmap = CMAP_VIRIDIS
         if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
+
+        ax(cur_i)%img_bilinear = .false.
+        if (present(interpolation)) &
+            ax(cur_i)%img_bilinear = trim(interpolation) == "bilinear"
 
         ax(cur_i)%img_log_norm = .false.
         if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
@@ -5292,6 +5300,11 @@ contains
         ! images are small enough that interpolating turns the data into a
         ! blur. Repeating each sample a whole number of times is exactly
         ! nearest neighbour, so no value is invented by doing it.
+        if (a%img_bilinear) then
+            call append_image_smooth(b, a, px0, px1, py0, py1, flip_x, flip_y)
+            return
+        end if
+
         fx = fill_factor(abs(px1 - px0), nc)
         fy = fill_factor(abs(py1 - py0), nr)
 
@@ -5312,6 +5325,57 @@ contains
         call b%draw_image(min(px0, px1), min(py0, py1), abs(px1 - px0), &
                           abs(py1 - py0), rgba, nc*fx, nr*fy, p)
     end subroutine append_image
+
+    ! interpolation="bilinear": the raster is built at the size the image
+    ! is drawn and every pixel is read from the four samples around it, so
+    ! the picture comes out smooth rather than blocked. The samples sit at
+    ! the middles of their cells, which is what puts the outermost half
+    ! cell at a flat color rather than running off the data.
+    subroutine append_image_smooth(b, a, px0, px1, py0, py1, flip_x, flip_y)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: px0, px1, py0, py1
+        logical, intent(in) :: flip_x, flip_y
+        integer, parameter :: MAX_SIDE = 2048
+        integer, allocatable :: rgba(:, :, :)
+        integer :: nr, nc, ow, oh, i, j, i0, i1, j0, j1
+        real(dp) :: u, v, fu, fv, val, t
+        type(paint_t) :: p
+
+        nr = size(a%img, 1)
+        nc = size(a%img, 2)
+        ow = max(1, min(MAX_SIDE, nint(abs(px1 - px0))))
+        oh = max(1, min(MAX_SIDE, nint(abs(py1 - py0))))
+        allocate (rgba(4, ow, oh))
+
+        do i = 1, oh
+            v = (real(i, dp) - 0.5_dp)/real(oh, dp)*real(nr, dp) - 0.5_dp
+            if (flip_y) v = real(nr - 1, dp) - v
+            i0 = floor(v)
+            fv = v - real(i0, dp)
+            i1 = min(nr - 1, max(0, i0 + 1))
+            i0 = min(nr - 1, max(0, i0))
+            do j = 1, ow
+                u = (real(j, dp) - 0.5_dp)/real(ow, dp)*real(nc, dp) - 0.5_dp
+                if (flip_x) u = real(nc - 1, dp) - u
+                j0 = floor(u)
+                fu = u - real(j0, dp)
+                j1 = min(nc - 1, max(0, j0 + 1))
+                j0 = min(nc - 1, max(0, j0))
+                val = (1.0_dp - fv)*((1.0_dp - fu)*a%img(i0 + 1, j0 + 1) &
+                                     + fu*a%img(i0 + 1, j1 + 1)) &
+                      + fv*((1.0_dp - fu)*a%img(i1 + 1, j0 + 1) &
+                            + fu*a%img(i1 + 1, j1 + 1))
+                t = cmap_t(a, val)
+                rgba(1:3, j, i) = hex_rgb(cmap_color(a%img_cmap, t))
+                rgba(4, j, i) = 255
+            end do
+        end do
+
+        p%clip = g_clip
+        call b%draw_image(min(px0, px1), min(py0, py1), abs(px1 - px0), &
+                          abs(py1 - py0), rgba, ow, oh, p)
+    end subroutine append_image_smooth
 
     ! How many times to repeat each sample so the raster covers the space it
     ! is drawn in, bounded so that a large image is left as it is rather than

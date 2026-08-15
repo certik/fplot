@@ -63,6 +63,7 @@ OUT_NAMES = [
     "inset",
     "patches",
     "polar",
+    "interp",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -764,6 +765,12 @@ def main() -> None:
     ax.plot(th, 1.0 + np.cos(th))
     ax.set_title("polar")
     save(fig, "polar")
+
+    # 66 a smoothed image
+    fig, ax = setup_fig()
+    ax.imshow(zimg, interpolation="bilinear")
+    ax.set_title("interp")
+    save(fig, "interp")
 
     print("All matplotlib references written.")
 

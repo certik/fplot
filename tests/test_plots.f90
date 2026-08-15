@@ -760,6 +760,12 @@ program test_plots
     call title("polar")
     call save_all("polar")
 
+    ! 66) a smoothed image
+    call clf()
+    call imshow(zimg, interpolation="bilinear")
+    call title("interp")
+    call save_all("interp")
+
     print *, "All test plots written."
 
 contains
