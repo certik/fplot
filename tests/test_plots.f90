@@ -394,5 +394,33 @@ program test_plots
     call savefig("tests/out/contourf.svg")
     print *, "wrote tests/out/contourf.svg"
 
+    ! 27) step
+    call figure()
+    call step(xb, hb, where="mid")
+    call title("step")
+    call savefig("tests/out/step.svg")
+    print *, "wrote tests/out/step.svg"
+
+    ! 28) stem
+    call figure()
+    call stem(xb, hb)
+    call title("stem")
+    call savefig("tests/out/stem.svg")
+    print *, "wrote tests/out/stem.svg"
+
+    ! 29) barh
+    call figure()
+    call barh(xb, hb)
+    call title("barh")
+    call savefig("tests/out/barh.svg")
+    print *, "wrote tests/out/barh.svg"
+
+    ! 30) pie
+    call figure()
+    call pie(hb, labels=["a", "b", "c", "d", "e", "f"])
+    call title("pie")
+    call savefig("tests/out/pie.svg")
+    print *, "wrote tests/out/pie.svg"
+
     print *, "All test plots written."
 end program test_plots

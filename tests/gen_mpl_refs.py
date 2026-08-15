@@ -40,6 +40,10 @@ OUT_NAMES = [
     "scatter_cmap",
     "contour",
     "contourf",
+    "step",
+    "stem",
+    "barh",
+    "pie",
 ]
 
 
@@ -379,6 +383,27 @@ def main() -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     save(fig, "contourf")
+
+    # 27-30 step / stem / barh / pie
+    fig, ax = setup_fig()
+    ax.step(xb, hb, where="mid")
+    ax.set_title("step")
+    save(fig, "step")
+
+    fig, ax = setup_fig()
+    ax.stem(xb, hb)
+    ax.set_title("stem")
+    save(fig, "stem")
+
+    fig, ax = setup_fig()
+    ax.barh(xb, hb)
+    ax.set_title("barh")
+    save(fig, "barh")
+
+    fig, ax = setup_fig()
+    ax.pie(hb, labels=["a", "b", "c", "d", "e", "f"])
+    ax.set_title("pie")
+    save(fig, "pie")
 
     print("All matplotlib references written.")
 

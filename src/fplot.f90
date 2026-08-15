@@ -10,7 +10,8 @@ module fplot
 
     public :: dp
     public :: plot, scatter, semilogx, semilogy, loglog
-    public :: bar, hist, fill_between, errorbar, axhline, axvline
+    public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
+    public :: step, stem, pie, axis_off
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
     public :: imshow, colorbar, contour, contourf
@@ -60,6 +61,9 @@ module fplot
     integer, parameter :: SERIES_ERRORBAR = 3
     integer, parameter :: SERIES_HLINE = 4
     integer, parameter :: SERIES_VLINE = 5
+    integer, parameter :: SERIES_BARH = 6
+    integer, parameter :: SERIES_STEM = 7
+    integer, parameter :: SERIES_PIE = 8
 
     type :: series_t
         integer :: kind = SERIES_LINE
@@ -111,6 +115,7 @@ module fplot
         character(len=24) :: xtick_lab(MAX_TICKS), ytick_lab(MAX_TICKS)
         ! Image (imshow). One image per axes, as in normal matplotlib use.
         ! Contour set (contour / contourf).
+        logical :: frame_off = .false.
         logical :: has_cont = .false.
         logical :: cont_filled = .false.
         real(dp), allocatable :: cz(:, :)
@@ -604,8 +609,7 @@ contains
             allocate (ax(cur_i)%clev(size(levels)))
             ax(cur_i)%clev = levels
         else
-            ! matplotlib picks round levels spanning the data, which is the
-            ! same nice-number choice the tick locator already makes.
+            ! matplotlib picks round levels spanning the data.
             call contour_levels(minval(z), maxval(z), 8, t, nt)
             allocate (ax(cur_i)%clev(nt))
             ax(cur_i)%clev = t(1:nt)
@@ -622,6 +626,152 @@ contains
         ax(cur_i)%img_vmin = ax(cur_i)%clev(1)
         ax(cur_i)%img_vmax = ax(cur_i)%clev(size(ax(cur_i)%clev))
     end subroutine add_contour
+
+    ! Staircase line. matplotlib draws this as an ordinary line through a
+    ! doubled-up sequence of points, so building that sequence here is enough
+    ! and the renderer needs to know nothing about steps.
+    subroutine step(x, y, where, label, color, lw, linestyle, alpha)
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: where, label, color, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        integer :: n, i, k
+        character(len=8) :: w
+        real(dp), allocatable :: sx(:), sy(:)
+
+        n = min(size(x), size(y))
+        if (n <= 0) return
+        w = "pre"
+        if (present(where)) w = where
+
+        ! Each sample contributes two points: the tread of its step and the
+        ! riser to the next one. Where the riser sits is what `where` selects.
+        allocate (sx(2 * n), sy(2 * n))
+        k = 0
+        do i = 1, n
+            if (trim(w) == "mid") then
+                if (i == 1) then
+                    sx(k + 1) = x(1)
+                else
+                    sx(k + 1) = 0.5_dp * (x(i - 1) + x(i))
+                end if
+                if (i == n) then
+                    sx(k + 2) = x(n)
+                else
+                    sx(k + 2) = 0.5_dp * (x(i) + x(i + 1))
+                end if
+                sy(k + 1) = y(i)
+                sy(k + 2) = y(i)
+            else if (trim(w) == "post") then
+                sx(k + 1) = x(i)
+                sy(k + 1) = y(i)
+                if (i == n) then
+                    sx(k + 2) = x(n)
+                else
+                    sx(k + 2) = x(i + 1)
+                end if
+                sy(k + 2) = y(i)
+            else
+                sx(k + 1) = x(i)
+                if (i == 1) then
+                    sy(k + 1) = y(1)
+                else
+                    sy(k + 1) = y(i - 1)
+                end if
+                sx(k + 2) = x(i)
+                sy(k + 2) = y(i)
+            end if
+            k = k + 2
+        end do
+
+        call plot(sx(1:k), sy(1:k), label=label, color=color, lw=lw, &
+                  linestyle=linestyle, alpha=alpha)
+    end subroutine step
+
+    ! Horizontal bars: y locates each bar and width is its length.
+    subroutine barh(y, width, height, color, label, alpha)
+        real(dp), intent(in) :: y(:), width(:)
+        real(dp), intent(in), optional :: height, alpha
+        character(len=*), intent(in), optional :: color, label
+        integer :: is
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_BARH, y, width, color, label, alpha)
+        if (is < 1) return
+        if (present(height)) ax(cur_i)%series(is)%width = height
+    end subroutine barh
+
+    ! Markers on stalks rising from y = 0, with a baseline along the bottom.
+    subroutine stem(x, y, color, label, alpha)
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        integer :: is
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_STEM, x, y, color, label, alpha)
+        if (is < 1) return
+        ax(cur_i)%series(is)%marker = MARKER_CIRCLE
+    end subroutine stem
+
+    ! Pie chart. matplotlib turns the axes into a unit square centred on the
+    ! origin and hides the frame, so the wedges are plain data-space geometry.
+    subroutine pie(values, labels, cmap)
+        real(dp), intent(in) :: values(:)
+        character(len=*), intent(in), optional :: labels(:), cmap
+        integer :: is, i, n
+
+        call ensure_fig()
+        n = size(values)
+        if (n <= 0) return
+        if (any(values < 0.0_dp) .or. sum(values) <= 0.0_dp) return
+
+        is = new_shape_series(SERIES_PIE, values, values)
+        if (is < 1) return
+        allocate (ax(cur_i)%series(is)%pcolor(n))
+        do i = 1, n
+            if (present(cmap)) then
+                ax(cur_i)%series(is)%pcolor(i) = &
+                    cmap_color(cmap_from_str(cmap), real(i - 1, dp) / real(max(n - 1, 1), dp))
+            else
+                ax(cur_i)%series(is)%pcolor(i) = color_from_C(i - 1)
+            end if
+        end do
+        if (present(labels)) then
+            do i = 1, min(n, size(labels))
+                call add_pie_label(values, i, labels(i))
+            end do
+        end if
+
+        call xlim(-1.25_dp, 1.25_dp)
+        call ylim(-1.25_dp, 1.25_dp)
+        ax(cur_i)%aspect_equal = .true.
+        ax(cur_i)%frame_off = .true.
+    end subroutine pie
+
+    ! Place one wedge label just outside the arc, at the wedge mid angle.
+    subroutine add_pie_label(values, i, lab)
+        real(dp), intent(in) :: values(:)
+        integer, intent(in) :: i
+        character(len=*), intent(in) :: lab
+        real(dp) :: a0, a1, mid, tot
+        integer :: it
+
+        tot = sum(values)
+        a0 = 2.0_dp * PI * sum(values(1:i - 1)) / tot
+        a1 = 2.0_dp * PI * sum(values(1:i)) / tot
+        mid = 0.5_dp * (a0 + a1)
+        call push_text(ax(cur_i), it)
+        ax(cur_i)%texts(it)%x = 1.1_dp * cos(mid)
+        ax(cur_i)%texts(it)%y = 1.1_dp * sin(mid)
+        ax(cur_i)%texts(it)%s = lab
+        ax(cur_i)%texts(it)%ha = "center"
+    end subroutine add_pie_label
+
+    ! Hide the frame, ticks and tick labels, like matplotlib's axis("off").
+    subroutine axis_off()
+        call ensure_fig()
+        ax(cur_i)%frame_off = .true.
+    end subroutine axis_off
 
     subroutine colorbar(label)
         character(len=*), intent(in), optional :: label
@@ -924,12 +1074,14 @@ contains
         real(dp), intent(out) :: xmin, xmax, ymin, ymax
         integer :: i, j
         real(dp) :: xv, yv, ylo, yhi, dx, dy, hw
-        logical :: anyx, anyy, sticky_lo, sticky_hi
+        logical :: anyx, anyy, sticky_lo, sticky_hi, sx_lo, sx_hi
 
         anyx = .false.
         anyy = .false.
         sticky_lo = .false.
         sticky_hi = .false.
+        sx_lo = .false.
+        sx_hi = .false.
         xmin = huge(1.0_dp)
         xmax = -huge(1.0_dp)
         ymin = huge(1.0_dp)
@@ -939,6 +1091,24 @@ contains
             ! Bars occupy a span in x; a hline/vline constrains one axis only.
             hw = 0.0_dp
             if (a%series(i)%kind == SERIES_BAR) hw = 0.5_dp * a%series(i)%width
+
+            ! A pie sets its own limits, and horizontal bars use the two axes
+            ! the other way round, so neither fits the loop below.
+            if (a%series(i)%kind == SERIES_PIE) cycle
+            if (a%series(i)%kind == SERIES_BARH) then
+                hw = 0.5_dp * a%series(i)%width
+                do j = 1, a%series(i)%n
+                    anyx = .true.
+                    anyy = .true.
+                    xmin = min(xmin, 0.0_dp, a%series(i)%y(j))
+                    xmax = max(xmax, 0.0_dp, a%series(i)%y(j))
+                    ymin = min(ymin, a%series(i)%x(j) - hw)
+                    ymax = max(ymax, a%series(i)%x(j) + hw)
+                end do
+                if (xmin >= 0.0_dp) sx_lo = .true.
+                if (xmax <= 0.0_dp) sx_hi = .true.
+                cycle
+            end if
 
             do j = 1, a%series(i)%n
                 if (a%series(i)%kind /= SERIES_HLINE) then
@@ -1008,7 +1178,7 @@ contains
                 xmin = 0.0_dp
                 xmax = 1.0_dp
             end if
-            call expand_limits(xmin, xmax, a%xscale == SCALE_LOG, .false., .false.)
+            call expand_limits(xmin, xmax, a%xscale == SCALE_LOG, sx_lo, sx_hi)
         end if
 
         if (a%ylim_set) then
@@ -1380,10 +1550,19 @@ contains
         real(dp) :: xa, xb, ya, yb, hw
 
         hw = 0.5_dp * s%width
-        xa = map_x(s%x(j) - hw, xmin, xmax, ax_l, ax_w, xlog)
-        xb = map_x(s%x(j) + hw, xmin, xmax, ax_l, ax_w, xlog)
-        ya = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ylog)
-        yb = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog)
+        if (s%kind == SERIES_BARH) then
+            ! x holds the bar position and y its length, so the roles of the
+            ! two axes are simply swapped.
+            ya = map_y(s%x(j) - hw, ymin, ymax, ax_b, ax_h, ylog)
+            yb = map_y(s%x(j) + hw, ymin, ymax, ax_b, ax_h, ylog)
+            xa = map_x(0.0_dp, xmin, xmax, ax_l, ax_w, xlog)
+            xb = map_x(s%y(j), xmin, xmax, ax_l, ax_w, xlog)
+        else
+            xa = map_x(s%x(j) - hw, xmin, xmax, ax_l, ax_w, xlog)
+            xb = map_x(s%x(j) + hw, xmin, xmax, ax_l, ax_w, xlog)
+            ya = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ylog)
+            yb = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog)
+        end if
 
         call builder_append(b, '<rect x="')
         call append_num(b, min(xa, xb))
@@ -1499,6 +1678,55 @@ contains
         nm = nm + 1
         m(nm) = v
     end subroutine push_minor
+
+    ! One <path> per wedge: a radius out, the arc, and back to the centre.
+    subroutine append_pie(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
+        type(svg_builder), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        integer :: i
+        real(dp) :: tot, a0, a1, cx, cy
+
+        tot = sum(s%y(1:s%n))
+        if (tot <= 0.0_dp) return
+        cx = map_x(0.0_dp, xmin, xmax, ax_l, ax_w, .false.)
+        cy = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, .false.)
+
+        a1 = 0.0_dp
+        do i = 1, s%n
+            a0 = a1
+            a1 = a0 + 2.0_dp * PI * s%y(i) / tot
+            call builder_append(b, '<path d="M ')
+            call append_num(b, cx)
+            call builder_append(b, " ")
+            call append_num(b, cy)
+            call builder_append(b, " L ")
+            call append_wedge_point(b, a0, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
+            call builder_append(b, " A ")
+            call append_num(b, 0.5_dp * ax_w / (xmax - xmin) * 2.0_dp)
+            call builder_append(b, " ")
+            call append_num(b, 0.5_dp * ax_h / (ymax - ymin) * 2.0_dp)
+            call builder_append(b, " 0 ")
+            ! The large-arc flag turns on past half a turn; the sweep flag is
+            ! 0 because SVG y grows downwards, inverting the sense of rotation.
+            call builder_append(b, merge("1", "0", a1 - a0 > PI))
+            call builder_append(b, " 0 ")
+            call append_wedge_point(b, a1, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
+            call builder_append(b, ' Z" fill="')
+            call builder_append(b, trim(s%pcolor(i)))
+            call append_opacity(b, "fill-opacity", s%alpha)
+            call builder_append(b, '" stroke="#ffffff" stroke-width="1"/>')
+            call builder_append(b, new_line("a"))
+        end do
+    end subroutine append_pie
+
+    subroutine append_wedge_point(b, ang, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: ang, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        call append_num(b, map_x(cos(ang), xmin, xmax, ax_l, ax_w, .false.))
+        call builder_append(b, " ")
+        call append_num(b, map_y(sin(ang), ymin, ymax, ax_b, ax_h, .false.))
+    end subroutine append_wedge_point
 
     ! Walk every cell as two triangles, emitting filled bands or level lines.
     subroutine append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
@@ -1860,6 +2088,14 @@ contains
             nym = 0
         end if
 
+        ! axis("off") leaves only the artists: no frame, no ticks, no labels.
+        if (a%frame_off) then
+            nxt = 0
+            nyt = 0
+            nxm = 0
+            nym = 0
+        end if
+
         ! clip path for this axes' data
         call builder_append(b, '<defs><clipPath id="axclip')
         call builder_append(b, int_to_str(idx))
@@ -1941,7 +2177,35 @@ contains
             if (n <= 0) cycle
 
             select case (a%series(i)%kind)
-            case (SERIES_BAR)
+            case (SERIES_PIE)
+                call append_pie(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                ax_l, ax_w, ax_b, ax_h)
+                cycle
+            case (SERIES_STEM)
+                ! Stalk from the baseline to each sample, then the baseline
+                ! itself, which matplotlib always draws in red.
+                py = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ylog)
+                do j = 1, n
+                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
+                    call append_line(b, px, py, px, &
+                                     map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog), &
+                                     trim(a%series(i)%color), a%series(i)%linewidth, &
+                                     LINE_SOLID, a%series(i)%alpha)
+                end do
+                call append_line(b, &
+                                 map_x(a%series(i)%x(1), xmin, xmax, ax_l, ax_w, xlog), py, &
+                                 map_x(a%series(i)%x(n), xmin, xmax, ax_l, ax_w, xlog), py, &
+                                 "#d62728", a%series(i)%linewidth, LINE_SOLID, &
+                                 a%series(i)%alpha)
+                do j = 1, n
+                    call append_marker(b, MARKER_CIRCLE, &
+                                       map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog), &
+                                       map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog), &
+                                       a%series(i)%markersize, trim(a%series(i)%color), &
+                                       a%series(i)%alpha)
+                end do
+                cycle
+            case (SERIES_BAR, SERIES_BARH)
                 do j = 1, n
                     call append_bar(b, a%series(i), j, xmin, xmax, ymin, ymax, &
                                     ax_l, ax_w, ax_b, ax_h, xlog, ylog)
@@ -2028,6 +2292,7 @@ contains
         call builder_append(b, new_line("a"))
 
         ! spines
+        if (.not. a%frame_off) then
         call builder_append(b, '<rect x="')
         call append_num(b, ax_l)
         call builder_append(b, '" y="')
@@ -2038,6 +2303,7 @@ contains
         call append_num(b, ax_h)
         call builder_append(b, '" fill="none" stroke="#000000" stroke-width="0.8"/>')
         call builder_append(b, new_line("a"))
+        end if
 
         ! x ticks
         do i = 1, nxt

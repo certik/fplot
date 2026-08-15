@@ -38,6 +38,10 @@ CASES = [
     "scatter_cmap",
     "contour",
     "contourf",
+    "step",
+    "stem",
+    "barh",
+    "pie",
 ]
 
 
