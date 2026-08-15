@@ -20,6 +20,8 @@ OUT_NAMES = [
     "semilogx",
     "semilogy",
     "loglog",
+    "subplots_2x1",
+    "subplots_2x2",
 ]
 
 
@@ -123,6 +125,46 @@ def main() -> None:
     ax.set_xlim(0.1, 10.0)
     ax.set_ylim(0.01, 100.0)
     save(fig, "loglog")
+
+    # 7 subplots_2x1
+    fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(6.4, 4.8))
+    ax_top.plot(x, y, "b-", label="sin")
+    ax_top.set_title("top: sin")
+    ax_top.set_xlabel("x")
+    ax_top.set_ylabel("y")
+    ax_top.grid(True)
+    ax_top.legend()
+
+    ax_bot.plot(x, y2, "r--", label="cos")
+    ax_bot.set_title("bottom: cos")
+    ax_bot.set_xlabel("x")
+    ax_bot.set_ylabel("y")
+    ax_bot.grid(True)
+    ax_bot.legend()
+
+    fig.suptitle("fplot subplots")
+    save(fig, "subplots_2x1")
+
+    # 8 subplots_2x2
+    fig, axs = plt.subplots(2, 2, figsize=(6.4, 4.8))
+    axs[0, 0].plot(x, y, "b-", label="sin")
+    axs[0, 0].set_title("sin")
+    axs[0, 0].grid(True)
+
+    axs[0, 1].plot(x, y2, "r--", label="cos")
+    axs[0, 1].set_title("cos")
+    axs[0, 1].grid(True)
+
+    axs[1, 0].plot(x, y3, "g-", label="0.5 sin(2x)")
+    axs[1, 0].set_title("half sin 2x")
+    axs[1, 0].grid(True)
+
+    axs[1, 1].semilogx(xl, yl, "k-", label="x^2")
+    axs[1, 1].set_title("semilogx panel")
+    axs[1, 1].grid(True)
+
+    fig.suptitle("fplot 2x2 subplots")
+    save(fig, "subplots_2x2")
 
     print("All matplotlib references written.")
 

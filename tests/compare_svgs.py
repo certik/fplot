@@ -18,6 +18,8 @@ CASES = [
     "semilogx",
     "semilogy",
     "loglog",
+    "subplots_2x1",
+    "subplots_2x2",
 ]
 
 
@@ -92,6 +94,15 @@ def main() -> int:
             f"circle={count_tags(out, 'circle')} line={count_tags(out, 'line')} "
             f"text={out.count('<text')}"
         )
+
+        # Axes count: matplotlib <g id="axes_N"> vs fplot clip paths.
+        n_ax_mpl = len(re.findall(r'<g id="axes_\d+"', ref))
+        n_ax_fplot = len(re.findall(r'<clipPath id="axclip', out))
+        if n_ax_mpl == n_ax_fplot:
+            print(f"  ok: axes count matches ({n_ax_mpl})")
+        else:
+            print(f"  HARD: axes count mpl={n_ax_mpl} fplot={n_ax_fplot}")
+            hard_fail += 1
         print(f"  sizes: mpl={len(ref)} bytes, fplot={len(out)} bytes")
 
         # Optional raster compare
