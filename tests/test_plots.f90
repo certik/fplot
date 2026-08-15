@@ -721,6 +721,13 @@ program test_plots
     call title("quiver")
     call save_all("quiver")
 
+    ! 62) labelled contour lines
+    call clf()
+    call contour(zimg)
+    call clabel()
+    call title("clabel")
+    call save_all("clabel")
+
     print *, "All test plots written."
 
 contains

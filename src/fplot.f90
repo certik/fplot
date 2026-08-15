@@ -27,7 +27,7 @@ module fplot
     public :: axis, set_aspect, tick_params, spines
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
-    public :: imshow, colorbar, contour, contourf
+    public :: imshow, colorbar, contour, contourf, clabel
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg, render_pdf, render_png
@@ -186,6 +186,10 @@ module fplot
         logical :: frame_off = .false.
         logical :: has_cont = .false.
         logical :: cont_filled = .false.
+        ! clabel: a level written into the line itself, the line broken to
+        ! make room for it.
+        logical :: cont_labels = .false.
+        real(dp) :: clab_size = 10.0_dp
         real(dp), allocatable :: cz(:, :)
         real(dp), allocatable :: clev(:)
         integer :: cont_cmap = CMAP_VIRIDIS
@@ -291,6 +295,7 @@ module fplot
         procedure :: yaxis_date => ax_yaxis_date
         procedure :: pcolormesh => ax_pcolormesh
         procedure :: pcolor => ax_pcolormesh
+        procedure :: clabel => ax_clabel
         procedure :: contour => ax_contour
         procedure :: contourf => ax_contourf
         procedure :: colorbar => ax_colorbar
@@ -1419,6 +1424,13 @@ contains
         call pcolormesh(x, y, c, cmap, vmin, vmax, norm)
     end subroutine ax_pcolormesh
 
+    subroutine ax_clabel(self, fontsize)
+        class(axes), intent(in) :: self
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call clabel(fontsize)
+    end subroutine ax_clabel
+
     subroutine ax_contour(self, z, levels, cmap, extent)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: z(:, :)
@@ -2263,6 +2275,17 @@ contains
         character(len=*), intent(in), optional :: cmap
         call add_contour(z, levels, cmap, extent, .false.)
     end subroutine contour
+
+    ! Write each level into its own contour line. There is nothing to
+    ! label until the lines are laid out in points, so this only records
+    ! the wish and the drawing code does the work.
+    subroutine clabel(fontsize)
+        real(dp), intent(in), optional :: fontsize
+
+        call ensure_fig()
+        ax(cur_i)%cont_labels = .true.
+        if (present(fontsize)) ax(cur_i)%clab_size = fontsize
+    end subroutine clabel
 
     subroutine contourf(z, levels, cmap, extent)
         real(dp), intent(in) :: z(:, :)
@@ -4554,6 +4577,226 @@ contains
         call b%draw_path(px(1:np), py(1:np), verbs(1:nv), nv, p)
     end subroutine append_wedge
 
+    ! Level lines, one level at a time. The triangles give unordered
+    ! segments, so they are first chained end to end into whole contours:
+    ! a contour has to be a single line before a label can be dropped into
+    ! the middle of it and the line broken to make room.
+    subroutine append_contour_lines(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp), allocatable :: ex(:, :), ey(:, :), vx(:), vy(:), lx(:), ly(:)
+        logical, allocatable :: used(:)
+        integer :: nr, nc, nlev, nseg, i, j, k, tri, ns, np, nv, i0, i1
+        real(dp) :: dx, dy, gx(2), gy(2), tx(3), ty(3), tv(3), sx(2), sy(2)
+        real(dp) :: t, tol, cx, cy, ang, halfw
+        character(len=32) :: lbl
+        integer :: nl, dec
+
+        nr = size(a%cz, 1)
+        nc = size(a%cz, 2)
+        nlev = size(a%clev)
+        dx = (a%cont_ext(2) - a%cont_ext(1))/real(nc - 1, dp)
+        dy = (a%cont_ext(4) - a%cont_ext(3))/real(nr - 1, dp)
+        tol = 1.0e-9_dp*(abs(dx) + abs(dy))
+        dec = tick_decimals(a%clev, nlev)
+
+        nseg = 2*(nr - 1)*(nc - 1)
+        allocate (ex(2, nseg), ey(2, nseg), used(nseg))
+        allocate (vx(nseg + 1), vy(nseg + 1), lx(nseg + 1), ly(nseg + 1))
+
+        do k = 1, nlev
+            ns = 0
+            do i = 1, nr - 1
+                gy(1) = a%cont_ext(3) + real(i - 1, dp)*dy
+                gy(2) = gy(1) + dy
+                do j = 1, nc - 1
+                    gx(1) = a%cont_ext(1) + real(j - 1, dp)*dx
+                    gx(2) = gx(1) + dx
+                    do tri = 1, 2
+                        call cell_triangle(a%cz, i, j, gx, gy, tri, tx, ty, tv)
+                        call tri_level(tx, ty, tv, a%clev(k), sx, sy, np)
+                        if (np /= 2) cycle
+                        ns = ns + 1
+                        ex(:, ns) = sx
+                        ey(:, ns) = sy
+                    end do
+                end do
+            end do
+            if (ns == 0) cycle
+
+            t = real(k - 1, dp)/real(max(nlev - 1, 1), dp)
+            call format_tick_fixed(a%clev(k), dec, lbl, nl)
+            halfw = 0.5_dp*real(nl, dp)*DIGIT_W*a%clab_size + 3.0_dp
+
+            used(1:ns) = .false.
+            do
+                call chain_polyline(ex, ey, used, ns, tol, i, vx, vy, nv)
+                if (nv == 0) exit
+                do j = 1, nv
+                    lx(j) = map_x(vx(j), xmin, xmax, ax_l, ax_w, xsc)
+                    ly(j) = map_y(vy(j), ymin, ymax, ax_b, ax_h, ysc)
+                end do
+                i0 = 0
+                ! Every separate run of a level gets its own label, as
+                ! matplotlib labels each of them.
+                if (a%cont_labels) call label_window(lx, ly, nv, halfw, i0, i1, cx, cy, ang)
+                if (i0 > 0) then
+                    call append_stroke_path(b, lx(1:i0), ly(1:i0), i0, &
+                                            cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
+                    call append_stroke_path(b, lx(i1:nv), ly(i1:nv), nv - i1 + 1, &
+                                            cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
+                    call append_text(b, cx, cy + 0.36_dp*a%clab_size, lbl(1:nl), &
+                                     "middle", a%clab_size, &
+                                     cmap_color(a%cont_cmap, t), ang)
+                else
+                    call append_stroke_path(b, lx(1:nv), ly(1:nv), nv, &
+                                            cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
+                end if
+            end do
+        end do
+    end subroutine append_contour_lines
+
+    ! Take the first segment nobody has used yet and grow it in both
+    ! directions for as long as another segment starts where this one ends.
+    ! Returns nv = 0 once every segment belongs to a line.
+    subroutine chain_polyline(ex, ey, used, ns, tol, id, vx, vy, nv)
+        real(dp), intent(in) :: ex(:, :), ey(:, :), tol
+        logical, intent(inout) :: used(:)
+        integer, intent(in) :: ns
+        integer, intent(out) :: id, nv
+        real(dp), intent(out) :: vx(:), vy(:)
+        integer :: s, i, head, tail, e
+        real(dp) :: hx, hy, tx, ty
+
+        nv = 0
+        id = 0
+        s = 0
+        do i = 1, ns
+            if (.not. used(i)) then
+                s = i
+                exit
+            end if
+        end do
+        if (s == 0) return
+        id = s
+        used(s) = .true.
+        ! The line is built from the middle outwards, so it is laid down
+        ! back to front and then walked forwards.
+        head = size(vx)/2
+        tail = head + 1
+        vx(head) = ex(1, s); vy(head) = ey(1, s)
+        vx(tail) = ex(2, s); vy(tail) = ey(2, s)
+
+        do
+            tx = vx(tail); ty = vy(tail)
+            e = 0
+            do i = 1, ns
+                if (used(i)) cycle
+                if (near(ex(1, i), ey(1, i), tx, ty, tol)) then
+                    e = 2
+                else if (near(ex(2, i), ey(2, i), tx, ty, tol)) then
+                    e = 1
+                else
+                    cycle
+                end if
+                used(i) = .true.
+                tail = tail + 1
+                vx(tail) = ex(e, i); vy(tail) = ey(e, i)
+                exit
+            end do
+            if (e == 0 .or. tail >= size(vx)) exit
+        end do
+
+        do
+            hx = vx(head); hy = vy(head)
+            e = 0
+            do i = 1, ns
+                if (used(i)) cycle
+                if (near(ex(1, i), ey(1, i), hx, hy, tol)) then
+                    e = 2
+                else if (near(ex(2, i), ey(2, i), hx, hy, tol)) then
+                    e = 1
+                else
+                    cycle
+                end if
+                used(i) = .true.
+                head = head - 1
+                vx(head) = ex(e, i); vy(head) = ey(e, i)
+                exit
+            end do
+            if (e == 0 .or. head <= 1) exit
+        end do
+
+        nv = tail - head + 1
+        vx(1:nv) = vx(head:tail)
+        vy(1:nv) = vy(head:tail)
+    end subroutine chain_polyline
+
+    pure function near(ax1, ay1, bx, by, tol) result(q)
+        real(dp), intent(in) :: ax1, ay1, bx, by, tol
+        logical :: q
+        q = abs(ax1 - bx) <= tol .and. abs(ay1 - by) <= tol
+    end function near
+
+    ! Where to break the line for its label: the straightest stretch long
+    ! enough to hold it, which is what matplotlib looks for too. i0 comes
+    ! back as 0 when the line is too short to be worth breaking.
+    subroutine label_window(px, py, n, halfw, i0, i1, cx, cy, ang)
+        real(dp), intent(in) :: px(:), py(:), halfw
+        integer, intent(in) :: n
+        integer, intent(out) :: i0, i1
+        real(dp), intent(out) :: cx, cy, ang
+        real(dp) :: cum(n), dev, bdev, dxs, dys, len2, d
+        integer :: m, j, ja, jb
+
+        i0 = 0
+        i1 = 0
+        cx = 0.0_dp; cy = 0.0_dp; ang = 0.0_dp
+        cum(1) = 0.0_dp
+        do m = 2, n
+            cum(m) = cum(m - 1) + hypot(px(m) - px(m - 1), py(m) - py(m - 1))
+        end do
+        if (cum(n) < 3.0_dp*halfw) return
+
+        bdev = huge(1.0_dp)
+        do m = 2, n - 1
+            if (cum(m) < halfw .or. cum(n) - cum(m) < halfw) cycle
+            ja = m
+            do while (ja > 1 .and. cum(m) - cum(ja) < halfw)
+                ja = ja - 1
+            end do
+            jb = m
+            do while (jb < n .and. cum(jb) - cum(m) < halfw)
+                jb = jb + 1
+            end do
+            dxs = px(jb) - px(ja)
+            dys = py(jb) - py(ja)
+            len2 = dxs*dxs + dys*dys
+            if (len2 <= 0.0_dp) cycle
+            dev = 0.0_dp
+            do j = ja, jb
+                d = abs(dxs*(py(j) - py(ja)) - dys*(px(j) - px(ja)))/sqrt(len2)
+                dev = max(dev, d)
+            end do
+            if (dev < bdev) then
+                bdev = dev
+                i0 = ja
+                i1 = jb
+            end if
+        end do
+        if (i0 == 0) return
+
+        cx = 0.5_dp*(px(i0) + px(i1))
+        cy = 0.5_dp*(py(i0) + py(i1))
+        ! Device y grows downwards, and a label is never written upside
+        ! down: past the vertical it reads the other way round.
+        ang = atan2(-(py(i1) - py(i0)), px(i1) - px(i0))*180.0_dp/PI
+        if (ang > 90.0_dp) ang = ang - 180.0_dp
+        if (ang < -90.0_dp) ang = ang + 180.0_dp
+    end subroutine label_window
+
     ! Walk every cell as two triangles, emitting filled bands or level lines.
     subroutine append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         class(renderer_t), intent(inout) :: b
@@ -4573,6 +4816,12 @@ contains
         nlev = size(a%clev)
         dx = (a%cont_ext(2) - a%cont_ext(1)) / real(nc - 1, dp)
         dy = (a%cont_ext(4) - a%cont_ext(3)) / real(nr - 1, dp)
+
+        if (.not. a%cont_filled) then
+            call append_contour_lines(b, a, xmin, xmax, ymin, ymax, &
+                                      ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            return
+        end if
 
         do i = 1, nr - 1
             gy(1) = a%cont_ext(3) + real(i - 1, dp) * dy
@@ -4597,18 +4846,6 @@ contains
                             t = (real(k, dp) - 0.5_dp) / real(nlev - 1, dp)
                             call append_polygon(b, px, py, nq, &
                                                 cmap_color(a%cont_cmap, t), 1.0_dp, seal=.true.)
-                        end do
-                    else
-                        do k = 1, nlev
-                            call tri_level(tx, ty, tv, a%clev(k), sx, sy, ns)
-                            if (ns /= 2) cycle
-                            t = real(k - 1, dp) / real(max(nlev - 1, 1), dp)
-                            call append_stroke_path(b, &
-                                [map_x(sx(1), xmin, xmax, ax_l, ax_w, xsc), &
-                                 map_x(sx(2), xmin, xmax, ax_l, ax_w, xsc)], &
-                                [map_y(sy(1), ymin, ymax, ax_b, ax_h, ysc), &
-                                 map_y(sy(2), ymin, ymax, ax_b, ax_h, ysc)], &
-                                2, cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
                         end do
                     end if
                 end do

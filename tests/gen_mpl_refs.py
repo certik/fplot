@@ -58,6 +58,7 @@ OUT_NAMES = [
     "gridspec",
     "dates",
     "quiver",
+    "clabel",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -723,6 +724,13 @@ def main() -> None:
     ax.quiver(qx, qy, np.cos(qx), np.sin(qy))
     ax.set_title("quiver")
     save(fig, "quiver")
+
+    # 62 labelled contour lines
+    fig, ax = setup_fig()
+    cs = ax.contour(zimg)
+    ax.clabel(cs)
+    ax.set_title("clabel")
+    save(fig, "clabel")
 
     print("All matplotlib references written.")
 
