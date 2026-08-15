@@ -45,6 +45,7 @@ CASES = [
     "boxplot",
     "violinplot",
     "symlog",
+    "axis_equal",
 ]
 
 

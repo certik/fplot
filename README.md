@@ -43,7 +43,9 @@ call suptitle("figure title")
   markers `o x . s ^ v < > * + D`
 - Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
 - Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure(figsize=, dpi=)`
-- `savefig(file, transparent=, facecolor=)`, `axis_off`
+- `savefig(file, transparent=, facecolor=)`
+- `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
+- `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `legend(loc=...)`, `xticks` / `yticks` with optional labels, `minorticks_on`
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default

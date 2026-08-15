@@ -13,7 +13,8 @@ module fplot
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
-    public :: step, stem, pie, axis_off, boxplot, violinplot
+    public :: step, stem, pie, boxplot, violinplot
+    public :: axis, set_aspect
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
     public :: imshow, colorbar, contour, contourf
@@ -135,8 +136,13 @@ module fplot
         real(dp) :: img_vmin = 0.0_dp, img_vmax = 1.0_dp
         real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: img_origin_upper = .true.
-        ! aspect="equal" keeps pixels square by shrinking the axes box.
-        logical :: aspect_equal = .false.
+        ! Data units per point in y over the same in x. Zero means auto.
+        ! adjustable="box" shrinks the axes to suit; "datalim" widens the
+        ! limits instead, which is what matplotlib's axis("equal") does.
+        real(dp) :: aspect = 0.0_dp
+        logical :: aspect_datalim = .false.
+        ! axis("tight"): fit the data exactly, with no 5% margin.
+        logical :: tight = .false.
         logical :: cbar_on = .false.
         character(len=32) :: cbar_label = ""
         type(scale_t) :: xsc
@@ -612,8 +618,10 @@ contains
                                  -0.5_dp, real(nr, dp) - 0.5_dp]
         end if
 
-        ax(cur_i)%aspect_equal = .true.
-        if (present(aspect)) ax(cur_i)%aspect_equal = trim(aspect) /= "auto"
+        ax(cur_i)%aspect = 1.0_dp
+        if (present(aspect)) then
+            if (trim(aspect) == "auto") ax(cur_i)%aspect = 0.0_dp
+        end if
     end subroutine imshow
 
     subroutine contour(z, levels, cmap, extent)
@@ -794,7 +802,7 @@ contains
 
         call xlim(-1.25_dp, 1.25_dp)
         call ylim(-1.25_dp, 1.25_dp)
-        ax(cur_i)%aspect_equal = .true.
+        ax(cur_i)%aspect = 1.0_dp
         ax(cur_i)%frame_off = .true.
     end subroutine pie
 
@@ -817,11 +825,49 @@ contains
         ax(cur_i)%texts(it)%ha = "center"
     end subroutine add_pie_label
 
-    ! Hide the frame, ticks and tick labels, like matplotlib's axis("off").
-    subroutine axis_off()
+    ! matplotlib's axis(): "on"/"off" for the frame, "equal"/"scaled" for
+    ! square units, "tight" to drop the data margin, "auto" to undo them.
+    subroutine axis(mode)
+        character(len=*), intent(in) :: mode
         call ensure_fig()
-        ax(cur_i)%frame_off = .true.
-    end subroutine axis_off
+        select case (lower(mode))
+        case ("off")
+            ax(cur_i)%frame_off = .true.
+        case ("on")
+            ax(cur_i)%frame_off = .false.
+        case ("equal")
+            call set_aspect(1.0_dp, "datalim")
+        case ("scaled")
+            call set_aspect(1.0_dp, "box")
+        case ("tight")
+            ax(cur_i)%tight = .true.
+        case ("auto")
+            ax(cur_i)%aspect = 0.0_dp
+            ax(cur_i)%tight = .false.
+        case default
+            error stop "fplot: unknown axis mode"
+        end select
+    end subroutine axis
+
+    ! ratio is the length of one y unit over the length of one x unit.
+    subroutine set_aspect(ratio, adjustable)
+        real(dp), intent(in) :: ratio
+        character(len=*), intent(in), optional :: adjustable
+        call ensure_fig()
+        if (ratio <= 0.0_dp) error stop "fplot: aspect ratio must be positive"
+        ax(cur_i)%aspect = ratio
+        ax(cur_i)%aspect_datalim = .false.
+        if (present(adjustable)) then
+            select case (lower(adjustable))
+            case ("box")
+                ax(cur_i)%aspect_datalim = .false.
+            case ("datalim")
+                ax(cur_i)%aspect_datalim = .true.
+            case default
+                error stop "fplot: adjustable must be box or datalim"
+            end select
+        end if
+    end subroutine set_aspect
 
     ! One box per call. Fortran has no ragged arrays, so a group of datasets
     ! of differing sizes is built by calling this once per dataset rather than
@@ -1336,7 +1382,7 @@ contains
                 xmin = 0.0_dp
                 xmax = 1.0_dp
             end if
-            call expand_limits(xmin, xmax, a%xsc, sx_lo, sx_hi)
+            if (.not. a%tight) call expand_limits(xmin, xmax, a%xsc, sx_lo, sx_hi)
         end if
 
         if (a%ylim_set) then
@@ -1347,7 +1393,7 @@ contains
                 ymin = 0.0_dp
                 ymax = 1.0_dp
             end if
-            call expand_limits(ymin, ymax, a%ysc, sticky_lo, sticky_hi)
+            if (.not. a%tight) call expand_limits(ymin, ymax, a%ysc, sticky_lo, sticky_hi)
         end if
 
         if (a%has_cont) then
@@ -1375,6 +1421,16 @@ contains
             end if
         end if
     end subroutine compute_limits
+
+    pure subroutine grow_about_centre(lo, hi, f)
+        real(dp), intent(inout) :: lo, hi
+        real(dp), intent(in) :: f
+        real(dp) :: c, h
+        c = 0.5_dp * (lo + hi)
+        h = 0.5_dp * (hi - lo) * f
+        lo = c - h
+        hi = c + h
+    end subroutine grow_about_centre
 
     pure subroutine swap(u, v)
         real(dp), intent(inout) :: u, v
@@ -2344,19 +2400,30 @@ contains
 
         call compute_limits(a, xmin, xmax, ymin, ymax)
 
-        if (a%aspect_equal) then
+        if (a%aspect > 0.0_dp) then
             span_x = abs(xmax - xmin)
             span_y = abs(ymax - ymin)
             if (span_x > 0.0_dp .and. span_y > 0.0_dp) then
-                sc = min(ax_w / span_x, ax_h / span_y)
-                new_w = sc * span_x
-                new_h = sc * span_y
-                ax_l = ax_l + 0.5_dp * (ax_w - new_w)
-                ax_t = ax_t + 0.5_dp * (ax_h - new_h)
-                ax_w = new_w
-                ax_h = new_h
-                ax_r = ax_l + ax_w
-                ax_b = ax_t + ax_h
+                if (a%aspect_datalim) then
+                    ! Stretch whichever range is drawn too short, about its
+                    ! own centre, so the box keeps the place it was given.
+                    sc = (ax_h / span_y) / (ax_w / span_x) / a%aspect
+                    if (sc > 1.0_dp) then
+                        call grow_about_centre(ymin, ymax, sc)
+                    else
+                        call grow_about_centre(xmin, xmax, 1.0_dp / sc)
+                    end if
+                else
+                    sc = min(ax_w / span_x, ax_h / (a%aspect * span_y))
+                    new_w = sc * span_x
+                    new_h = sc * a%aspect * span_y
+                    ax_l = ax_l + 0.5_dp * (ax_w - new_w)
+                    ax_t = ax_t + 0.5_dp * (ax_h - new_h)
+                    ax_w = new_w
+                    ax_h = new_h
+                    ax_r = ax_l + ax_w
+                    ax_b = ax_t + ax_h
+                end if
             end if
         end if
         xsc = a%xsc

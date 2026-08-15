@@ -459,5 +459,13 @@ program test_plots
     call savefig("tests/out/symlog.svg")
     print *, "wrote tests/out/symlog.svg"
 
+    ! 34) axis("equal")
+    call figure()
+    call plot(xb, hb, marker="o")
+    call axis("equal")
+    call title("axis equal")
+    call savefig("tests/out/axis_equal.svg")
+    print *, "wrote tests/out/axis_equal.svg"
+
     print *, "All test plots written."
 end program test_plots

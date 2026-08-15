@@ -47,6 +47,7 @@ OUT_NAMES = [
     "boxplot",
     "violinplot",
     "symlog",
+    "axis_equal",
 ]
 
 
@@ -430,6 +431,13 @@ def main() -> None:
     ax.set_yscale("symlog")
     ax.set_title("symlog")
     save(fig, "symlog")
+
+    # 34 axis equal
+    fig, ax = setup_fig()
+    ax.plot(xb, hb, marker="o")
+    ax.axis("equal")
+    ax.set_title("axis equal")
+    save(fig, "axis_equal")
 
     print("All matplotlib references written.")
 
