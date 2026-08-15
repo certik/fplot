@@ -20,6 +20,13 @@ CASES = [
     "loglog",
     "subplots_2x1",
     "subplots_2x2",
+    "markers_gallery",
+    "scatter",
+    "bar",
+    "hist",
+    "fill_between",
+    "errorbar",
+    "hv_lines",
 ]
 
 

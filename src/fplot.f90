@@ -8,6 +8,7 @@ module fplot
 
     public :: dp
     public :: plot, scatter, semilogx, semilogy, loglog
+    public :: bar, hist, fill_between, errorbar, axhline, axvline
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg
@@ -274,6 +275,212 @@ contains
         call add_series(cur_i, x, y, fmt, label, lw, color)
     end subroutine loglog
 
+    ! Start a new series of the given kind and return its index, applying the
+    ! shared bookkeeping (point count, colour cycling, label).
+    function new_shape_series(kd, x, y, color, label, alpha) result(is)
+        integer, intent(in) :: kd
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        integer :: is, n
+
+        is = 0
+        n = min(size(x), size(y))
+        if (n <= 0) return
+        if (n > MAX_POINTS) n = MAX_POINTS
+        if (ax(cur_i)%n_series >= MAX_SERIES) return
+
+        ax(cur_i)%n_series = ax(cur_i)%n_series + 1
+        is = ax(cur_i)%n_series
+        allocate (ax(cur_i)%series(is)%x(n), ax(cur_i)%series(is)%y(n))
+        ax(cur_i)%series(is)%x(1:n) = x(1:n)
+        ax(cur_i)%series(is)%y(1:n) = y(1:n)
+        ax(cur_i)%series(is)%n = n
+        ax(cur_i)%series(is)%kind = kd
+        ax(cur_i)%series(is)%marker = MARKER_NONE
+        ax(cur_i)%series(is)%linestyle = LINE_SOLID
+        ax(cur_i)%series(is)%linewidth = default_linewidth
+        ax(cur_i)%series(is)%markersize = default_markersize
+        ax(cur_i)%series(is)%label = ""
+        if (present(label)) ax(cur_i)%series(is)%label = label
+        if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
+
+        ax(cur_i)%series(is)%color = resolve_color(color)
+        if (len_trim(ax(cur_i)%series(is)%color) == 0) then
+            ax(cur_i)%series(is)%color = color_from_C(ax(cur_i)%color_cycle)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
+        end if
+    end function new_shape_series
+
+    ! Accept "#rrggbb", a single-letter name, or a "C<n>" cycle index.
+    function resolve_color(color) result(col)
+        character(len=*), intent(in), optional :: color
+        character(len=7) :: col
+        integer :: m
+
+        col = ""
+        if (.not. present(color)) return
+        if (len_trim(color) == 0) return
+        if (is_hex_color(trim(color))) then
+            col = color(1:7)
+        else if (len_trim(color) == 1) then
+            col = color_from_char(color(1:1))
+        else if (len_trim(color) >= 2 .and. color(1:1) == "C") then
+            read (color(2:2), *) m
+            col = color_from_C(m)
+        end if
+    end function resolve_color
+
+    ! Vertical bars of the given heights, centred on x and drawn from y = 0.
+    subroutine bar(x, height, width, color, label, alpha)
+        real(dp), intent(in) :: x(:), height(:)
+        real(dp), intent(in), optional :: width, alpha
+        character(len=*), intent(in), optional :: color, label
+        integer :: is
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_BAR, x, height, color, label, alpha)
+        if (is < 1) return
+        if (present(width)) ax(cur_i)%series(is)%width = width
+    end subroutine bar
+
+    ! Histogram of x using `bins` equal-width bins over the data range.
+    subroutine hist(x, bins, color, label, alpha)
+        real(dp), intent(in) :: x(:)
+        integer, intent(in), optional :: bins
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        integer :: nb, i, k, n, is
+        real(dp) :: lo, hi, w
+        real(dp), allocatable :: centers(:), counts(:)
+
+        n = size(x)
+        if (n <= 0) return
+        nb = 10
+        if (present(bins)) nb = bins
+        if (nb < 1) return
+
+        lo = minval(x)
+        hi = maxval(x)
+        if (hi <= lo) then
+            lo = lo - 0.5_dp
+            hi = hi + 0.5_dp
+        end if
+        w = (hi - lo) / real(nb, dp)
+
+        allocate (centers(nb), counts(nb))
+        counts = 0.0_dp
+        do i = 1, nb
+            centers(i) = lo + (real(i, dp) - 0.5_dp) * w
+        end do
+        do i = 1, n
+            k = int((x(i) - lo) / w) + 1
+            if (k < 1) k = 1
+            if (k > nb) k = nb          ! the top edge belongs to the last bin
+            counts(k) = counts(k) + 1.0_dp
+        end do
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_BAR, centers, counts, color, label, alpha)
+        if (is >= 1) ax(cur_i)%series(is)%width = w
+    end subroutine hist
+
+    ! Shade between y1 and y2 (default 0).
+    subroutine fill_between(x, y1, y2, color, label, alpha)
+        real(dp), intent(in) :: x(:), y1(:)
+        real(dp), intent(in), optional :: y2(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        integer :: is, n
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_FILL, x, y1, color, label, alpha)
+        if (is < 1) return
+        n = ax(cur_i)%series(is)%n
+        allocate (ax(cur_i)%series(is)%y2(n))
+        if (present(y2)) then
+            ax(cur_i)%series(is)%y2(1:n) = y2(1:n)
+        else
+            ax(cur_i)%series(is)%y2(1:n) = 0.0_dp
+        end if
+    end subroutine fill_between
+
+    ! Line plot with symmetric vertical error bars.
+    subroutine errorbar(x, y, yerr, fmt, color, label, capsize, marker)
+        real(dp), intent(in) :: x(:), y(:), yerr(:)
+        character(len=*), intent(in), optional :: fmt, color, label, marker
+        real(dp), intent(in), optional :: capsize
+        integer :: is, n, mk, ls
+        character(len=7) :: col
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_ERRORBAR, x, y, color, label)
+        if (is < 1) return
+        n = ax(cur_i)%series(is)%n
+        allocate (ax(cur_i)%series(is)%y2(n))
+        ax(cur_i)%series(is)%y2(1:n) = abs(yerr(1:n))
+
+        if (present(fmt)) then
+            if (len_trim(fmt) > 0) then
+                call parse_fmt(trim(fmt), col, mk, ls)
+                ax(cur_i)%series(is)%marker = mk
+                ax(cur_i)%series(is)%linestyle = ls
+                if (len_trim(col) > 0) ax(cur_i)%series(is)%color = col
+            end if
+        end if
+        if (present(marker)) ax(cur_i)%series(is)%marker = marker_from_char(marker(1:1))
+        ! width doubles as the cap half-width, in points.
+        ax(cur_i)%series(is)%width = 3.0_dp
+        if (present(capsize)) ax(cur_i)%series(is)%width = capsize
+    end subroutine errorbar
+
+    ! Reference line spanning the full axes.
+    subroutine axhline(y, color, linestyle, lw, label)
+        real(dp), intent(in) :: y
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call add_ref_line(SERIES_HLINE, y, color, linestyle, lw, label)
+    end subroutine axhline
+
+    subroutine axvline(x, color, linestyle, lw, label)
+        real(dp), intent(in) :: x
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call add_ref_line(SERIES_VLINE, x, color, linestyle, lw, label)
+    end subroutine axvline
+
+    subroutine add_ref_line(kd, v, color, linestyle, lw, label)
+        integer, intent(in) :: kd
+        real(dp), intent(in) :: v
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        integer :: is
+
+        call ensure_fig()
+        is = new_shape_series(kd, [v], [v], color, label)
+        if (is < 1) return
+        ! Reference lines default to black, not to the colour cycle.
+        if (.not. present(color)) then
+            ax(cur_i)%series(is)%color = "#000000"
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+        if (present(linestyle)) ax(cur_i)%series(is)%linestyle = linestyle_from_str(linestyle)
+        if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
+    end subroutine add_ref_line
+
+    pure function linestyle_from_str(s) result(ls)
+        character(len=*), intent(in) :: s
+        integer :: ls
+        select case (trim(s))
+        case ("-"); ls = LINE_SOLID
+        case ("--"); ls = LINE_DASHED
+        case (":"); ls = LINE_DOTTED
+        case ("-."); ls = LINE_DASHDOT
+        case ("None", "none", ""); ls = LINE_NONE
+        case default; ls = LINE_SOLID
+        end select
+    end function linestyle_from_str
+
     subroutine add_series(ia, x, y, fmt, label, lw, color, marker, linestyle)
         integer, intent(in) :: ia
         real(dp), intent(in) :: x(:), y(:)
@@ -328,18 +535,8 @@ contains
             if (len_trim(col) > 0) ax(ia)%series(is)%color = col
         end if
 
-        if (present(color)) then
-            if (len_trim(color) > 0) then
-                if (is_hex_color(trim(color))) then
-                    ax(ia)%series(is)%color = color(1:7)
-                else if (len_trim(color) == 1) then
-                    ax(ia)%series(is)%color = color_from_char(color(1:1))
-                else if (len_trim(color) >= 2 .and. color(1:1) == "C") then
-                    read (color(2:2), *) m
-                    ax(ia)%series(is)%color = color_from_C(m)
-                end if
-            end if
-        end if
+        col = resolve_color(color)
+        if (len_trim(col) > 0) ax(ia)%series(is)%color = col
 
         if (present(marker)) then
             select case (trim(marker))
@@ -349,15 +546,8 @@ contains
             end select
         end if
 
-        if (present(linestyle)) then
-            select case (trim(linestyle))
-            case ("-"); ax(ia)%series(is)%linestyle = LINE_SOLID
-            case ("--"); ax(ia)%series(is)%linestyle = LINE_DASHED
-            case (":"); ax(ia)%series(is)%linestyle = LINE_DOTTED
-            case ("-."); ax(ia)%series(is)%linestyle = LINE_DASHDOT
-            case ("None", "none", ""); ax(ia)%series(is)%linestyle = LINE_NONE
-            end select
-        end if
+        if (present(linestyle)) &
+            ax(ia)%series(is)%linestyle = linestyle_from_str(linestyle)
 
         if (present(lw)) ax(ia)%series(is)%linewidth = lw
         if (present(label)) ax(ia)%series(is)%label = label
@@ -690,6 +880,108 @@ contains
         end select
     end subroutine append_marker
 
+    ! Straight line segment in pixel coordinates.
+    subroutine append_line(b, x1, y1, x2, y2, color, lw, ls)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x1, y1, x2, y2, lw
+        character(len=*), intent(in) :: color
+        integer, intent(in) :: ls
+        if (ls == LINE_NONE) return
+        call builder_append(b, '<line x1="')
+        call append_num(b, x1)
+        call builder_append(b, '" y1="')
+        call append_num(b, y1)
+        call builder_append(b, '" x2="')
+        call append_num(b, x2)
+        call builder_append(b, '" y2="')
+        call append_num(b, y2)
+        call builder_append(b, '" stroke="')
+        call builder_append(b, color)
+        call builder_append(b, '" stroke-width="')
+        call append_num(b, lw)
+        call builder_append(b, '"')
+        call append_dash(b, ls)
+        call builder_append(b, "/>")
+        call builder_append(b, new_line("a"))
+    end subroutine append_line
+
+    ! One bar of a bar/hist series, drawn from the y = 0 baseline.
+    subroutine append_bar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        real(dp) :: xa, xb, ya, yb, hw
+
+        hw = 0.5_dp * s%width
+        xa = map_x(s%x(j) - hw, xmin, xmax, ax_l, ax_w, xlog)
+        xb = map_x(s%x(j) + hw, xmin, xmax, ax_l, ax_w, xlog)
+        ya = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ylog)
+        yb = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog)
+
+        call builder_append(b, '<rect x="')
+        call append_num(b, min(xa, xb))
+        call builder_append(b, '" y="')
+        call append_num(b, min(ya, yb))
+        call builder_append(b, '" width="')
+        call append_num(b, abs(xb - xa))
+        call builder_append(b, '" height="')
+        call append_num(b, abs(yb - ya))
+        call builder_append(b, '" fill="')
+        call builder_append(b, trim(s%color))
+        if (s%alpha < 1.0_dp) then
+            call builder_append(b, '" fill-opacity="')
+            call append_num(b, s%alpha)
+        end if
+        call builder_append(b, '" stroke="#ffffff" stroke-width="0.5"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_bar
+
+    ! Shaded region between y and y2, as a single closed polygon.
+    subroutine append_fill(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        integer :: j, np
+        real(dp), allocatable :: px(:), py(:)
+
+        np = 2 * s%n
+        allocate (px(np), py(np))
+        do j = 1, s%n
+            px(j) = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xlog)
+            py(j) = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog)
+        end do
+        ! Return along the lower edge to close the band.
+        do j = 1, s%n
+            px(s%n + j) = map_x(s%x(s%n - j + 1), xmin, xmax, ax_l, ax_w, xlog)
+            py(s%n + j) = map_y(s%y2(s%n - j + 1), ymin, ymax, ax_b, ax_h, ylog)
+        end do
+        call append_polygon(b, px, py, np, trim(s%color), s%alpha)
+    end subroutine append_fill
+
+    ! Vertical error bar with caps for point j.
+    subroutine append_errorbar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+        type(svg_builder), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        logical, intent(in) :: xlog, ylog
+        real(dp) :: px, plo, phi, cap
+
+        px = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xlog)
+        plo = map_y(s%y(j) - s%y2(j), ymin, ymax, ax_b, ax_h, ylog)
+        phi = map_y(s%y(j) + s%y2(j), ymin, ymax, ax_b, ax_h, ylog)
+        call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID)
+
+        cap = s%width
+        if (cap > 0.0_dp) then
+            call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), 1.0_dp, LINE_SOLID)
+            call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), 1.0_dp, LINE_SOLID)
+        end if
+    end subroutine append_errorbar
+
     subroutine render_axes(b, a, idx, W, H)
         type(svg_builder), intent(inout) :: b
         type(axes_t), intent(in) :: a
@@ -793,6 +1085,36 @@ contains
         do i = 1, a%n_series
             n = a%series(i)%n
             if (n <= 0) cycle
+
+            select case (a%series(i)%kind)
+            case (SERIES_BAR)
+                do j = 1, n
+                    call append_bar(b, a%series(i), j, xmin, xmax, ymin, ymax, &
+                                    ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                end do
+                cycle
+            case (SERIES_FILL)
+                call append_fill(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                 ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                cycle
+            case (SERIES_HLINE)
+                py = map_y(a%series(i)%y(1), ymin, ymax, ax_b, ax_h, ylog)
+                call append_line(b, ax_l, py, ax_l + ax_w, py, &
+                                 trim(a%series(i)%color), a%series(i)%linewidth, &
+                                 a%series(i)%linestyle)
+                cycle
+            case (SERIES_VLINE)
+                px = map_x(a%series(i)%x(1), xmin, xmax, ax_l, ax_w, xlog)
+                call append_line(b, px, ax_b, px, ax_b - ax_h, &
+                                 trim(a%series(i)%color), a%series(i)%linewidth, &
+                                 a%series(i)%linestyle)
+                cycle
+            case (SERIES_ERRORBAR)
+                do j = 1, n
+                    call append_errorbar(b, a%series(i), j, xmin, xmax, ymin, ymax, &
+                                         ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                end do
+            end select
 
             if (a%series(i)%linestyle /= LINE_NONE .and. n >= 2) then
                 call builder_append(b, '<polyline fill="none" stroke="')
