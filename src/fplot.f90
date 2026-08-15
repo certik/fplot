@@ -85,52 +85,9 @@ contains
         call clf()
     end subroutine figure
 
-    subroutine free_series(a, i)
-        type(axes_t), intent(inout) :: a
-        integer, intent(in) :: i
-        if (allocated(a%series(i)%x)) deallocate (a%series(i)%x)
-        if (allocated(a%series(i)%y)) deallocate (a%series(i)%y)
-        a%series(i)%n = 0
-        a%series(i)%label = ""
-        a%series(i)%color = "#1f77b4"
-        a%series(i)%marker = MARKER_NONE
-        a%series(i)%linestyle = LINE_SOLID
-        a%series(i)%linewidth = default_linewidth
-        a%series(i)%markersize = default_markersize
-    end subroutine free_series
-
-    subroutine clear_axes(a)
-        type(axes_t), intent(inout) :: a
-        integer :: i
-        do i = 1, MAX_SERIES
-            call free_series(a, i)
-        end do
-        a%n_series = 0
-        a%title = ""
-        a%xlabel = ""
-        a%ylabel = ""
-        a%grid_on = .false.
-        a%legend_on = .false.
-        a%xscale = SCALE_LINEAR
-        a%yscale = SCALE_LINEAR
-        a%xlim_set = .false.
-        a%ylim_set = .false.
-        a%xmin_user = 0.0_dp
-        a%xmax_user = 1.0_dp
-        a%ymin_user = 0.0_dp
-        a%ymax_user = 1.0_dp
-        a%color_cycle = 0
-    end subroutine clear_axes
-
     subroutine clf()
-        integer :: i
         cur_i = 0
-        if (n_ax > 0 .and. allocated(ax)) then
-            do i = 1, n_ax
-                call clear_axes(ax(i))
-            end do
-            deallocate (ax)
-        end if
+        if (allocated(ax)) deallocate (ax)
         n_ax = 0
         grid_m = 0
         grid_n = 0
@@ -147,12 +104,7 @@ contains
         real(dp) :: w, h
 
         cur_i = 0
-        if (n_ax > 0 .and. allocated(ax)) then
-            do i = 1, n_ax
-                call clear_axes(ax(i))
-            end do
-            deallocate (ax)
-        end if
+        if (allocated(ax)) deallocate (ax)
 
         n_ax = m * n
         allocate (ax(n_ax))
@@ -332,7 +284,6 @@ contains
 
         ax(ia)%n_series = ax(ia)%n_series + 1
         is = ax(ia)%n_series
-        call free_series(ax(ia), is)
 
         allocate (ax(ia)%series(is)%x(n), ax(ia)%series(is)%y(n))
         ax(ia)%series(is)%x(1:n) = x(1:n)
