@@ -467,7 +467,7 @@ contains
     pure function int_to_str(i) result(s)
         integer, intent(in) :: i
         character(len=:), allocatable :: s
-        character(len=8) :: tmp
+        character(len=12) :: tmp
         write (tmp, "(I0)") i
         s = trim(tmp)
     end function int_to_str
@@ -523,6 +523,20 @@ contains
         else
             call linear_ticks(ymin, ymax, 6, yticks, nyt)
         end if
+
+        ! clip path for this axes' data
+        call builder_append(b, '<defs><clipPath id="axclip')
+        call builder_append(b, int_to_str(idx))
+        call builder_append(b, '"><rect x="')
+        call append_num(b, axl)
+        call builder_append(b, '" y="')
+        call append_num(b, axt)
+        call builder_append(b, '" width="')
+        call append_num(b, axw)
+        call builder_append(b, '" height="')
+        call append_num(b, axh)
+        call builder_append(b, '"/></clipPath></defs>')
+        call builder_append(b, new_line("a"))
 
         ! axes face
         call builder_append(b, '<rect x="')
@@ -902,24 +916,6 @@ contains
         call builder_append(b, '" height="')
         call append_num(b, H)
         call builder_append(b, '" fill="#ffffff"/>')
-        call builder_append(b, new_line("a"))
-
-        ! clip paths (one per axes)
-        call builder_append(b, "<defs>")
-        do i = 1, n_ax
-            call builder_append(b, '<clipPath id="axclip')
-            call builder_append(b, int_to_str(i))
-            call builder_append(b, '"><rect x="')
-            call append_num(b, ax(i)%left * W)
-            call builder_append(b, '" y="')
-            call append_num(b, (1.0_dp - ax(i)%top) * H)
-            call builder_append(b, '" width="')
-            call append_num(b, (ax(i)%right - ax(i)%left) * W)
-            call builder_append(b, '" height="')
-            call append_num(b, (ax(i)%top - ax(i)%bottom) * H)
-            call builder_append(b, '"/></clipPath>')
-        end do
-        call builder_append(b, "</defs>")
         call builder_append(b, new_line("a"))
 
         ! axes (subplots)
