@@ -4,7 +4,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build/flang"
 mkdir -p "$BUILD" "$ROOT/tests/out"
 
-FLANG="${FLANG:-flang}"
+# Use the `flang` frontend on PATH. Do not honor $FC: conda-forge's
+# flang_linux-64 activation sets FC="${CHOST}-flang", which becomes
+# "-flang" under pixi because CHOST is unset.
+case "${FLANG:-}" in
+    ""|-*) FLANG=flang ;;
+esac
 echo "Using compiler: $FLANG"
 
 cd "$BUILD"

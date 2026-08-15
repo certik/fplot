@@ -104,5 +104,54 @@ program test_plots
     call savefig("tests/out/loglog.svg")
     print *, "wrote tests/out/loglog.svg"
 
+    ! 7) subplots_2x1 (two rows, one column; exercises subplot(m,n,i),
+    !    per-axes state, and suptitle)
+    call clf()
+    call subplot(2, 1, 1)
+    call plot(x, y, "b-", label="sin")
+    call title("top: sin")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call legend()
+
+    call subplot(2, 1, 2)
+    call plot(x, y2, "r--", label="cos")
+    call title("bottom: cos")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call legend()
+
+    call suptitle("fplot subplots")
+    call savefig("tests/out/subplots_2x1.svg")
+    print *, "wrote tests/out/subplots_2x1.svg"
+
+    ! 8) subplots_2x2 (four panels; also checks per-axes log scale)
+    call clf()
+    call subplot(2, 2, 1)
+    call plot(x, y, "b-", label="sin")
+    call title("sin")
+    call grid(.true.)
+
+    call subplot(2, 2, 2)
+    call plot(x, y2, "r--", label="cos")
+    call title("cos")
+    call grid(.true.)
+
+    call subplot(2, 2, 3)
+    call plot(x, y3, "g-", label="0.5 sin(2x)")
+    call title("half sin 2x")
+    call grid(.true.)
+
+    call subplot(2, 2, 4)
+    call semilogx(xl, yl, "k-", label="x^2")
+    call title("semilogx panel")
+    call grid(.true.)
+
+    call suptitle("fplot 2x2 subplots")
+    call savefig("tests/out/subplots_2x2.svg")
+    print *, "wrote tests/out/subplots_2x2.svg"
+
     print *, "All test plots written."
 end program test_plots

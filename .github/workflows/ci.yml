@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Linux (flang + lfortran)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/setup-pixi@v0.10.1
+        with:
+          pixi-version: v0.76.1
+          cache: true
+          locked: true
+      - name: Test with Flang
+        run: pixi run test-flang
+      - name: Test with LFortran
+        run: pixi run test-lfortran
+      - name: Compare against matplotlib references
+        run: pixi run compare
