@@ -30,6 +30,7 @@ CASES = [
     "text_annotate",
     "ticks_legend",
     "figsize",
+    "many_series",
 ]
 
 

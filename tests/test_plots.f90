@@ -299,5 +299,17 @@ program test_plots
     call savefig("tests/out/figsize.svg")
     print *, "wrote tests/out/figsize.svg"
 
+    ! 19) more series than the old fixed 32-slot cap.
+    ! figure(), not clf(), because clf() keeps the previous canvas size.
+    call figure()
+    do i = 1, 40
+        call plot(x, sin(x + 0.05_dp * real(i, dp)))
+    end do
+    call title("Forty series")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/many_series.svg")
+    print *, "wrote tests/out/many_series.svg"
+
     print *, "All test plots written."
 end program test_plots

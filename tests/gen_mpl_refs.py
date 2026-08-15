@@ -32,6 +32,7 @@ OUT_NAMES = [
     "text_annotate",
     "ticks_legend",
     "figsize",
+    "many_series",
 ]
 
 
@@ -294,6 +295,15 @@ def main() -> None:
     ax.grid(True)
     ax.legend()
     save(fig, "figsize")
+
+    # 19 many_series
+    fig, ax = setup_fig()
+    for i in range(1, 41):
+        ax.plot(x, np.sin(x + 0.05 * i))
+    ax.set_title("Forty series")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "many_series")
 
     print("All matplotlib references written.")
 

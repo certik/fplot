@@ -18,10 +18,10 @@ module fplot
 
     integer, parameter :: SCALE_LINEAR = 0
     integer, parameter :: SCALE_LOG = 1
-    integer, parameter :: MAX_SERIES = 32
-    integer, parameter :: MAX_TEXTS = 32
+    ! Initial slot count for the per-axes series and text arrays; both grow
+    ! on demand, so this is only the allocation granularity.
+    integer, parameter :: INIT_SLOTS = 8
     integer, parameter :: MAX_MINOR = 256
-    integer, parameter :: MAX_POINTS = 100000
 
     real(dp), parameter :: FIG_W_DEFAULT = 6.4_dp
     real(dp), parameter :: FIG_H_DEFAULT = 4.8_dp
@@ -82,9 +82,9 @@ module fplot
 
     type :: axes_t
         integer :: n_series = 0
-        type(series_t) :: series(MAX_SERIES)
+        type(series_t), allocatable :: series(:)
         integer :: n_texts = 0
-        type(text_t) :: texts(MAX_TEXTS)
+        type(text_t), allocatable :: texts(:)
         character(len=256) :: title = ""
         character(len=256) :: xlabel = ""
         character(len=256) :: ylabel = ""
@@ -357,6 +357,45 @@ contains
         call add_series(cur_i, x, y, fmt, label, lw, color)
     end subroutine loglog
 
+    ! Claim the next series slot, doubling the array when it is full.
+    subroutine push_series(a, is)
+        type(axes_t), intent(inout) :: a
+        integer, intent(out) :: is
+        type(series_t), allocatable :: tmp(:)
+        integer :: cap, i
+
+        if (.not. allocated(a%series)) allocate (a%series(INIT_SLOTS))
+        cap = size(a%series)
+        if (a%n_series >= cap) then
+            allocate (tmp(2 * cap))
+            do i = 1, cap
+                tmp(i) = a%series(i)
+            end do
+            call move_alloc(tmp, a%series)
+        end if
+        a%n_series = a%n_series + 1
+        is = a%n_series
+    end subroutine push_series
+
+    subroutine push_text(a, it)
+        type(axes_t), intent(inout) :: a
+        integer, intent(out) :: it
+        type(text_t), allocatable :: tmp(:)
+        integer :: cap, i
+
+        if (.not. allocated(a%texts)) allocate (a%texts(INIT_SLOTS))
+        cap = size(a%texts)
+        if (a%n_texts >= cap) then
+            allocate (tmp(2 * cap))
+            do i = 1, cap
+                tmp(i) = a%texts(i)
+            end do
+            call move_alloc(tmp, a%texts)
+        end if
+        a%n_texts = a%n_texts + 1
+        it = a%n_texts
+    end subroutine push_text
+
     ! Start a new series of the given kind and return its index, applying the
     ! shared bookkeeping (point count, colour cycling, label).
     function new_shape_series(kd, x, y, color, label, alpha) result(is)
@@ -369,11 +408,7 @@ contains
         is = 0
         n = min(size(x), size(y))
         if (n <= 0) return
-        if (n > MAX_POINTS) n = MAX_POINTS
-        if (ax(cur_i)%n_series >= MAX_SERIES) return
-
-        ax(cur_i)%n_series = ax(cur_i)%n_series + 1
-        is = ax(cur_i)%n_series
+        call push_series(ax(cur_i), is)
         allocate (ax(cur_i)%series(is)%x(n), ax(cur_i)%series(is)%y(n))
         ax(cur_i)%series(is)%x(1:n) = x(1:n)
         ax(cur_i)%series(is)%y(1:n) = y(1:n)
@@ -600,9 +635,7 @@ contains
         character(len=7) :: col
 
         call ensure_fig()
-        if (ax(cur_i)%n_texts >= MAX_TEXTS) return
-        ax(cur_i)%n_texts = ax(cur_i)%n_texts + 1
-        it = ax(cur_i)%n_texts
+        call push_text(ax(cur_i), it)
         ax(cur_i)%texts(it)%x = x
         ax(cur_i)%texts(it)%y = y
         ax(cur_i)%texts(it)%s = s
@@ -630,11 +663,7 @@ contains
 
         n = min(size(x), size(y))
         if (n <= 0) return
-        if (n > MAX_POINTS) n = MAX_POINTS
-        if (ax(ia)%n_series >= MAX_SERIES) return
-
-        ax(ia)%n_series = ax(ia)%n_series + 1
-        is = ax(ia)%n_series
+        call push_series(ax(ia), is)
 
         allocate (ax(ia)%series(is)%x(n), ax(ia)%series(is)%y(n))
         ax(ia)%series(is)%x(1:n) = x(1:n)
