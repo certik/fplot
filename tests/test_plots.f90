@@ -738,6 +738,18 @@ program test_plots
     call a3%plot(x, y2)
     call save_all("inset")
 
+    ! 64) plain shapes
+    call clf()
+    call add_rectangle([0.1_dp, 0.1_dp], 0.4_dp, 0.2_dp, &
+                       facecolor="tab:orange", edgecolor="black")
+    call add_circle([0.7_dp, 0.7_dp], 0.15_dp)
+    call add_ellipse([0.3_dp, 0.7_dp], 0.4_dp, 0.2_dp, angle=30.0_dp, &
+                     facecolor="tab:green", alpha=0.5_dp)
+    call add_polygon([0.6_dp, 0.9_dp, 0.75_dp], [0.1_dp, 0.1_dp, 0.4_dp], &
+                     edgecolor="tab:red", lw=2.0_dp, fill=.false.)
+    call title("patches")
+    call save_all("patches")
+
     print *, "All test plots written."
 
 contains

@@ -68,6 +68,8 @@ call suptitle("figure title")
 - `add_axes` for an axes placed by hand, `inset_axes` for a small axes
   inside another, and `secondary_xaxis`/`secondary_yaxis` for a second
   scale along an edge
+- Patches: `add_rectangle`, `add_circle`, `add_ellipse` and `add_polygon`,
+  filled and outlined in data coordinates
 - `clabel` to write the level into each contour line, breaking the line
   at its straightest stretch to make room
 - `quiver` for a field of arrows, sized as matplotlib sizes them

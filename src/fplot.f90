@@ -22,6 +22,7 @@ module fplot
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
     public :: pcolormesh, pcolor
     public :: add_axes, secondary_xaxis, secondary_yaxis
+    public :: add_rectangle, add_circle, add_ellipse, add_polygon
     public :: quiver
     public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
@@ -112,6 +113,8 @@ module fplot
     integer, parameter :: SERIES_VLINES = 12
     integer, parameter :: SERIES_HSPAN = 13
     integer, parameter :: SERIES_VSPAN = 14
+    ! PATCH: a closed ring of vertices, filled and outlined.
+    integer, parameter :: SERIES_PATCH = 16
     ! QUIVER: x, y hold the tails and qu, qv the vectors.
     integer, parameter :: SERIES_QUIVER = 15
 
@@ -124,6 +127,10 @@ module fplot
         real(dp), allocatable :: y2(:)
         ! ERRORBAR: the four arms, each already a distance from the point.
         real(dp), allocatable :: eylo(:), eyhi(:), exlo(:), exhi(:)
+        ! PATCH: whether the ring is filled at all. Its outline is drawn
+        ! only when edgecolor names one, as in matplotlib, where a patch is
+        ! filled and edgeless unless asked otherwise.
+        logical :: patch_fill = .true.
         ! QUIVER: the vector at each point, and how it is drawn. A negative
         ! scale or width means matplotlib's autoscale.
         real(dp), allocatable :: qu(:), qv(:)
@@ -305,6 +312,10 @@ module fplot
         procedure :: step => ax_step
         procedure :: stem => ax_stem
         procedure :: quiver => ax_quiver
+        procedure :: add_rectangle => ax_add_rectangle
+        procedure :: add_circle => ax_add_circle
+        procedure :: add_ellipse => ax_add_ellipse
+        procedure :: add_polygon => ax_add_polygon
         procedure :: imshow => ax_imshow
         procedure :: xaxis_date => ax_xaxis_date
         procedure :: yaxis_date => ax_yaxis_date
@@ -1521,6 +1532,48 @@ contains
         call step(x, y, where, label, color, lw, linestyle, alpha)
     end subroutine ax_step
 
+    subroutine ax_add_rectangle(self, xy, width, height, angle, facecolor, &
+                                edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xy(2), width, height
+        real(dp), intent(in), optional :: angle, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_rectangle(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_rectangle
+
+    subroutine ax_add_circle(self, xy, radius, facecolor, edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xy(2), radius
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_circle(xy, radius, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_circle
+
+    subroutine ax_add_ellipse(self, xy, width, height, angle, facecolor, &
+                              edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xy(2), width, height
+        real(dp), intent(in), optional :: angle, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_ellipse(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_ellipse
+
+    subroutine ax_add_polygon(self, x, y, facecolor, edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_polygon(x, y, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_polygon
+
     subroutine ax_quiver(self, x, y, u, v, color, scale, width, label)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y(:), u(:), v(:)
@@ -2588,6 +2641,89 @@ contains
         ax(cur_i)%series(is)%marker = MARKER_CIRCLE
     end subroutine stem
 
+    ! ----------------------------------------------------------------------
+    ! Patches: plain shapes in data coordinates. Each one is kept as the
+    ! ring of points it comes down to, so a circle drawn on axes of
+    ! different scales leans exactly as matplotlib's does.
+    ! ----------------------------------------------------------------------
+
+    subroutine add_rectangle(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: xy(2), width, height
+        real(dp), intent(in), optional :: angle, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        real(dp) :: px(4), py(4), rx(4), ry(4), a, ca, sa
+        integer :: i
+
+        px = [0.0_dp, width, width, 0.0_dp]
+        py = [0.0_dp, 0.0_dp, height, height]
+        a = 0.0_dp
+        if (present(angle)) a = angle
+        ! A rectangle turns about the corner it is given, as matplotlib's does.
+        ca = cos(a*PI/180.0_dp)
+        sa = sin(a*PI/180.0_dp)
+        do i = 1, 4
+            rx(i) = xy(1) + px(i)*ca - py(i)*sa
+            ry(i) = xy(2) + px(i)*sa + py(i)*ca
+        end do
+        call add_polygon(rx, ry, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine add_rectangle
+
+    subroutine add_circle(xy, radius, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: xy(2), radius
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call add_ellipse(xy, 2.0_dp*radius, 2.0_dp*radius, 0.0_dp, &
+                         facecolor, edgecolor, lw, alpha, fill)
+    end subroutine add_circle
+
+    subroutine add_ellipse(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: xy(2), width, height
+        real(dp), intent(in), optional :: angle, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        integer, parameter :: N = 72
+        real(dp) :: px(N), py(N), t, cx, cy, a, ca, sa
+        integer :: i
+
+        a = 0.0_dp
+        if (present(angle)) a = angle
+        ca = cos(a*PI/180.0_dp)
+        sa = sin(a*PI/180.0_dp)
+        do i = 1, N
+            t = 2.0_dp*PI*real(i - 1, dp)/real(N, dp)
+            cx = 0.5_dp*width*cos(t)
+            cy = 0.5_dp*height*sin(t)
+            px(i) = xy(1) + cx*ca - cy*sa
+            py(i) = xy(2) + cx*sa + cy*ca
+        end do
+        call add_polygon(px, py, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine add_ellipse
+
+    subroutine add_polygon(x, y, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        integer :: is
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_PATCH, x, y, facecolor, alpha=alpha)
+        if (is == 0) return
+        ! A patch does not take a turn of the color cycle: matplotlib gives
+        ! every one of them the same first color unless told otherwise.
+        if (.not. present(facecolor)) then
+            ax(cur_i)%series(is)%color = "#1f77b4"
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+        ax(cur_i)%series(is)%edgecolor = ""
+        if (present(edgecolor)) ax(cur_i)%series(is)%edgecolor = resolve_color(edgecolor)
+        ax(cur_i)%series(is)%edgewidth = 1.0_dp
+        if (present(lw)) ax(cur_i)%series(is)%edgewidth = lw
+        if (present(fill)) ax(cur_i)%series(is)%patch_fill = fill
+    end subroutine add_polygon
+
     ! A field of arrows, one per point, pointing along (u, v). Left to
     ! itself matplotlib sizes the arrows from the field: the shaft is a
     ! fixed fraction of the axes width and the scale is set so a vector of
@@ -3494,6 +3630,7 @@ contains
         real(dp), intent(out) :: xmin, xmax, ymin, ymax
         integer :: i, j
         real(dp) :: xv, yv, ylo, yhi, xlo, xhi, dx, dy, hw
+        real(dp) :: pxlo, pxhi, pylo, pyhi
         logical :: anyx, anyy, sticky_lo, sticky_hi, sx_lo, sx_hi
 
         anyx = .false.
@@ -3506,6 +3643,10 @@ contains
         xmax = -huge(1.0_dp)
         ymin = huge(1.0_dp)
         ymax = -huge(1.0_dp)
+        pxlo = huge(1.0_dp)
+        pxhi = -huge(1.0_dp)
+        pylo = huge(1.0_dp)
+        pyhi = -huge(1.0_dp)
 
         do i = 1, a%n_series
             ! Bars occupy a span in x; a hline/vline constrains one axis only.
@@ -3515,6 +3656,19 @@ contains
             ! A pie sets its own limits, and horizontal bars use the two axes
             ! the other way round, so neither fits the loop below.
             if (a%series(i)%kind == SERIES_PIE) cycle
+            ! A patch widens the limits but never asks for any of its own:
+            ! matplotlib leaves an axes holding nothing but patches at its
+            ! default square, and only stretches to them once something
+            ! else has autoscaled it.
+            if (a%series(i)%kind == SERIES_PATCH) then
+                do j = 1, a%series(i)%n
+                    pxlo = min(pxlo, a%series(i)%x(j))
+                    pxhi = max(pxhi, a%series(i)%x(j))
+                    pylo = min(pylo, a%series(i)%y(j))
+                    pyhi = max(pyhi, a%series(i)%y(j))
+                end do
+                cycle
+            end if
             if (a%series(i)%kind == SERIES_BOX .or. &
                 a%series(i)%kind == SERIES_VIOLIN) then
                 anyx = .true.
@@ -3655,26 +3809,39 @@ contains
             ymax = max(ymax, a%img_ext(4))
         end if
 
+        if (anyx .and. pxhi >= pxlo) then
+            xmin = min(xmin, pxlo)
+            xmax = max(xmax, pxhi)
+        end if
+        if (anyy .and. pyhi >= pylo) then
+            ymin = min(ymin, pylo)
+            ymax = max(ymax, pyhi)
+        end if
+
         if (a%xlim_set) then
             xmin = a%xmin_user
             xmax = a%xmax_user
         else
-            if (.not. anyx) then
+            ! An axes with nothing to autoscale to keeps the plain unit
+            ! square matplotlib gives it, margins and all.
+            if (anyx) then
+                if (.not. a%tight) call expand_limits(xmin, xmax, a%xsc, sx_lo, sx_hi)
+            else
                 xmin = 0.0_dp
                 xmax = 1.0_dp
             end if
-            if (.not. a%tight) call expand_limits(xmin, xmax, a%xsc, sx_lo, sx_hi)
         end if
 
         if (a%ylim_set) then
             ymin = a%ymin_user
             ymax = a%ymax_user
         else
-            if (.not. anyy) then
+            if (anyy) then
+                if (.not. a%tight) call expand_limits(ymin, ymax, a%ysc, sticky_lo, sticky_hi)
+            else
                 ymin = 0.0_dp
                 ymax = 1.0_dp
             end if
-            if (.not. a%tight) call expand_limits(ymin, ymax, a%ysc, sticky_lo, sticky_hi)
         end if
 
         if (a%has_cont) then
@@ -4317,6 +4484,29 @@ contains
     end subroutine append_bar_label
 
     ! Shaded region between y and y2, as a single closed polygon.
+    ! A patch: filled first, then outlined, so the outline sits on top of
+    ! its own fill exactly as it does in matplotlib.
+    subroutine append_patch(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp) :: px(s%n + 1), py(s%n + 1)
+        integer :: j
+
+        if (s%n < 3) return
+        do j = 1, s%n
+            px(j) = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+            py(j) = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+        end do
+        px(s%n + 1) = px(1)
+        py(s%n + 1) = py(1)
+        if (s%patch_fill) call append_polygon(b, px, py, s%n, trim(s%color), s%alpha)
+        if (len_trim(s%edgecolor) > 0) &
+            call append_stroke_path(b, px, py, s%n + 1, trim(s%edgecolor), &
+                                    s%edgewidth, s%alpha)
+    end subroutine append_patch
+
     ! One filled polygon per arrow, shaped exactly as matplotlib shapes it:
     ! a shaft of width w, a head three w wide and five w long whose barbs
     ! reach back four and a half w. Everything is measured in shaft widths
@@ -5618,6 +5808,10 @@ contains
                         trim(a%series(i)%color), a%series(i)%linewidth, &
                         a%series(i)%linestyle, a%series(i)%alpha)
                 end do
+                cycle
+            case (SERIES_PATCH)
+                call append_patch(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                  ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 cycle
             case (SERIES_QUIVER)
                 call append_quiver(b, a%series(i), xmin, xmax, ymin, ymax, &

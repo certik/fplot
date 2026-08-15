@@ -11,6 +11,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import matplotlib.dates as mdates
+from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon
 import datetime
 import numpy as np
 
@@ -60,6 +61,7 @@ OUT_NAMES = [
     "quiver",
     "clabel",
     "inset",
+    "patches",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -741,6 +743,18 @@ def main() -> None:
     axi = ax.inset_axes([0.6, 0.6, 0.35, 0.3])
     axi.plot(x, y2)
     save(fig, "inset")
+
+    # 64 plain shapes
+    fig, ax = setup_fig()
+    ax.add_patch(Rectangle((0.1, 0.1), 0.4, 0.2, facecolor="tab:orange",
+                           edgecolor="black"))
+    ax.add_patch(Circle((0.7, 0.7), 0.15))
+    ax.add_patch(Ellipse((0.3, 0.7), 0.4, 0.2, angle=30.0,
+                         facecolor="tab:green", alpha=0.5))
+    ax.add_patch(Polygon([[0.6, 0.1], [0.9, 0.1], [0.75, 0.4]],
+                         edgecolor="tab:red", lw=2.0, fill=False))
+    ax.set_title("patches")
+    save(fig, "patches")
 
     print("All matplotlib references written.")
 
