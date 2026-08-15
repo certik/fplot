@@ -40,7 +40,6 @@ module fplot
         character(len=128) :: label = ""
     end type series_t
 
-    ! One set of axes (a subplot).
     type :: axes_t
         integer :: n_series = 0
         type(series_t) :: series(MAX_SERIES)
@@ -141,8 +140,7 @@ contains
         fig_initialized = .true.
     end subroutine clf
 
-    ! Create an m x n grid of axes with matplotlib's default spacing and
-    ! position them in figure fractions. Replaces any existing grid.
+    ! Replacing the grid discards existing axes.
     subroutine new_axes_grid(m, n)
         integer, intent(in) :: m, n
         integer :: i, r, c
@@ -574,8 +572,6 @@ contains
         end select
     end subroutine append_dash
 
-    ! Render one set of axes (face, grid, data, spines, ticks, labels,
-    ! title, legend) into the builder. Geometry is in points.
     subroutine render_axes(b, a, idx, W, H)
         type(svg_builder), intent(inout) :: b
         type(axes_t), intent(in) :: a
@@ -815,7 +811,6 @@ contains
             call builder_append(b, new_line("a"))
         end do
 
-        ! xlabel (below this axes, centered on it)
         if (len_trim(a%xlabel) > 0) then
             call xml_escape_to(a%xlabel, esc, en)
             call builder_append(b, '<text x="')
@@ -829,7 +824,6 @@ contains
             call builder_append(b, new_line("a"))
         end if
 
-        ! ylabel (left of this axes, centered on it)
         if (len_trim(a%ylabel) > 0) then
             call xml_escape_to(a%ylabel, esc, en)
             call builder_append(b, '<text x="')
