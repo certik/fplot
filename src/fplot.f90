@@ -21,7 +21,7 @@ module fplot
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg
-    public :: subplot, suptitle
+    public :: subplot, suptitle, subplots_adjust, tight_layout
 
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
@@ -60,6 +60,15 @@ module fplot
     ! Mean advance width of DejaVu Sans at the 10 pt legend font size, used
     ! to size the legend box to its labels.
     real(dp), parameter :: LEGEND_CHAR_W = 5.6_dp
+    ! Points per inch, matplotlib's font sizes, and the width of one digit
+    ! in DejaVu Sans as a fraction of the font size.
+    real(dp), parameter :: PT_PER_IN = 72.0_dp
+    real(dp), parameter :: TITLE_FONT = 12.0_dp
+    real(dp), parameter :: SUPTITLE_FONT = 12.0_dp
+    real(dp), parameter :: LABEL_FONT = 11.0_dp
+    real(dp), parameter :: DIGIT_W = 0.636_dp
+    ! Height of a one-line label including its leading, in font sizes.
+    real(dp), parameter :: LABEL_BOX = 1.45_dp
     real(dp), parameter :: PI = 3.141592653589793_dp
 
     ! What a series draws. LINE covers plot/scatter/semilog*; the rest are
@@ -177,6 +186,11 @@ module fplot
     ! Kept for savefig backends that rasterize; SVG is resolution independent,
     ! so matplotlib emits the same inches*72 pt canvas at any dpi.
     real(dp), save :: fig_dpi = DPI_DEFAULT
+    ! Figure margins and inter-subplot spacing, as matplotlib's
+    ! subplots_adjust names them.
+    real(dp), save :: fig_left = MARGIN_LEFT, fig_right = MARGIN_RIGHT
+    real(dp), save :: fig_bottom = MARGIN_BOTTOM, fig_top = MARGIN_TOP
+    real(dp), save :: fig_wspace = WSPACE, fig_hspace = HSPACE
     character(len=256), save :: fig_suptitle = ""
     type(axes_t), allocatable, save :: ax(:)
     integer, save :: n_ax = 0
@@ -224,6 +238,12 @@ contains
         grid_m = 0
         grid_n = 0
         fig_suptitle = ""
+        fig_left = MARGIN_LEFT
+        fig_right = MARGIN_RIGHT
+        fig_bottom = MARGIN_BOTTOM
+        fig_top = MARGIN_TOP
+        fig_wspace = WSPACE
+        fig_hspace = HSPACE
         fig_initialized = .true.
     end subroutine clf
 
@@ -238,27 +258,148 @@ contains
 
         n_ax = m * n
         allocate (ax(n_ax))
-
-        ! Cell size and cell pitch (cell plus gap), in figure fractions.
-        w = (MARGIN_RIGHT - MARGIN_LEFT) / &
-            (real(n, dp) + WSPACE * real(n - 1, dp))
-        h = (MARGIN_TOP - MARGIN_BOTTOM) / &
-            (real(m, dp) + HSPACE * real(m - 1, dp))
-        dx = w * (1.0_dp + WSPACE)
-        dy = h * (1.0_dp + HSPACE)
-
-        do i = 1, n_ax
-            r = (i - 1) / n          ! row from the top
-            c = mod(i - 1, n)        ! column from the left
-            ax(i)%left = MARGIN_LEFT + real(c, dp) * dx
-            ax(i)%right = ax(i)%left + w
-            ax(i)%bottom = MARGIN_BOTTOM + real(m - 1 - r, dp) * dy
-            ax(i)%top = ax(i)%bottom + h
-        end do
-
         grid_m = m
         grid_n = n
+        call layout_grid()
     end subroutine new_axes_grid
+
+    ! Place the existing axes in the current margins. Called again whenever
+    ! those margins move, so the axes objects themselves survive.
+    subroutine layout_grid()
+        integer :: i, r, c
+        real(dp) :: w, h, dx, dy
+
+        if (grid_m < 1 .or. grid_n < 1) return
+
+        ! Cell size and cell pitch (cell plus gap), in figure fractions.
+        w = (fig_right - fig_left) / &
+            (real(grid_n, dp) + fig_wspace * real(grid_n - 1, dp))
+        h = (fig_top - fig_bottom) / &
+            (real(grid_m, dp) + fig_hspace * real(grid_m - 1, dp))
+        dx = w * (1.0_dp + fig_wspace)
+        dy = h * (1.0_dp + fig_hspace)
+
+        do i = 1, n_ax
+            r = (i - 1) / grid_n     ! row from the top
+            c = mod(i - 1, grid_n)   ! column from the left
+            ax(i)%left = fig_left + real(c, dp) * dx
+            ax(i)%right = ax(i)%left + w
+            ax(i)%bottom = fig_bottom + real(grid_m - 1 - r, dp) * dy
+            ax(i)%top = ax(i)%bottom + h
+        end do
+    end subroutine layout_grid
+
+    subroutine subplots_adjust(left, right, bottom, top, wspace, hspace)
+        real(dp), intent(in), optional :: left, right, bottom, top, wspace, hspace
+        call ensure_fig()
+        if (present(left)) fig_left = left
+        if (present(right)) fig_right = right
+        if (present(bottom)) fig_bottom = bottom
+        if (present(top)) fig_top = top
+        if (present(wspace)) fig_wspace = wspace
+        if (present(hspace)) fig_hspace = hspace
+        if (fig_right <= fig_left .or. fig_top <= fig_bottom) &
+            error stop "fplot: subplots_adjust left<right and bottom<top required"
+        call layout_grid()
+    end subroutine subplots_adjust
+
+    ! Shrink the margins to what the decorations actually need, so that long
+    ! tick labels stop running into the neighbouring subplot or off the page.
+    subroutine tight_layout(pad)
+        real(dp), intent(in), optional :: pad
+        real(dp) :: p, W, H, need_l, need_b, need_t, need_r, inner_l, inner_b
+        integer :: i
+
+        call ensure_fig()
+        p = 1.08_dp * TICK_FONT
+        if (present(pad)) p = pad * TICK_FONT
+        W = fig_w_in * PT_PER_IN
+        H = fig_h_in * PT_PER_IN
+
+        need_l = 0.0_dp
+        need_b = 0.0_dp
+        need_t = 0.0_dp
+        need_r = 0.0_dp
+        inner_l = 0.0_dp
+        inner_b = 0.0_dp
+        do i = 1, n_ax
+            need_l = max(need_l, decor_left(ax(i)))
+            need_b = max(need_b, decor_bottom(ax(i)))
+            need_t = max(need_t, decor_top(ax(i)))
+            ! Only axes away from the left column and the bottom row put
+            ! decorations into the gaps between subplots.
+            if (mod(i - 1, grid_n) > 0) inner_l = max(inner_l, decor_left(ax(i)))
+            if ((i - 1) / grid_n < grid_m - 1) inner_b = max(inner_b, decor_bottom(ax(i)))
+        end do
+        if (len_trim(fig_suptitle) > 0) need_t = need_t + LABEL_BOX * SUPTITLE_FONT
+
+        fig_left = (p + need_l) / W
+        fig_right = 1.0_dp - (p + need_r) / W
+        fig_bottom = (p + need_b) / H
+        fig_top = 1.0_dp - (p + need_t) / H
+
+        ! Inner subplots carry the same decorations, so the gaps between them
+        ! have to hold those decorations and the same pad again.
+        fig_wspace = spacing_for((p + inner_l) / W, fig_right - fig_left, grid_n)
+        fig_hspace = spacing_for((p + inner_b) / H, fig_top - fig_bottom, grid_m)
+        call layout_grid()
+    end subroutine tight_layout
+
+    ! Fraction of a cell that leaves a gap of g between n cells spanning
+    ! span, all in figure fractions.
+    pure function spacing_for(g, span, n) result(f)
+        real(dp), intent(in) :: g, span
+        integer, intent(in) :: n
+        real(dp) :: f, denom
+        f = 0.0_dp
+        if (n < 2) return
+        denom = span - g * real(n - 1, dp)
+        if (denom <= 0.0_dp) return
+        f = g * real(n, dp) / denom
+    end function spacing_for
+
+    ! Point widths and heights of the decorations outside each axes edge.
+    function decor_left(a) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp) :: v
+        v = TICK_LEN + 2.0_dp + tick_label_width(a)
+        if (len_trim(a%ylabel) > 0) v = v + LABEL_BOX * LABEL_FONT
+    end function decor_left
+
+    function decor_bottom(a) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp) :: v
+        v = TICK_LEN + 1.0_dp + 1.15_dp * a%xtick_size
+        if (a%xtick_rot /= 0.0_dp) v = v + tick_label_width(a) * &
+                                        abs(sin(a%xtick_rot * PI / 180.0_dp))
+        if (len_trim(a%xlabel) > 0) v = v + LABEL_BOX * LABEL_FONT
+    end function decor_bottom
+
+    function decor_top(a) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp) :: v
+        v = 0.0_dp
+        if (len_trim(a%title) > 0) v = LABEL_BOX * TITLE_FONT
+    end function decor_top
+
+    ! Widest tick label an axes will draw, in points. Tick text is digits,
+    ! a sign and a point, all of which are the same width in DejaVu Sans.
+    function tick_label_width(a) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp) :: v, xmin, xmax, ymin, ymax
+        real(dp) :: t(MAX_TICKS)
+        character(len=64) :: lbl
+        integer :: nt, i, ln
+        v = 0.0_dp
+        call compute_limits(a, xmin, xmax, ymin, ymax)
+        call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
+                        a%ysc, t, nt)
+        do i = 1, nt
+            call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, lbl, ln)
+            v = max(v, real(ln, dp) * DIGIT_W * a%ytick_size)
+        end do
+    end function tick_label_width
+
 
     ! Select the i-th axes (row-major) of an m x n grid, creating the grid
     ! if it differs from the current one.
@@ -2929,8 +3070,8 @@ contains
         if (len_trim(face) == 0) face = "#ffffff"
         call builder_init(b)
 
-        W = fig_w_in * 72.0_dp
-        H = fig_h_in * 72.0_dp
+        W = fig_w_in * PT_PER_IN
+        H = fig_h_in * PT_PER_IN
 
         call builder_append(b, '<?xml version="1.0" encoding="utf-8" standalone="no"?>')
         call builder_append(b, new_line("a"))

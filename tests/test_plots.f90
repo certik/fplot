@@ -477,5 +477,28 @@ program test_plots
     call savefig("tests/out/tick_style.svg")
     print *, "wrote tests/out/tick_style.svg"
 
+    ! 36) tight_layout with long tick labels
+    call figure()
+    call subplot(1, 2, 1)
+    call plot(xb, hb * 1000.0_dp)
+    call ylabel("value")
+    call xlabel("category")
+    call subplot(1, 2, 2)
+    call plot(xb, hb)
+    call xlabel("category")
+    call tight_layout()
+    call savefig("tests/out/tight_layout.svg")
+    print *, "wrote tests/out/tight_layout.svg"
+
+    ! 37) subplots_adjust
+    call figure()
+    call subplot(2, 1, 1)
+    call plot(xb, hb)
+    call subplot(2, 1, 2)
+    call plot(xb, hb)
+    call subplots_adjust(left=0.2_dp, hspace=0.5_dp)
+    call savefig("tests/out/subplots_adjust.svg")
+    print *, "wrote tests/out/subplots_adjust.svg"
+
     print *, "All test plots written."
 end program test_plots

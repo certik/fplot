@@ -49,6 +49,8 @@ OUT_NAMES = [
     "symlog",
     "axis_equal",
     "tick_style",
+    "tight_layout",
+    "subplots_adjust",
 ]
 
 
@@ -449,6 +451,23 @@ def main() -> None:
     ax.spines["right"].set_visible(False)
     ax.set_title("tick_params")
     save(fig, "tick_style")
+
+    # 36 tight_layout
+    fig, axs = plt.subplots(1, 2)
+    axs[0].plot(xb, hb * 1e3)
+    axs[0].set_ylabel("value")
+    axs[0].set_xlabel("category")
+    axs[1].plot(xb, hb)
+    axs[1].set_xlabel("category")
+    fig.tight_layout()
+    save(fig, "tight_layout")
+
+    # 37 subplots_adjust
+    fig, axs = plt.subplots(2, 1)
+    axs[0].plot(xb, hb)
+    axs[1].plot(xb, hb)
+    fig.subplots_adjust(left=0.2, hspace=0.5)
+    save(fig, "subplots_adjust")
 
     print("All matplotlib references written.")
 

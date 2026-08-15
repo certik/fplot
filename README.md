@@ -51,6 +51,7 @@ call suptitle("figure title")
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing
+- `subplots_adjust` and `tight_layout`
 - SVG defaults aligned with matplotlib (6.4×4.8 in, tab10 colors, subplot margins)
 
 ## Build
