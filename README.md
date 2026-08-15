@@ -59,7 +59,8 @@ pixi run test-lfortran
 pixi run compare
 ```
 
-CI (Linux) runs `pixi run test-flang` and `pixi run test-lfortran`.
+CI (Linux) runs `pixi run test-flang`, `pixi run test-lfortran` and
+`pixi run compare`.
 
 ## Layout
 
