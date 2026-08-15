@@ -25,6 +25,9 @@ program test_plots
     real(dp) :: xe(ne), ye(ne), ee(ne)
     real(dp), parameter :: xb(nb) = [1.0_dp, 2.0_dp, 3.0_dp, 4.0_dp, 5.0_dp, 6.0_dp]
     real(dp), parameter :: hb(nb) = [3.0_dp, 5.0_dp, 2.0_dp, 7.0_dp, 4.0_dp, 6.0_dp]
+    real(dp), parameter :: hb2(nb) = [1.0_dp, 2.0_dp, 4.0_dp, 1.0_dp, 3.0_dp, 2.0_dp]
+    character(len=8), parameter :: bar_cols(nb) = [ &
+        "red     ", "green   ", "blue    ", "orange  ", "purple  ", "brown   "]
     real(dp), parameter :: xh(nh) = [ &
         0.2_dp, 0.5_dp, 0.7_dp, 1.1_dp, 1.3_dp, 1.4_dp, 1.8_dp, 2.0_dp, 2.1_dp, 2.3_dp, &
         2.4_dp, 2.6_dp, 2.9_dp, 3.0_dp, 3.2_dp, 3.3_dp, 3.7_dp, 4.0_dp, 4.4_dp, 4.9_dp]
@@ -579,6 +582,22 @@ program test_plots
     call vlines([4.0_dp, 5.0_dp], -1.0_dp, 0.0_dp, color="purple")
     call title("spans and line runs")
     call save_all("spans")
+
+    ! 48) stacked and labelled bars
+    call clf()
+    call bar(xb, hb, width=0.6_dp, color="tab:blue", label="first")
+    call bar(xb, hb2, width=0.6_dp, bottom=hb, color="tab:orange", label="second")
+    call bar_label()
+    call legend()
+    call title("stacked bars")
+    call save_all("bar_stacked")
+
+    ! 49) per-bar colors and horizontal bar labels
+    call clf()
+    call barh(xb, hb, color="k", colors=bar_cols)
+    call bar_label(padding=2.0_dp)
+    call title("bars in their own colors")
+    call save_all("bar_colors")
 
     print *, "All test plots written."
 

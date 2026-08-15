@@ -41,6 +41,8 @@ OUT_NAMES = [
     "subplots_shared",
     "style_ggplot",
     "spans",
+    "bar_stacked",
+    "bar_colors",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -237,6 +239,7 @@ def main() -> None:
     # 11 bar
     xb = np.arange(1.0, 7.0)
     hb = np.array([3.0, 5.0, 2.0, 7.0, 4.0, 6.0])
+    hb2 = np.array([1.0, 2.0, 4.0, 1.0, 3.0, 2.0])
     fig, ax = setup_fig()
     ax.bar(xb, hb, label="counts")
     ax.set_title("Bar")
@@ -584,6 +587,22 @@ def main() -> None:
     ax.vlines([4.0, 5.0], -1.0, 0.0, color="purple")
     ax.set_title("spans and line runs")
     save(fig, "spans")
+
+    # 48 stacked and labelled bars
+    fig, ax = setup_fig()
+    ax.bar(xb, hb, width=0.6, color="tab:blue", label="first")
+    ax.bar(xb, hb2, width=0.6, bottom=hb, color="tab:orange", label="second")
+    ax.bar_label(ax.containers[-1], padding=3)
+    ax.legend()
+    ax.set_title("stacked bars")
+    save(fig, "bar_stacked")
+
+    # 49 per-bar colors and horizontal bar labels
+    fig, ax = setup_fig()
+    ax.barh(xb, hb, color=["red", "green", "blue", "orange", "purple", "brown"])
+    ax.bar_label(ax.containers[-1], padding=2)
+    ax.set_title("bars in their own colors")
+    save(fig, "bar_colors")
 
     print("All matplotlib references written.")
 

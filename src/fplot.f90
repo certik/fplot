@@ -18,7 +18,7 @@ module fplot
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
-    public :: axhspan, axvspan, hlines, vlines
+    public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
     public :: axis, set_aspect, tick_params, spines
     public :: text, annotate
@@ -123,6 +123,14 @@ module fplot
         character(len=7), allocatable :: pcolor(:)
         real(dp) :: width = 0.8_dp
         real(dp) :: alpha = 1.0_dp
+        ! bar_label: written at draw time, when the bar top is known in
+        ! points and the padding can be honoured exactly.
+        logical :: bar_labels = .false.
+        real(dp) :: bar_pad = 3.0_dp
+        real(dp) :: bar_label_size = 10.0_dp
+        character(len=16) :: bar_fmt = ""
+        character(len=7) :: edgecolor = "#ffffff"
+        real(dp) :: edgewidth = 0.5_dp
         character(len=128) :: label = ""
     end type series_t
 
@@ -236,6 +244,7 @@ module fplot
         procedure :: scatter => ax_scatter
         procedure :: bar => ax_bar
         procedure :: barh => ax_barh
+        procedure :: bar_label => ax_bar_label
         procedure :: hist => ax_hist
         procedure :: fill_between => ax_fill_between
         procedure :: errorbar => ax_errorbar
@@ -1097,23 +1106,37 @@ contains
         call scatter(x, y, s, c, marker, label, alpha, sizes, cvals, cmap, vmin, vmax)
     end subroutine ax_scatter
 
-    subroutine ax_bar(self, x, height, width, color, label, alpha)
+    subroutine ax_bar(self, x, height, width, color, label, alpha, bottom, &
+                      colors, edgecolor, linewidth)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), height(:)
-        real(dp), intent(in), optional :: width, alpha
-        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
         call ax_sca(self)
-        call bar(x, height, width, color, label, alpha)
+        call bar(x, height, width, color, label, alpha, bottom, colors, &
+                 edgecolor, linewidth)
     end subroutine ax_bar
 
-    subroutine ax_barh(self, y, width, height, color, label, alpha)
+    subroutine ax_barh(self, y, width, height, color, label, alpha, left, &
+                       colors, edgecolor, linewidth)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: y(:), width(:)
-        real(dp), intent(in), optional :: height, alpha
-        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: height, alpha, left(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
         call ax_sca(self)
-        call barh(y, width, height, color, label, alpha)
+        call barh(y, width, height, color, label, alpha, left, colors, &
+                  edgecolor, linewidth)
     end subroutine ax_barh
+
+    subroutine ax_bar_label(self, fmt, padding, fontsize)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: fmt
+        real(dp), intent(in), optional :: padding, fontsize
+        call ax_sca(self)
+        call bar_label(fmt, padding, fontsize)
+    end subroutine ax_bar_label
 
     subroutine ax_hist(self, x, bins, color, label, alpha)
         class(axes), intent(in) :: self
@@ -2021,16 +2044,19 @@ contains
     end subroutine step
 
     ! Horizontal bars: y locates each bar and width is its length.
-    subroutine barh(y, width, height, color, label, alpha)
+    subroutine barh(y, width, height, color, label, alpha, left, colors, &
+                    edgecolor, linewidth)
         real(dp), intent(in) :: y(:), width(:)
-        real(dp), intent(in), optional :: height, alpha
-        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: height, alpha, left(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
         integer :: is
 
         call ensure_fig()
         is = new_shape_series(SERIES_BARH, y, width, color, label, alpha)
         if (is < 1) return
         if (present(height)) ax(cur_i)%series(is)%width = height
+        call bar_options(is, left, colors, edgecolor, linewidth)
     end subroutine barh
 
     ! Markers on stalks rising from y = 0, with a baseline along the bottom.
@@ -2305,17 +2331,68 @@ contains
     end subroutine colorbar
 
     ! Vertical bars of the given heights, centred on x and drawn from y = 0.
-    subroutine bar(x, height, width, color, label, alpha)
+    ! bottom stacks this series on top of another; colors gives every bar
+    ! its own color, as matplotlib's list-valued color does.
+    subroutine bar(x, height, width, color, label, alpha, bottom, colors, &
+                   edgecolor, linewidth)
         real(dp), intent(in) :: x(:), height(:)
-        real(dp), intent(in), optional :: width, alpha
-        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
         integer :: is
 
         call ensure_fig()
         is = new_shape_series(SERIES_BAR, x, height, color, label, alpha)
         if (is < 1) return
         if (present(width)) ax(cur_i)%series(is)%width = width
+        call bar_options(is, bottom, colors, edgecolor, linewidth)
     end subroutine bar
+
+    subroutine bar_options(is, base, colors, edgecolor, linewidth)
+        integer, intent(in) :: is
+        real(dp), intent(in), optional :: base(:), linewidth
+        character(len=*), intent(in), optional :: colors(:), edgecolor
+        integer :: n, j
+
+        n = ax(cur_i)%series(is)%n
+        if (present(base)) then
+            allocate (ax(cur_i)%series(is)%y2(n))
+            do j = 1, n
+                ax(cur_i)%series(is)%y2(j) = base(min(j, size(base)))
+            end do
+        end if
+        if (present(colors)) then
+            allocate (ax(cur_i)%series(is)%pcolor(n))
+            do j = 1, n
+                ax(cur_i)%series(is)%pcolor(j) = &
+                    resolve_color(colors(min(j, size(colors))))
+            end do
+        end if
+        if (present(edgecolor)) ax(cur_i)%series(is)%edgecolor = resolve_color(edgecolor)
+        if (present(linewidth)) ax(cur_i)%series(is)%edgewidth = linewidth
+    end subroutine bar_options
+
+    ! Label every bar of the most recent bar series with its value. fmt is a
+    ! Fortran edit descriptor such as "(f4.1)"; the default prints the value
+    ! as compactly as it can.
+    subroutine bar_label(fmt, padding, fontsize)
+        character(len=*), intent(in), optional :: fmt
+        real(dp), intent(in), optional :: padding, fontsize
+        integer :: i
+
+        call ensure_fig()
+        do i = ax(cur_i)%n_series, 1, -1
+            if (ax(cur_i)%series(i)%kind == SERIES_BAR .or. &
+                ax(cur_i)%series(i)%kind == SERIES_BARH) then
+                ax(cur_i)%series(i)%bar_labels = .true.
+                ax(cur_i)%series(i)%bar_label_size = def_tick
+                if (present(fmt)) ax(cur_i)%series(i)%bar_fmt = fmt
+                if (present(padding)) ax(cur_i)%series(i)%bar_pad = padding
+                if (present(fontsize)) ax(cur_i)%series(i)%bar_label_size = fontsize
+                return
+            end if
+        end do
+    end subroutine bar_label
 
     ! Histogram of x using `bins` equal-width bins over the data range.
     subroutine hist(x, bins, color, label, alpha)
@@ -2764,8 +2841,10 @@ contains
                 do j = 1, a%series(i)%n
                     anyx = .true.
                     anyy = .true.
-                    xmin = min(xmin, 0.0_dp, a%series(i)%y(j))
-                    xmax = max(xmax, 0.0_dp, a%series(i)%y(j))
+                    xmin = min(xmin, bar_base(a%series(i), j), &
+                               bar_base(a%series(i), j) + a%series(i)%y(j))
+                    xmax = max(xmax, bar_base(a%series(i), j), &
+                               bar_base(a%series(i), j) + a%series(i)%y(j))
                     ymin = min(ymin, a%series(i)%x(j) - hw)
                     ymax = max(ymax, a%series(i)%x(j) + hw)
                 end do
@@ -2790,9 +2869,10 @@ contains
                     yhi = yv
                     select case (a%series(i)%kind)
                     case (SERIES_BAR)
-                        ! Bars are drawn from the y=0 baseline.
-                        ylo = min(0.0_dp, yv)
-                        yhi = max(0.0_dp, yv)
+                        ! Bars are drawn from the y=0 baseline, or from the
+                        ! series they were stacked on.
+                        ylo = min(bar_base(a%series(i), j), bar_base(a%series(i), j) + yv)
+                        yhi = max(bar_base(a%series(i), j), bar_base(a%series(i), j) + yv)
                     case (SERIES_FILL)
                         ylo = min(yv, a%series(i)%y2(j))
                         yhi = max(yv, a%series(i)%y2(j))
@@ -3382,18 +3462,68 @@ contains
             ! two axes are simply swapped.
             ya = map_y(s%x(j) - hw, ymin, ymax, ax_b, ax_h, ysc)
             yb = map_y(s%x(j) + hw, ymin, ymax, ax_b, ax_h, ysc)
-            xa = map_x(0.0_dp, xmin, xmax, ax_l, ax_w, xsc)
-            xb = map_x(s%y(j), xmin, xmax, ax_l, ax_w, xsc)
+            xa = map_x(bar_base(s, j), xmin, xmax, ax_l, ax_w, xsc)
+            xb = map_x(bar_base(s, j) + s%y(j), xmin, xmax, ax_l, ax_w, xsc)
         else
             xa = map_x(s%x(j) - hw, xmin, xmax, ax_l, ax_w, xsc)
             xb = map_x(s%x(j) + hw, xmin, xmax, ax_l, ax_w, xsc)
-            ya = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ysc)
-            yb = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            ya = map_y(bar_base(s, j), ymin, ymax, ax_b, ax_h, ysc)
+            yb = map_y(bar_base(s, j) + s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         end if
 
         call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
-                         abs(yb - ya), trim(s%color), s%alpha, "#ffffff", 0.5_dp)
+                         abs(yb - ya), point_color(s, j), s%alpha, &
+                         trim(s%edgecolor), s%edgewidth)
+        if (s%bar_labels) call append_bar_label(b, s, j, xa, xb, ya, yb)
     end subroutine append_bar
+
+    ! Where a bar starts: y = 0 unless the series was stacked on another.
+    pure function bar_base(s, j) result(v)
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp) :: v
+        v = 0.0_dp
+        if (allocated(s%y2)) v = s%y2(j)
+    end function bar_base
+
+    ! The value written at the end of a bar. The padding is in points, which
+    ! is why this waits until the bar has been placed on the canvas.
+    subroutine append_bar_label(b, s, j, xa, xb, ya, yb)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp), intent(in) :: xa, xb, ya, yb
+        character(len=32) :: txt
+        real(dp) :: tx, ty, fs
+        integer :: tn
+
+        txt = ""
+        fs = s%bar_label_size
+        if (len_trim(s%bar_fmt) > 0) then
+            write (txt, s%bar_fmt) s%y(j)
+        else
+            call format_tick_to(s%y(j), .false., txt, tn)
+        end if
+        if (s%kind == SERIES_BARH) then
+            ! Just past the end of the bar, vertically centred on it.
+            tx = xb + s%bar_pad + 1.0_dp
+            if (xb < xa) tx = xb - s%bar_pad - 1.0_dp
+            ty = 0.5_dp*(ya + yb) + 0.36_dp*fs
+            if (xb < xa) then
+                call append_text(b, tx, ty, trim(adjustl(txt)), "right", fs, rc_text_color)
+            else
+                call append_text(b, tx, ty, trim(adjustl(txt)), "left", fs, rc_text_color)
+            end if
+        else
+            ! Above the top of the bar, or below it for a bar that hangs
+            ! down. 0.21 em is the descent of the font, which is what puts
+            ! the bottom of the text, not its baseline, at the padding.
+            ty = min(ya, yb) - s%bar_pad - 0.21_dp*fs
+            if (yb > ya) ty = max(ya, yb) + s%bar_pad + 0.73_dp*fs
+            tx = 0.5_dp*(xa + xb)
+            call append_text(b, tx, ty, trim(adjustl(txt)), "center", fs, rc_text_color)
+        end if
+    end subroutine append_bar_label
 
     ! Shaded region between y and y2, as a single closed polygon.
     subroutine append_fill(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
@@ -3966,6 +4096,14 @@ contains
     end function fmt_pt
 
     ! Per-point color when scatter mapped c values, otherwise the series color.
+    ! Series drawn as filled shapes, which take a swatch in the legend.
+    pure function is_patch_series(kd) result(v)
+        integer, intent(in) :: kd
+        logical :: v
+        v = kd == SERIES_BAR .or. kd == SERIES_BARH .or. kd == SERIES_FILL .or. &
+            kd == SERIES_HSPAN .or. kd == SERIES_VSPAN
+    end function is_patch_series
+
     function point_color(s, j) result(col)
         type(series_t), intent(in) :: s
         integer, intent(in) :: j
@@ -4507,7 +4645,15 @@ contains
                     lr = k - 1 - lc * n_row
                     leg_x = leg_x0 + real(lc, dp) * col_w
                     py = leg_y + 4.0_dp + ttl_h + (real(lr, dp) + 0.5_dp) * row_h
-                    if (a%series(i)%linestyle /= LINE_NONE) then
+                    if (is_patch_series(a%series(i)%kind)) then
+                        ! Anything filled shows a swatch, not a line: a bar
+                        ! or a band has no line to show.
+                        call append_rect(b, leg_x + 8.0_dp, &
+                                         py - 0.35_dp*a%legend_size, 20.0_dp, &
+                                         0.7_dp*a%legend_size, &
+                                         point_color(a%series(i), 1), &
+                                         a%series(i)%alpha)
+                    else if (a%series(i)%linestyle /= LINE_NONE) then
                         call append_line(b, leg_x + 8.0_dp, py, leg_x + 28.0_dp, py, &
                                          trim(a%series(i)%color), &
                                          a%series(i)%linewidth, &
