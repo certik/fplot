@@ -557,6 +557,18 @@ program test_plots
     call suptitle("subplots with handles")
     call save_all("subplots_shared")
 
+    ! 46) a style sheet
+    call style_use("ggplot")
+    call clf()
+    call plot(x, y, label="sin")
+    call plot(x, y2, label="cos")
+    call title("ggplot style")
+    call xlabel("x")
+    call ylabel("y")
+    call legend()
+    call save_all("style_ggplot")
+    call style_use("default")
+
     print *, "All test plots written."
 
 contains

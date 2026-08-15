@@ -39,6 +39,7 @@ OUT_NAMES = [
     "imshow_cbar",
     "imshow_log",
     "subplots_shared",
+    "style_ggplot",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -561,6 +562,17 @@ def main() -> None:
     axs[1, 1].set_xlabel("x")
     fig.suptitle("subplots with handles")
     save(fig, "subplots_shared")
+
+    # 46 a style sheet
+    with plt.style.context("ggplot"):
+        fig, ax = plt.subplots(figsize=(6.4, 4.8))
+        ax.plot(x, y, label="sin")
+        ax.plot(x, y2, label="cos")
+        ax.set_title("ggplot style")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.legend()
+        save(fig, "style_ggplot")
 
     print("All matplotlib references written.")
 

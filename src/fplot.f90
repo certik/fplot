@@ -31,6 +31,7 @@ module fplot
     public :: set_fontsize
     public :: close, gcf
     public :: axes, subplots, sca
+    public :: style_use, rc
 
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
@@ -283,6 +284,27 @@ module fplot
     real(dp), save :: def_title = TITLE_FONT, def_label = LABEL_FONT
     real(dp), save :: def_tick = TICK_FONT, def_legend = LEGEND_FONT
     real(dp), save :: fig_suptitle_size = SUPTITLE_FONT
+
+    ! ------------------------------------------------------------------
+    ! Global defaults, matplotlib's rcParams. A style is nothing but a set
+    ! of these: everything below is consulted while drawing or copied into
+    ! an axes as it is made, so style_use before the first plot call is what
+    ! a user expects it to be.
+    ! ------------------------------------------------------------------
+    integer, parameter :: MAX_CYCLE = 12
+    integer, save :: rc_n_cycle = 0      ! zero means the built-in tab10
+    character(len=7), save :: rc_cycle(MAX_CYCLE) = "#000000"
+    character(len=7), save :: rc_fig_face = "#ffffff"
+    character(len=7), save :: rc_axes_face = "#ffffff"
+    character(len=7), save :: rc_grid_color = "#b0b0b0"
+    character(len=7), save :: rc_text_color = "#000000"
+    character(len=7), save :: rc_spine_color = "#000000"
+    real(dp), save :: rc_grid_lw = 0.8_dp
+    real(dp), save :: rc_spine_lw = 0.8_dp
+    character(len=7), save :: rc_legend_face = "#ffffff"
+    character(len=7), save :: rc_legend_edge = "#cccccc"
+    real(dp), save :: rc_lw = default_linewidth
+    logical, save :: rc_grid = .false.
 
     ! Clipping region currently in force. See set_clip.
     type(clip_t), save :: g_clip
@@ -554,6 +576,7 @@ contains
 
     subroutine apply_font_defaults(a)
         type(axes_t), intent(inout) :: a
+        a%grid_on = rc_grid
         a%title_size = def_title
         a%xlabel_size = def_label
         a%ylabel_size = def_label
@@ -561,6 +584,140 @@ contains
         a%ytick_size = def_tick
         a%legend_size = def_legend
     end subroutine apply_font_defaults
+
+    ! The i-th color of the active cycle, wrapping. This is what "C0".."C9"
+    ! resolve to as well, so a style changes both at once.
+    pure function cycle_color(idx) result(col)
+        integer, intent(in) :: idx
+        character(len=7) :: col
+        integer :: i
+        if (rc_n_cycle <= 0) then
+            col = color_from_C(idx)
+        else
+            i = mod(idx, rc_n_cycle)
+            if (i < 0) i = i + rc_n_cycle
+            col = rc_cycle(i + 1)
+        end if
+    end function cycle_color
+
+    subroutine set_cycle(c)
+        character(len=7), intent(in) :: c(:)
+        rc_n_cycle = min(size(c), MAX_CYCLE)
+        rc_cycle(1:rc_n_cycle) = c(1:rc_n_cycle)
+    end subroutine set_cycle
+
+    ! matplotlib's style.use. Each style is just a block of rcParams, so
+    ! this sets the same globals a user could set one at a time with rc().
+    subroutine style_use(name)
+        character(len=*), intent(in) :: name
+
+        ! Start from the built-in defaults so styles do not accumulate.
+        rc_n_cycle = 0
+        rc_fig_face = "#ffffff"
+        rc_axes_face = "#ffffff"
+        rc_grid_color = "#b0b0b0"
+        rc_text_color = "#000000"
+        rc_spine_color = "#000000"
+        rc_grid_lw = 0.8_dp
+        rc_spine_lw = 0.8_dp
+        rc_legend_face = "#ffffff"
+        rc_legend_edge = "#cccccc"
+        rc_lw = default_linewidth
+        rc_grid = .false.
+        def_title = 12.0_dp
+        def_label = 10.0_dp
+        def_tick = 10.0_dp
+        def_legend = 10.0_dp
+
+        select case (lower(trim(name)))
+        case ("default", "classic")
+        case ("ggplot")
+            rc_axes_face = "#e5e5e5"
+            rc_legend_face = "#e5e5e5"
+            rc_grid_color = "#ffffff"
+            rc_grid_lw = 1.0_dp
+            rc_spine_color = "#ffffff"
+            rc_spine_lw = 1.0_dp
+            rc_text_color = "#555555"
+            rc_grid = .true.
+            def_title = 14.4_dp
+            def_label = 12.0_dp
+            call set_cycle(["#e24a33", "#348abd", "#988ed5", "#777777", &
+                            "#fbc15e", "#8eba42", "#ffb5b8"])
+        case ("seaborn", "seaborn-darkgrid")
+            rc_axes_face = "#eaeaf2"
+            rc_legend_face = "#eaeaf2"
+            rc_grid_color = "#ffffff"
+            rc_grid_lw = 1.0_dp
+            rc_spine_color = "#eaeaf2"
+            rc_text_color = "#262626"
+            rc_grid = .true.
+            call set_cycle(["#4c72b0", "#dd8452", "#55a868", "#c44e52", &
+                            "#8172b3", "#937860", "#da8bc3", "#8c8c8c", &
+                            "#ccb974", "#64b5cd"])
+        case ("fivethirtyeight")
+            rc_fig_face = "#f0f0f0"
+            rc_axes_face = "#f0f0f0"
+            rc_legend_face = "#f0f0f0"
+            rc_grid_color = "#cbcbcb"
+            rc_grid_lw = 1.0_dp
+            rc_spine_color = "#f0f0f0"
+            rc_text_color = "#555555"
+            rc_lw = 4.0_dp
+            rc_grid = .true.
+            call set_cycle(["#008fd5", "#fc4f30", "#e5ae38", "#6d904f", &
+                            "#8b8b8b", "#810f7c"])
+        case ("dark_background")
+            rc_fig_face = "#000000"
+            rc_axes_face = "#000000"
+            rc_legend_face = "#000000"
+            rc_legend_edge = "#ffffff"
+            rc_grid_color = "#555555"
+            rc_spine_color = "#ffffff"
+            rc_text_color = "#ffffff"
+            call set_cycle(["#8dd3c7", "#feffb3", "#bfbbd9", "#fa8174", &
+                            "#81b1d2", "#fdb462", "#b3de69", "#bc82bd", &
+                            "#ccebc4", "#ffed6f"])
+        case ("grayscale")
+            call set_cycle(["#000000", "#545454", "#7f7f7f", "#b0b0b0", &
+                            "#d4d4d4"])
+        case default
+            error stop "fplot: unknown style"
+        end select
+    end subroutine style_use
+
+    ! Individual rcParams, for the settings a user is most likely to want
+    ! without adopting a whole style.
+    subroutine rc(figsize, dpi, fontsize, linewidth, grid, facecolor, &
+                  axes_facecolor, grid_color, text_color, color_cycle)
+        real(dp), intent(in), optional :: figsize(2), dpi, fontsize, linewidth
+        logical, intent(in), optional :: grid
+        character(len=*), intent(in), optional :: facecolor, axes_facecolor
+        character(len=*), intent(in), optional :: grid_color, text_color
+        character(len=7), intent(in), optional :: color_cycle(:)
+
+        if (present(figsize)) then
+            fig_w_in = figsize(1)
+            fig_h_in = figsize(2)
+        end if
+        if (present(dpi)) fig_dpi = dpi
+        if (present(fontsize)) then
+            def_title = fontsize*1.2_dp
+            def_label = fontsize
+            def_tick = fontsize
+            def_legend = fontsize
+        end if
+        if (present(linewidth)) rc_lw = linewidth
+        if (present(grid)) rc_grid = grid
+        if (present(facecolor)) rc_fig_face = resolve_color(facecolor)
+        if (present(axes_facecolor)) rc_axes_face = resolve_color(axes_facecolor)
+        if (present(grid_color)) rc_grid_color = resolve_color(grid_color)
+        if (present(text_color)) then
+            rc_text_color = resolve_color(text_color)
+            rc_spine_color = rc_text_color
+        end if
+        if (present(color_cycle)) call set_cycle(color_cycle)
+    end subroutine rc
 
     ! Place the existing axes in the current margins. Called again whenever
     ! those margins move, so the axes objects themselves survive.
@@ -1542,7 +1699,7 @@ contains
         ax(cur_i)%series(is)%kind = kd
         ax(cur_i)%series(is)%marker = MARKER_NONE
         ax(cur_i)%series(is)%linestyle = LINE_SOLID
-        ax(cur_i)%series(is)%linewidth = default_linewidth
+        ax(cur_i)%series(is)%linewidth = rc_lw
         ax(cur_i)%series(is)%markersize = default_markersize
         ax(cur_i)%series(is)%label = ""
         if (present(label)) ax(cur_i)%series(is)%label = label
@@ -1551,7 +1708,7 @@ contains
         ax(cur_i)%series(is)%color = resolve_color(color, ca)
         if (ca >= 0.0_dp .and. .not. present(alpha)) ax(cur_i)%series(is)%alpha = ca
         if (len_trim(ax(cur_i)%series(is)%color) == 0) then
-            ax(cur_i)%series(is)%color = color_from_C(ax(cur_i)%color_cycle)
+            ax(cur_i)%series(is)%color = cycle_color(ax(cur_i)%color_cycle)
             ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
         end if
     end function new_shape_series
@@ -1594,7 +1751,7 @@ contains
             m = -1
             read (c(2:n), *, iostat=ios) m
             if (ios == 0 .and. m >= 0) then
-                col = color_from_C(m)
+                col = cycle_color(m)
                 return
             end if
         end if
@@ -1861,7 +2018,7 @@ contains
                 ax(cur_i)%series(is)%pcolor(i) = &
                     cmap_color(cmap_from_str(cmap), real(i - 1, dp) / real(max(n - 1, 1), dp))
             else
-                ax(cur_i)%series(is)%pcolor(i) = color_from_C(i - 1)
+                ax(cur_i)%series(is)%pcolor(i) = cycle_color(i - 1)
             end if
         end do
         if (present(labels)) then
@@ -2048,7 +2205,7 @@ contains
             if (kd == SERIES_BOX) then
                 ax(cur_i)%series(is)%color = "#000000"
             else
-                ax(cur_i)%series(is)%color = color_from_C(0)
+                ax(cur_i)%series(is)%color = cycle_color(0)
             end if
             ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
         end if
@@ -2295,7 +2452,7 @@ contains
         ax(cur_i)%texts(it)%ytail = yarr
         ax(cur_i)%texts(it)%fontsize = 10.0_dp
         ax(cur_i)%texts(it)%ha = "left"
-        ax(cur_i)%texts(it)%color = "#000000"
+        ax(cur_i)%texts(it)%color = rc_text_color
         if (present(fontsize)) ax(cur_i)%texts(it)%fontsize = fontsize
         if (present(ha)) ax(cur_i)%texts(it)%ha = ha
         col = resolve_color(color)
@@ -2321,7 +2478,7 @@ contains
         ax(ia)%series(is)%x(1:n) = x(1:n)
         ax(ia)%series(is)%y(1:n) = y(1:n)
         ax(ia)%series(is)%n = n
-        ax(ia)%series(is)%linewidth = default_linewidth
+        ax(ia)%series(is)%linewidth = rc_lw
         ax(ia)%series(is)%markersize = default_markersize
         ax(ia)%series(is)%label = ""
         ax(ia)%series(is)%marker = MARKER_NONE
@@ -2375,7 +2532,7 @@ contains
         if (present(label)) ax(ia)%series(is)%label = label
 
         if (len_trim(ax(ia)%series(is)%color) == 0) then
-            ax(ia)%series(is)%color = color_from_C(ax(ia)%color_cycle)
+            ax(ia)%series(is)%color = cycle_color(ax(ia)%color_cycle)
             ax(ia)%color_cycle = ax(ia)%color_cycle + 1
         end if
 
@@ -3588,7 +3745,7 @@ contains
         end do
         call clear_clip()
 
-        call b%draw_rect(bx, bt, bw, bh, pen("#000000", 0.8_dp))
+        call b%draw_rect(bx, bt, bw, bh, pen(rc_spine_color, rc_spine_lw))
 
         lo = a%img_vmin
         hi = a%img_vmax
@@ -3600,12 +3757,12 @@ contains
             call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
             call format_tick_to(v, .false., lbl, ln)
             call append_text(b, bx + bw + 7.0_dp, py + 3.5_dp, lbl(1:ln), &
-                             "left", a%ytick_size, "#000000")
+                             "left", a%ytick_size, rc_text_color)
         end do
 
         if (len_trim(a%cbar_label) > 0) then
             call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), trim(a%cbar_label), &
-                             "center", a%ylabel_size, "#000000", 90.0_dp)
+                             "center", a%ylabel_size, rc_text_color, 90.0_dp)
         end if
     end subroutine append_colorbar
 
@@ -3698,13 +3855,13 @@ contains
     subroutine append_tick(b, x1, y1, x2, y2)
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x1, y1, x2, y2
-        call append_line(b, x1, y1, x2, y2, "#000000", 0.8_dp, LINE_SOLID, 1.0_dp)
+        call append_line(b, x1, y1, x2, y2, rc_text_color, 0.8_dp, LINE_SOLID, 1.0_dp)
     end subroutine append_tick
 
     subroutine append_spine(b, x1, y1, x2, y2)
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x1, y1, x2, y2
-        call append_line(b, x1, y1, x2, y2, "#000000", 0.8_dp, LINE_SOLID, 1.0_dp)
+        call append_line(b, x1, y1, x2, y2, rc_spine_color, rc_spine_lw, LINE_SOLID, 1.0_dp)
     end subroutine append_spine
 
     ! A tick at (x, y) on a spine whose outward normal is (ox, oy). dir 1
@@ -3731,7 +3888,7 @@ contains
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x, y, fontsize, rot
         character(len=*), intent(in) :: s, anchor
-        call append_text(b, x, y, s, anchor, fontsize, "#000000", rot)
+        call append_text(b, x, y, s, anchor, fontsize, rc_text_color, rot)
     end subroutine append_tick_text
 
     subroutine tick_label(labeled, lab, i, v, sc, out, n)
@@ -3835,19 +3992,19 @@ contains
 
         ! axes face
         if (.not. clear .and. .not. a%patch_off) then
-            call append_rect(b, ax_l, ax_t, ax_w, ax_h, "#ffffff")
+            call append_rect(b, ax_l, ax_t, ax_w, ax_h, rc_axes_face)
         end if
 
         ! grid
         if (a%grid_on) then
             do i = 1, nxt
                 px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
-                call append_line(b, px, ax_t, px, ax_b, "#b0b0b0", 0.8_dp, &
+                call append_line(b, px, ax_t, px, ax_b, rc_grid_color, rc_grid_lw, &
                                  LINE_SOLID, 1.0_dp)
             end do
             do i = 1, nyt
                 py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
-                call append_line(b, ax_l, py, ax_r, py, "#b0b0b0", 0.8_dp, &
+                call append_line(b, ax_l, py, ax_r, py, rc_grid_color, rc_grid_lw, &
                                  LINE_SOLID, 1.0_dp)
             end do
         end if
@@ -3994,7 +4151,7 @@ contains
         ! them alone renders exactly as it did before they could be hidden.
         if (.not. a%frame_off) then
             if (all(a%spine)) then
-                call b%draw_rect(ax_l, ax_t, ax_w, ax_h, pen("#000000", 0.8_dp))
+                call b%draw_rect(ax_l, ax_t, ax_w, ax_h, pen(rc_spine_color, rc_spine_lw))
             else
                 if (a%spine(SPINE_LEFT)) call append_spine(b, ax_l, ax_t, ax_l, ax_b)
                 if (a%spine(SPINE_RIGHT)) call append_spine(b, ax_r, ax_t, ax_r, ax_b)
@@ -4061,7 +4218,7 @@ contains
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_b + xtick_gap(a) + 0.24_dp * a%xtick_size + 1.84_dp &
                              + 0.76_dp * a%xlabel_size, trim(a%xlabel), &
-                             "center", a%xlabel_size, "#000000")
+                             "center", a%xlabel_size, rc_text_color)
         end if
 
         if (len_trim(a%ylabel) > 0) then
@@ -4070,7 +4227,7 @@ contains
             mid = y_edge + y_out * (34.0_dp + 0.76_dp * (a%ylabel_size - LABEL_FONT) &
                                     + 1.15_dp * (a%ytick_size - TICK_FONT))
             call append_text(b, mid, 0.5_dp*(ax_t + ax_b), trim(a%ylabel), &
-                             "center", a%ylabel_size, "#000000", &
+                             "center", a%ylabel_size, rc_text_color, &
                              merge(-90.0_dp, 90.0_dp, a%y_right))
         end if
 
@@ -4078,7 +4235,7 @@ contains
         if (len_trim(a%title) > 0) then
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_t - 0.5_dp * a%title_size, trim(a%title), &
-                             "center", a%title_size, "#000000")
+                             "center", a%title_size, rc_text_color)
         end if
 
 
@@ -4117,12 +4274,12 @@ contains
                     call append_text(b, leg_x + 0.5_dp * leg_w, &
                                      leg_y + 4.0_dp + 0.5_dp * row_h + 3.5_dp, &
                                      trim(a%legend_title), "center", &
-                                     a%legend_size, "#000000")
+                                     a%legend_size, rc_text_color)
                 end if
                 if (a%legend_frame) then
-                    pnt = brush("#ffffff")
+                    pnt = brush(rc_legend_face)
                     pnt%stroked = .true.
-                    pnt%stroke_rgb = hex_rgb("#cccccc")
+                    pnt%stroke_rgb = hex_rgb(rc_legend_edge)
                     pnt%line_width = 0.8_dp
                     call b%draw_rect(leg_x, leg_y, leg_w, leg_h, pnt, 2.0_dp)
                 end if
@@ -4149,7 +4306,7 @@ contains
                     end if
                     call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, &
                                      trim(a%series(i)%label), &
-                                     "left", a%legend_size, "#000000")
+                                     "left", a%legend_size, rc_text_color)
                 end do
             end if
         end if
@@ -4173,7 +4330,7 @@ contains
         clear = .false.
         if (present(transparent)) clear = transparent
         face = resolve_color(facecolor)
-        if (len_trim(face) == 0) face = "#ffffff"
+        if (len_trim(face) == 0) face = rc_fig_face
         call clear_clip()
 
         W = fig_w_in*PT_PER_IN
@@ -4226,7 +4383,7 @@ contains
         if (len_trim(fig_suptitle) > 0) then
             call append_text(b, 0.5_dp*W, (1.0_dp - SUPTITLE_Y)*H + 4.2_dp, &
                              trim(fig_suptitle), "center", fig_suptitle_size, &
-                             "#000000")
+                             rc_text_color)
         end if
 
         call b%close_canvas()
