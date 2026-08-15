@@ -4,8 +4,13 @@ program test_plots
 
     integer, parameter :: n = 100
     integer, parameter :: m = 20
+    integer, parameter :: mk = 6
+    integer, parameter :: n_marks = 11
     real(dp) :: x(n), y(n), y2(n), y3(n)
     real(dp) :: xl(m), yl(m), yl2(m)
+    real(dp) :: xm(mk), ym(mk)
+    character(len=1), parameter :: mark_codes(n_marks) = &
+        ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
     integer :: i
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
@@ -152,6 +157,22 @@ program test_plots
     call suptitle("fplot 2x2 subplots")
     call savefig("tests/out/subplots_2x2.svg")
     print *, "wrote tests/out/subplots_2x2.svg"
+
+    ! 9) markers gallery (one row per marker code)
+    call clf()
+    do i = 1, mk
+        xm(i) = real(i, dp)
+        ym(i) = 1.0_dp
+    end do
+    do i = 1, n_marks
+        call plot(xm, ym * real(i, dp), marker=mark_codes(i), linestyle="None", &
+                  label=mark_codes(i))
+    end do
+    call title("Markers")
+    call xlim(0.0_dp, real(mk + 1, dp))
+    call ylim(0.0_dp, real(n_marks + 1, dp))
+    call savefig("tests/out/markers_gallery.svg")
+    print *, "wrote tests/out/markers_gallery.svg"
 
     print *, "All test plots written."
 end program test_plots

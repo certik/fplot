@@ -32,6 +32,7 @@ module fplot
     ! Mean advance width of DejaVu Sans at the 10 pt legend font size, used
     ! to size the legend box to its labels.
     real(dp), parameter :: LEGEND_CHAR_W = 5.6_dp
+    real(dp), parameter :: PI = 3.141592653589793_dp
 
     type :: series_t
         integer :: n = 0
@@ -306,10 +307,9 @@ contains
 
         if (present(marker)) then
             select case (trim(marker))
-            case ("o"); ax(ia)%series(is)%marker = MARKER_CIRCLE
-            case ("x"); ax(ia)%series(is)%marker = MARKER_X
-            case ("."); ax(ia)%series(is)%marker = MARKER_POINT
             case ("None", "none", ""); ax(ia)%series(is)%marker = MARKER_NONE
+            case default
+                ax(ia)%series(is)%marker = marker_from_char(marker(1:1))
             end select
         end if
 
@@ -493,6 +493,142 @@ contains
         end select
     end subroutine append_dash
 
+    ! Emit a stroked open path through the given points, e.g. an "x" or "+".
+    subroutine append_stroke_path(b, px, py, np, color, lw)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: px(:), py(:)
+        integer, intent(in) :: np
+        character(len=*), intent(in) :: color
+        real(dp), intent(in) :: lw
+        integer :: i
+        call builder_append(b, '<path d="')
+        do i = 1, np
+            if (i == 1) then
+                call builder_append(b, "M ")
+            else
+                call builder_append(b, " L ")
+            end if
+            call append_num(b, px(i))
+            call builder_append(b, " ")
+            call append_num(b, py(i))
+        end do
+        call builder_append(b, '" stroke="')
+        call builder_append(b, color)
+        call builder_append(b, '" stroke-width="')
+        call append_num(b, lw)
+        call builder_append(b, '" fill="none"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_stroke_path
+
+    ! Emit a filled closed polygon, used by the shaped markers and by
+    ! fill_between.
+    subroutine append_polygon(b, px, py, np, color, alpha)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: px(:), py(:)
+        integer, intent(in) :: np
+        character(len=*), intent(in) :: color
+        real(dp), intent(in) :: alpha
+        integer :: i
+        call builder_append(b, '<polygon points="')
+        do i = 1, np
+            if (i > 1) call builder_append(b, " ")
+            call append_num(b, px(i))
+            call builder_append(b, ",")
+            call append_num(b, py(i))
+        end do
+        call builder_append(b, '" fill="')
+        call builder_append(b, color)
+        if (alpha < 1.0_dp) then
+            call builder_append(b, '" fill-opacity="')
+            call append_num(b, alpha)
+        end if
+        call builder_append(b, '"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_polygon
+
+    ! Draw one marker of kind mk centred at (cx, cy), sized like a matplotlib
+    ! marker of markersize ms.
+    subroutine append_marker(b, mk, cx, cy, ms, color)
+        type(svg_builder), intent(inout) :: b
+        integer, intent(in) :: mk
+        real(dp), intent(in) :: cx, cy, ms
+        character(len=*), intent(in) :: color
+        real(dp) :: r, xs(11), ys(11)
+        integer :: i
+        real(dp) :: ang
+
+        select case (mk)
+        case (MARKER_CIRCLE, MARKER_POINT)
+            if (mk == MARKER_POINT) then
+                r = 0.5_dp * ms * 0.35_dp
+            else
+                r = 0.5_dp * ms * 0.75_dp
+            end if
+            call builder_append(b, '<circle cx="')
+            call append_num(b, cx)
+            call builder_append(b, '" cy="')
+            call append_num(b, cy)
+            call builder_append(b, '" r="')
+            call append_num(b, r)
+            call builder_append(b, '" fill="')
+            call builder_append(b, color)
+            if (mk == MARKER_CIRCLE) then
+                call builder_append(b, '" stroke="')
+                call builder_append(b, color)
+                call builder_append(b, '" stroke-width="1"/>')
+            else
+                call builder_append(b, '"/>')
+            end if
+            call builder_append(b, new_line("a"))
+        case (MARKER_X)
+            r = 0.5_dp * ms * 0.7_dp
+            call append_stroke_path(b, [cx - r, cx + r], [cy - r, cy + r], 2, color, 1.5_dp)
+            call append_stroke_path(b, [cx - r, cx + r], [cy + r, cy - r], 2, color, 1.5_dp)
+        case (MARKER_PLUS)
+            r = 0.5_dp * ms * 0.75_dp
+            call append_stroke_path(b, [cx - r, cx + r], [cy, cy], 2, color, 1.5_dp)
+            call append_stroke_path(b, [cx, cx], [cy - r, cy + r], 2, color, 1.5_dp)
+        case (MARKER_SQUARE)
+            r = 0.5_dp * ms * 0.75_dp
+            call append_polygon(b, [cx - r, cx + r, cx + r, cx - r], &
+                                [cy - r, cy - r, cy + r, cy + r], 4, color, 1.0_dp)
+        case (MARKER_DIAMOND)
+            r = 0.5_dp * ms * 0.75_dp
+            call append_polygon(b, [cx, cx + r, cx, cx - r], &
+                                [cy - r, cy, cy + r, cy], 4, color, 1.0_dp)
+        case (MARKER_TRI_UP)
+            r = 0.5_dp * ms * 0.85_dp
+            call append_polygon(b, [cx, cx + r, cx - r], &
+                                [cy - r, cy + r, cy + r], 3, color, 1.0_dp)
+        case (MARKER_TRI_DOWN)
+            r = 0.5_dp * ms * 0.85_dp
+            call append_polygon(b, [cx, cx + r, cx - r], &
+                                [cy + r, cy - r, cy - r], 3, color, 1.0_dp)
+        case (MARKER_TRI_LEFT)
+            r = 0.5_dp * ms * 0.85_dp
+            call append_polygon(b, [cx - r, cx + r, cx + r], &
+                                [cy, cy - r, cy + r], 3, color, 1.0_dp)
+        case (MARKER_TRI_RIGHT)
+            r = 0.5_dp * ms * 0.85_dp
+            call append_polygon(b, [cx + r, cx - r, cx - r], &
+                                [cy, cy - r, cy + r], 3, color, 1.0_dp)
+        case (MARKER_STAR)
+            ! Five-pointed star: alternate outer and inner vertices.
+            r = 0.5_dp * ms * 0.95_dp
+            do i = 1, 10
+                ang = -0.5_dp * PI + real(i - 1, dp) * PI / 5.0_dp
+                if (mod(i, 2) == 1) then
+                    xs(i) = cx + r * cos(ang)
+                    ys(i) = cy + r * sin(ang)
+                else
+                    xs(i) = cx + 0.4_dp * r * cos(ang)
+                    ys(i) = cy + 0.4_dp * r * sin(ang)
+                end if
+            end do
+            call append_polygon(b, xs, ys, 10, color, 1.0_dp)
+        end select
+    end subroutine append_marker
+
     subroutine render_axes(b, a, idx, W, H)
         type(svg_builder), intent(inout) :: b
         type(axes_t), intent(in) :: a
@@ -628,56 +764,8 @@ contains
                     if (a%yscale == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
                     px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
                     py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog)
-                    select case (a%series(i)%marker)
-                    case (MARKER_CIRCLE)
-                        r = 0.5_dp * ms * 0.75_dp
-                        call builder_append(b, '<circle cx="')
-                        call append_num(b, px)
-                        call builder_append(b, '" cy="')
-                        call append_num(b, py)
-                        call builder_append(b, '" r="')
-                        call append_num(b, r)
-                        call builder_append(b, '" fill="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '" stroke="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '" stroke-width="1"/>')
-                        call builder_append(b, new_line("a"))
-                    case (MARKER_POINT)
-                        r = 0.5_dp * ms * 0.35_dp
-                        call builder_append(b, '<circle cx="')
-                        call append_num(b, px)
-                        call builder_append(b, '" cy="')
-                        call append_num(b, py)
-                        call builder_append(b, '" r="')
-                        call append_num(b, r)
-                        call builder_append(b, '" fill="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '"/>')
-                        call builder_append(b, new_line("a"))
-                    case (MARKER_X)
-                        r = 0.5_dp * ms * 0.7_dp
-                        call builder_append(b, '<path d="M ')
-                        call append_num(b, px - r)
-                        call builder_append(b, " ")
-                        call append_num(b, py - r)
-                        call builder_append(b, " L ")
-                        call append_num(b, px + r)
-                        call builder_append(b, " ")
-                        call append_num(b, py + r)
-                        call builder_append(b, " M ")
-                        call append_num(b, px - r)
-                        call builder_append(b, " ")
-                        call append_num(b, py + r)
-                        call builder_append(b, " L ")
-                        call append_num(b, px + r)
-                        call builder_append(b, " ")
-                        call append_num(b, py - r)
-                        call builder_append(b, '" stroke="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '" stroke-width="1.5" fill="none"/>')
-                        call builder_append(b, new_line("a"))
-                    end select
+                    call append_marker(b, a%series(i)%marker, px, py, ms, &
+                                       trim(a%series(i)%color))
                 end do
             end if
         end do
@@ -843,46 +931,10 @@ contains
                         call builder_append(b, new_line("a"))
                     end if
                     mid = leg_x + 18.0_dp
-                    if (a%series(i)%marker == MARKER_CIRCLE) then
-                        call builder_append(b, '<circle cx="')
-                        call append_num(b, mid)
-                        call builder_append(b, '" cy="')
-                        call append_num(b, py)
-                        call builder_append(b, '" r="3" fill="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '"/>')
-                        call builder_append(b, new_line("a"))
-                    else if (a%series(i)%marker == MARKER_POINT) then
-                        call builder_append(b, '<circle cx="')
-                        call append_num(b, mid)
-                        call builder_append(b, '" cy="')
-                        call append_num(b, py)
-                        call builder_append(b, '" r="1.5" fill="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '"/>')
-                        call builder_append(b, new_line("a"))
-                    else if (a%series(i)%marker == MARKER_X) then
-                        r = 3.0_dp
-                        call builder_append(b, '<path d="M ')
-                        call append_num(b, mid - r)
-                        call builder_append(b, " ")
-                        call append_num(b, py - r)
-                        call builder_append(b, " L ")
-                        call append_num(b, mid + r)
-                        call builder_append(b, " ")
-                        call append_num(b, py + r)
-                        call builder_append(b, " M ")
-                        call append_num(b, mid - r)
-                        call builder_append(b, " ")
-                        call append_num(b, py + r)
-                        call builder_append(b, " L ")
-                        call append_num(b, mid + r)
-                        call builder_append(b, " ")
-                        call append_num(b, py - r)
-                        call builder_append(b, '" stroke="')
-                        call builder_append(b, trim(a%series(i)%color))
-                        call builder_append(b, '" stroke-width="1.5" fill="none"/>')
-                        call builder_append(b, new_line("a"))
+                    if (a%series(i)%marker /= MARKER_NONE) then
+                        call append_marker(b, a%series(i)%marker, mid, py, &
+                                           a%series(i)%markersize, &
+                                           trim(a%series(i)%color))
                     end if
                     call xml_escape_to(a%series(i)%label, esc, en)
                     call builder_append(b, '<text x="')
