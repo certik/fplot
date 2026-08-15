@@ -74,6 +74,8 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "surface3d",
+    "line3d",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -841,6 +843,27 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 75 a 3D surface
+    fig = plt.figure(figsize=(6.4, 4.8))
+    ax = fig.add_subplot(projection="3d")
+    s3 = np.linspace(-3, 3, 31)
+    sx, sy = np.meshgrid(s3, s3)
+    ax.plot_surface(sx, sy, np.sin(np.sqrt(sx ** 2 + sy ** 2)))
+    ax.set_title("surface3d")
+    save(fig, "surface3d")
+
+    # 76 a 3D line and a 3D scatter
+    fig = plt.figure(figsize=(6.4, 4.8))
+    ax = fig.add_subplot(projection="3d")
+    t3 = np.linspace(0, 4 * np.pi, 100)
+    ax.plot(np.cos(t3), np.sin(t3), t3 / (4 * np.pi))
+    ax.scatter(np.cos(t3[::10]), np.sin(t3[::10]), t3[::10] / (4 * np.pi), c="r")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    ax.set_title("line3d")
+    save(fig, "line3d")
 
     # 74 an animation. matplotlib's own PillowWriter is exactly this: every
     # frame saved as a PNG and handed to Pillow, which quantizes and writes

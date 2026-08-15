@@ -12,6 +12,7 @@ module fplot
     use fplot_backend_pdf
     use fplot_backend_eps
     use fplot_gif, only: gif_encode
+    use fplot_proj3d
     use fplot_backend_png
     use fplot_mathtext
     use fplot_dates
@@ -38,6 +39,7 @@ module fplot
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
+    public :: axes3d, plot3d, scatter3d, plot_surface, view_init, zlabel, zlim
     public :: subplot, subplot2grid, suptitle, subplots_adjust, tight_layout
     public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
@@ -125,6 +127,11 @@ module fplot
     ! ARROWHEAD: x, y hold the tips and qu, qv the direction. Drawn at a
     ! fixed size in points, which is what streamplot wants.
     integer, parameter :: SERIES_ARROWHEAD = 17
+    ! 3D: LINE3D and SCATTER3D carry a z alongside x and y; SURFACE carries
+    ! a grid, drawn as one quadrilateral per cell.
+    integer, parameter :: SERIES_LINE3D = 18
+    integer, parameter :: SERIES_SCATTER3D = 19
+    integer, parameter :: SERIES_SURFACE = 20
     ! The most points one streamline may have.
     integer, parameter :: MAX_STREAM_PTS = 20000
 
@@ -186,6 +193,10 @@ module fplot
         character(len=16) :: bar_fmt = ""
         character(len=7) :: edgecolor = "#ffffff"
         real(dp) :: edgewidth = 0.5_dp
+        ! 3D: the third coordinate of a line or scatter, and the grid of a
+        ! surface, in the row = y, column = x order the 2D grids use.
+        real(dp), allocatable :: z(:)
+        real(dp), allocatable :: zg(:, :)
         character(len=128) :: label = ""
     end type series_t
 
@@ -313,6 +324,13 @@ module fplot
         real(dp) :: xroom(2) = 0.0_dp
         ! Whether that room is a sticky edge, taking no margin beyond it.
         logical :: room_sticks = .false.
+        ! A 3D axes. The camera angles are matplotlib's defaults and the z
+        ! limits behave like the other two, except that z takes no margin.
+        logical :: is3d = .false.
+        real(dp) :: elev = 30.0_dp, azim = -60.0_dp
+        logical :: zlim_set = .false.
+        real(dp) :: zmin_user = 0.0_dp, zmax_user = 1.0_dp
+        character(len=256) :: zlabel = ""
         logical :: xaxis_off = .false., yaxis_off = .false.
         logical :: patch_off = .false.
         real(dp) :: aspect = 0.0_dp
@@ -3198,6 +3216,108 @@ contains
             e(n + 1) = v(n) + 0.5_dp*(v(n) - v(n - 1))
         end if
     end subroutine cell_edges
+
+    ! ------------------------------------------------------------------
+    ! 3D axes. matplotlib picks the projection when the axes is created;
+    ! with one current axes the same thing is said by turning that axes
+    ! into a 3D one, and any of the 3D plotting calls does it implicitly.
+    ! ------------------------------------------------------------------
+
+    subroutine axes3d(elev, azim)
+        real(dp), intent(in), optional :: elev, azim
+
+        call ensure_fig()
+        ax(cur_i)%is3d = .true.
+        ! A 3D axes is gridded by default (rcParams axes3d.grid), unlike a
+        ! 2D one.
+        ax(cur_i)%grid_on = .true.
+        if (present(elev)) ax(cur_i)%elev = elev
+        if (present(azim)) ax(cur_i)%azim = azim
+    end subroutine axes3d
+
+    subroutine view_init(elev, azim)
+        real(dp), intent(in), optional :: elev, azim
+
+        call axes3d(elev, azim)
+    end subroutine view_init
+
+    subroutine zlabel(s)
+        character(len=*), intent(in) :: s
+
+        call ensure_fig()
+        ax(cur_i)%zlabel = s
+    end subroutine zlabel
+
+    subroutine zlim(lo, hi)
+        real(dp), intent(in) :: lo, hi
+
+        call ensure_fig()
+        ax(cur_i)%zlim_set = .true.
+        ax(cur_i)%zmin_user = lo
+        ax(cur_i)%zmax_user = hi
+    end subroutine zlim
+
+    subroutine plot3d(x, y, z, fmt, label, lw, color, marker, linestyle, alpha)
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        integer :: is, n
+
+        call axes3d()
+        call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle, alpha)
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        n = min(ax(cur_i)%series(is)%n, size(z))
+        ax(cur_i)%series(is)%n = n
+        ax(cur_i)%series(is)%kind = SERIES_LINE3D
+        allocate (ax(cur_i)%series(is)%z(n))
+        ax(cur_i)%series(is)%z(1:n) = z(1:n)
+    end subroutine plot3d
+
+    subroutine scatter3d(x, y, z, s, c, marker, label, alpha)
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        real(dp), intent(in), optional :: s, alpha
+        character(len=*), intent(in), optional :: c, marker, label
+        integer :: is, n
+
+        call axes3d()
+        call scatter(x, y, s, c, marker, label, alpha)
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        n = min(ax(cur_i)%series(is)%n, size(z))
+        ax(cur_i)%series(is)%n = n
+        ax(cur_i)%series(is)%kind = SERIES_SCATTER3D
+        allocate (ax(cur_i)%series(is)%z(n))
+        ax(cur_i)%series(is)%z(1:n) = z(1:n)
+    end subroutine scatter3d
+
+    ! z is indexed (row, column) = (y, x), as the 2D grids are.
+    subroutine plot_surface(x, y, z, color, alpha)
+        real(dp), intent(in) :: x(:), y(:), z(:, :)
+        character(len=*), intent(in), optional :: color
+        real(dp), intent(in), optional :: alpha
+        integer :: is, nx, ny
+
+        call axes3d()
+        ny = size(z, 1)
+        nx = size(z, 2)
+        if (nx < 2 .or. ny < 2) return
+        if (size(x) < nx .or. size(y) < ny) return
+        call push_series(ax(cur_i), is)
+        ax(cur_i)%series(is)%kind = SERIES_SURFACE
+        ax(cur_i)%series(is)%n = 0
+        allocate (ax(cur_i)%series(is)%x(nx), ax(cur_i)%series(is)%y(ny))
+        allocate (ax(cur_i)%series(is)%zg(ny, nx))
+        ax(cur_i)%series(is)%x(1:nx) = x(1:nx)
+        ax(cur_i)%series(is)%y(1:ny) = y(1:ny)
+        ax(cur_i)%series(is)%zg = z(1:ny, 1:nx)
+        ax(cur_i)%series(is)%color = resolve_color(color)
+        if (len_trim(ax(cur_i)%series(is)%color) == 0) then
+            ax(cur_i)%series(is)%color = cycle_color(ax(cur_i)%color_cycle)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
+        end if
+        if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
+    end subroutine plot_surface
 
     subroutine contour(z, levels, cmap, extent)
         real(dp), intent(in) :: z(:, :)
@@ -6675,6 +6795,438 @@ contains
                              "center", a%title_size, rc_text_color)
     end subroutine render_polar
 
+    ! ------------------------------------------------------------------
+    ! A 3D axes. The camera lives in fplot_proj3d; what is here is what
+    ! the camera is pointed at: the limits, the three back panes and their
+    ! grids, the three axis lines with ticks and labels, and the data.
+    !
+    ! There is no depth buffer, only the painter's algorithm: faces are
+    ! sorted back to front and drawn in that order. mplot3d does the same
+    ! and has the same limitation, that surfaces which intersect one
+    ! another come out wrong.
+    ! ------------------------------------------------------------------
+
+    ! Data bounds, then matplotlib's 3D margins: five percent in x and y,
+    ! none in z, and then the whole box widened by 25/24 about its centre,
+    ! which is the compensation mplot3d applies to every 3D axes.
+    subroutine limits3d(a, lims)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(out) :: lims(6)
+        real(dp), parameter :: MARG(3) = [0.05_dp, 0.05_dp, 0.0_dp]
+        real(dp) :: lo(3), hi(3), c, d
+        logical :: have
+        integer :: i, k
+
+        lo = huge(1.0_dp)
+        hi = -huge(1.0_dp)
+        have = .false.
+        do i = 1, a%n_series
+            select case (a%series(i)%kind)
+            case (SERIES_LINE3D, SERIES_SCATTER3D)
+                do k = 1, a%series(i)%n
+                    lo(1) = min(lo(1), a%series(i)%x(k))
+                    hi(1) = max(hi(1), a%series(i)%x(k))
+                    lo(2) = min(lo(2), a%series(i)%y(k))
+                    hi(2) = max(hi(2), a%series(i)%y(k))
+                    lo(3) = min(lo(3), a%series(i)%z(k))
+                    hi(3) = max(hi(3), a%series(i)%z(k))
+                end do
+                have = .true.
+            case (SERIES_SURFACE)
+                lo(1) = min(lo(1), minval(a%series(i)%x))
+                hi(1) = max(hi(1), maxval(a%series(i)%x))
+                lo(2) = min(lo(2), minval(a%series(i)%y))
+                hi(2) = max(hi(2), maxval(a%series(i)%y))
+                lo(3) = min(lo(3), minval(a%series(i)%zg))
+                hi(3) = max(hi(3), maxval(a%series(i)%zg))
+                have = .true.
+            end select
+        end do
+        if (.not. have) then
+            lo = 0.0_dp
+            hi = 1.0_dp
+        end if
+
+        do i = 1, 3
+            if (hi(i) <= lo(i)) then
+                c = 0.5_dp*(lo(i) + hi(i))
+                lo(i) = c - 0.5_dp
+                hi(i) = c + 0.5_dp
+            end if
+            d = hi(i) - lo(i)
+            lo(i) = lo(i) - MARG(i)*d
+            hi(i) = hi(i) + MARG(i)*d
+            c = 0.5_dp*(lo(i) + hi(i))
+            lo(i) = c + (lo(i) - c)*25.0_dp/24.0_dp
+            hi(i) = c + (hi(i) - c)*25.0_dp/24.0_dp
+            lims(2*i - 1) = lo(i)
+            lims(2*i) = hi(i)
+        end do
+
+        ! Limits set by hand get none of that: they are taken as given.
+        if (a%xlim_set) lims(1:2) = [a%xmin_user, a%xmax_user]
+        if (a%ylim_set) lims(3:4) = [a%ymin_user, a%ymax_user]
+        if (a%zlim_set) lims(5:6) = [a%zmin_user, a%zmax_user]
+    end subroutine limits3d
+
+    ! A data point to device points, with the projected depth alongside.
+    subroutine dev3(M, bl, bt, side, x, y, z, ux, uy, uz)
+        real(dp), intent(in) :: M(4, 4), bl, bt, side, x, y, z
+        real(dp), intent(out) :: ux, uy, uz
+        real(dp) :: px, py, span
+
+        call proj3d_point(M, x, y, z, px, py, uz)
+        span = PROJ3D_VIEW_MAX - PROJ3D_VIEW_MIN
+        ux = bl + (px - PROJ3D_VIEW_MIN)/span*side
+        uy = bt + (PROJ3D_VIEW_MAX - py)/span*side
+    end subroutine dev3
+
+    ! Push a point away from the middle of the box along every axis but
+    ! one, which is how mplot3d keeps tick and axis labels clear of the box.
+    pure function move_out(p, centers, d, keep) result(q)
+        real(dp), intent(in) :: p(3), centers(3), d(3)
+        integer, intent(in) :: keep
+        real(dp) :: q(3)
+        integer :: j
+
+        q = p
+        do j = 1, 3
+            if (j == keep) cycle
+            if (p(j) < centers(j)) then
+                q(j) = p(j) - d(j)
+            else
+                q(j) = p(j) + d(j)
+            end if
+        end do
+    end function move_out
+
+    ! Order 1..n so that key decreases: the painter's algorithm needs the
+    ! far things first. Insertion sort, because n is a few thousand faces
+    ! at worst and the sort is not what costs.
+    pure subroutine order_far_first(key, n, idx)
+        real(dp), intent(in) :: key(:)
+        integer, intent(in) :: n
+        integer, intent(out) :: idx(:)
+        integer :: i, j, t
+
+        do i = 1, n
+            idx(i) = i
+        end do
+        do i = 2, n
+            t = idx(i)
+            j = i - 1
+            do while (j >= 1)
+                if (key(idx(j)) >= key(t)) exit
+                idx(j + 1) = idx(j)
+                j = j - 1
+            end do
+            idx(j + 1) = t
+        end do
+    end subroutine order_far_first
+
+    subroutine render_axes3d(b, a, ax_l, ax_r, ax_b, ax_t)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: ax_l, ax_r, ax_b, ax_t
+        ! The six faces of the box as corner numbers: the two x faces, then
+        ! the two y faces, then the two z faces.
+        integer, parameter :: PLANES(4, 6) = reshape([ &
+                                             1, 4, 8, 5, 2, 3, 7, 6, &
+                                             1, 2, 6, 5, 4, 3, 7, 8, &
+                                             1, 2, 3, 4, 5, 6, 7, 8], [4, 6])
+        ! The rcParams axes3d.*axis.panecolor greys.
+        character(len=7), parameter :: PANE(3) = ["#f2f2f2", "#e6e6e6", "#ececec"]
+        ! Which coordinate a tick mark runs along, per axis.
+        integer, parameter :: TICKDIR(3) = [2, 1, 1]
+        ! The two coordinates that pin each axis line to an edge of the box.
+        integer, parameter :: JUG(2, 3) = reshape([2, 1, 1, 2, 1, 3], [2, 3])
+        real(dp) :: lims(6), M(4, 4), side, bl, bt
+        real(dp) :: ccx(8), ccy(8), ccz(8), dx(8), dy(8), dz(8)
+        real(dp) :: mins(3), maxs(3), centers(3), deltas(3), minmax(3), maxmin(3)
+        real(dp) :: e1(3), e2(3), p(3), q(3), lab_d(3), tick_d(3)
+        real(dp) :: gx(3), gy(3), gd(3), ex(2), ey(2), tx(2), ty(2), td2
+        real(dp) :: tk(MAX_TICKS, 3), none(MAX_TICKS)
+        integer :: ntk(3), dec(3)
+        real(dp) :: dpp, tdel, t_out, t_in, ang, fs
+        logical :: highs(3)
+        integer :: i, k, j1, j2, pl, td, ln, du
+        character(len=64) :: lbl
+        character(len=256) :: axl
+        type(scale_t) :: lin
+
+        ! mplot3d squares the axes box before drawing, so that the picture
+        ! does not stretch when the figure does.
+        side = min(ax_r - ax_l, ax_b - ax_t)
+        bl = 0.5_dp*(ax_l + ax_r) - 0.5_dp*side
+        bt = 0.5_dp*(ax_t + ax_b) - 0.5_dp*side
+
+        call limits3d(a, lims)
+        call proj3d_matrix(lims, a%elev, a%azim, M)
+        do i = 1, 3
+            mins(i) = lims(2*i - 1)
+            maxs(i) = lims(2*i)
+        end do
+        centers = 0.5_dp*(mins + maxs)
+        deltas = 0.08_dp*(maxs - mins)
+
+        ccx = [lims(1), lims(2), lims(2), lims(1), lims(1), lims(2), lims(2), lims(1)]
+        ccy = [lims(3), lims(3), lims(4), lims(4), lims(3), lims(3), lims(4), lims(4)]
+        ccz = [lims(5), lims(5), lims(5), lims(5), lims(6), lims(6), lims(6), lims(6)]
+        do k = 1, 8
+            call dev3(M, bl, bt, side, ccx(k), ccy(k), ccz(k), dx(k), dy(k), dz(k))
+        end do
+
+        ! Of each pair of parallel faces, the one further from the camera is
+        ! the one that gets a pane and a grid.
+        do i = 1, 3
+            highs(i) = sum(dz(PLANES(:, 2*i - 1)))/4.0_dp < sum(dz(PLANES(:, 2*i)))/4.0_dp
+            if (highs(i)) then
+                minmax(i) = maxs(i)
+                maxmin(i) = mins(i)
+            else
+                minmax(i) = mins(i)
+                maxmin(i) = maxs(i)
+            end if
+        end do
+
+        do i = 1, 3
+            pl = 2*i - 1
+            if (highs(i)) pl = 2*i
+            call append_polygon(b, dx(PLANES(:, pl)), dy(PLANES(:, pl)), 4, &
+                                PANE(i), 0.5_dp, .true.)
+        end do
+
+        ! x and y run across the picture and z up it, so x and y are spaced
+        ! as a horizontal axis is and z as a vertical one.
+        none = 0.0_dp
+        call axis_ticks(a%n_xticks, a%xtick_pos, lims(1), lims(2), lin, &
+                        tick_space(side, a%xtick_size, .true.), .false., tk(:, 1), ntk(1), du)
+        call axis_ticks(a%n_yticks, a%ytick_pos, lims(3), lims(4), lin, &
+                        tick_space(side, a%ytick_size, .true.), .false., tk(:, 2), ntk(2), du)
+        call axis_ticks(0, none, lims(5), lims(6), lin, &
+                        tick_space(side, a%xtick_size, .false.), .false., tk(:, 3), ntk(3), du)
+        do i = 1, 3
+            dec(i) = axis_decimals(tk(:, i), ntk(i), lin)
+        end do
+
+        if (a%grid_on) then
+            do i = 1, 3
+                ! A grid line runs from the far edge of one pane, through
+                ! the corner where the two panes meet, to the far edge of
+                ! the other.
+                j1 = mod(i, 3) + 1
+                j2 = mod(i + 1, 3) + 1
+                do k = 1, ntk(i)
+                    if (tk(k, i) < mins(i) .or. tk(k, i) > maxs(i)) cycle
+                    p = minmax
+                    p(i) = tk(k, i)
+                    q = p
+                    q(j1) = maxmin(j1)
+                    call dev3(M, bl, bt, side, q(1), q(2), q(3), gx(1), gy(1), gd(1))
+                    call dev3(M, bl, bt, side, p(1), p(2), p(3), gx(2), gy(2), gd(2))
+                    q = p
+                    q(j2) = maxmin(j2)
+                    call dev3(M, bl, bt, side, q(1), q(2), q(3), gx(3), gy(3), gd(3))
+                    call append_stroke_path(b, gx, gy, 3, rc_grid_color, rc_grid_lw, 1.0_dp)
+                end do
+            end do
+        end if
+
+        ! What one point is worth in data units. A 3D axes has no one
+        ! direction to measure a point along, so mplot3d averages the two
+        ! sides of the box, and so do we.
+        dpp = 48.0_dp/(2.0_dp*side)
+        tick_d = (3.5_dp + 8.0_dp)*dpp*deltas
+        lab_d = (LABEL_PAD + 21.0_dp)*dpp*deltas
+
+        do i = 1, 3
+            fs = a%xtick_size
+            e1 = minmax
+            e1(JUG(1, i)) = maxmin(JUG(1, i))
+            e2 = e1
+            e2(JUG(2, i)) = maxmin(JUG(2, i))
+            call dev3(M, bl, bt, side, e1(1), e1(2), e1(3), ex(1), ey(1), td2)
+            call dev3(M, bl, bt, side, e2(1), e2(2), e2(3), ex(2), ey(2), td2)
+            call append_stroke_path(b, ex, ey, 2, rc_spine_color, rc_spine_lw, 1.0_dp)
+
+            td = TICKDIR(i)
+            tdel = deltas(td)
+            if (.not. highs(td)) tdel = -tdel
+            t_out = e1(td) + 0.1_dp*tdel
+            t_in = e1(td) - 0.2_dp*tdel
+
+            do k = 1, ntk(i)
+                if (tk(k, i) < mins(i) .or. tk(k, i) > maxs(i)) cycle
+                q = e1
+                q(i) = tk(k, i)
+                q(td) = t_out
+                call dev3(M, bl, bt, side, q(1), q(2), q(3), tx(1), ty(1), td2)
+                q(td) = t_in
+                call dev3(M, bl, bt, side, q(1), q(2), q(3), tx(2), ty(2), td2)
+                call append_stroke_path(b, tx, ty, 2, rc_spine_color, 0.8_dp, 1.0_dp)
+
+                q(td) = e1(td)
+                q = move_out(q, centers, tick_d, i)
+                call dev3(M, bl, bt, side, q(1), q(2), q(3), tx(1), ty(1), td2)
+                ! All three axes label their ticks the way an x axis does:
+                ! centred, and hanging from the top of the text.
+                call format_tick_fixed(tk(k, i), dec(i), lbl, ln)
+                call append_text(b, tx(1), ty(1) + 0.76_dp*fs, lbl(1:ln), &
+                                 "center", fs, rc_text_color)
+            end do
+
+            axl = ""
+            if (i == 1) axl = a%xlabel
+            if (i == 2) axl = a%ylabel
+            if (i == 3) axl = a%zlabel
+            if (len_trim(axl) == 0) cycle
+            q = move_out(0.5_dp*(e1 + e2), centers, lab_d, i)
+            call dev3(M, bl, bt, side, q(1), q(2), q(3), tx(1), ty(1), td2)
+            ! A short label stays upright; a long one is turned to lie along
+            ! its own axis, which is where matplotlib draws the line too.
+            ang = 0.0_dp
+            if (len_trim(axl) > 4) ang = atan2(ey(1) - ey(2), ex(2) - ex(1))*180.0_dp/PI
+            call append_text(b, tx(1), ty(1) + 0.36_dp*a%xlabel_size, trim(axl), &
+                             "center", a%xlabel_size, rc_text_color, ang)
+        end do
+
+        call render_series3d(b, a, M, bl, bt, side)
+
+        if (len_trim(a%title) > 0) &
+            call append_text(b, bl + 0.5_dp*side, bt - 0.5_dp*a%title_size, &
+                             trim(a%title), "center", a%title_size, rc_text_color)
+    end subroutine render_axes3d
+
+    subroutine render_series3d(b, a, M, bl, bt, side)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: M(4, 4), bl, bt, side
+        real(dp), allocatable :: px(:), py(:), pd(:)
+        integer, allocatable :: idx(:)
+        real(dp) :: sat, lo, span, one(1), oney(1)
+        integer :: i, k, n
+        type(paint_t) :: p
+
+        do i = 1, a%n_series
+            n = a%series(i)%n
+            select case (a%series(i)%kind)
+            case (SERIES_LINE3D)
+                allocate (px(n), py(n), pd(n))
+                do k = 1, n
+                    call dev3(M, bl, bt, side, a%series(i)%x(k), a%series(i)%y(k), &
+                              a%series(i)%z(k), px(k), py(k), pd(k))
+                end do
+                if (a%series(i)%linestyle /= LINE_NONE) then
+                    p = pen(a%series(i)%color, a%series(i)%linewidth, &
+                            a%series(i)%alpha, a%series(i)%linestyle)
+                    call b%draw_path(px, py, line_verbs(n), n, p)
+                end if
+                call append_markers(b, a%series(i)%marker, px, py, n, &
+                                    a%series(i)%markersize, a%series(i)%color, &
+                                    a%series(i)%alpha)
+                deallocate (px, py, pd)
+            case (SERIES_SCATTER3D)
+                allocate (px(n), py(n), pd(n), idx(n))
+                do k = 1, n
+                    call dev3(M, bl, bt, side, a%series(i)%x(k), a%series(i)%y(k), &
+                              a%series(i)%z(k), px(k), py(k), pd(k))
+                end do
+                call order_far_first(pd, n, idx)
+                ! Depth shading: the further a point is, the more it fades
+                ! into the background, down to three tenths opacity.
+                lo = minval(pd)
+                span = sqrt((maxval(px) - minval(px))**2 + (maxval(py) - minval(py))**2 &
+                            + (maxval(pd) - lo)**2)
+                do k = 1, n
+                    sat = 1.0_dp
+                    if (span > 0.0_dp) sat = 1.0_dp - (pd(idx(k)) - lo)/span
+                    sat = max(0.3_dp, min(1.0_dp, sat))
+                    one(1) = px(idx(k))
+                    oney(1) = py(idx(k))
+                    call append_markers(b, a%series(i)%marker, one, oney, 1, &
+                                        a%series(i)%markersize, a%series(i)%color, &
+                                        a%series(i)%alpha*sat)
+                end do
+                deallocate (px, py, pd, idx)
+            case (SERIES_SURFACE)
+                call render_surface(b, a%series(i), M, bl, bt, side)
+            end select
+        end do
+    end subroutine render_series3d
+
+    ! One quadrilateral per cell of the grid, lit by matplotlib's default
+    ! light source and painted back to front.
+    subroutine render_surface(b, s, M, bl, bt, side)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: M(4, 4), bl, bt, side
+        ! LightSource(azdeg=225, altdeg=19.4712), as a direction.
+        real(dp), parameter :: AZ = (90.0_dp - 225.0_dp)*PI/180.0_dp
+        real(dp), parameter :: ALT = 19.4712_dp*PI/180.0_dp
+        real(dp) :: dir(3)
+        real(dp), allocatable :: fx(:, :), fy(:, :), depth(:)
+        integer, allocatable :: idx(:)
+        real(dp) :: cx(4), cy(4), cz(4), ux, uy, uz, v1(3), v2(3), nrm(3), nl, shade
+        integer :: nx, ny, nf, f, i, j, c, rgb(3)
+        character(len=7) :: col
+
+        dir = [cos(AZ)*cos(ALT), sin(AZ)*cos(ALT), sin(ALT)]
+        nx = size(s%x)
+        ny = size(s%y)
+        nf = (nx - 1)*(ny - 1)
+        if (nf <= 0) return
+        allocate (fx(4, nf), fy(4, nf), depth(nf), idx(nf))
+        rgb = hex_rgb(s%color)
+
+        f = 0
+        do j = 1, ny - 1
+            do i = 1, nx - 1
+                f = f + 1
+                ! The perimeter of the cell, anticlockwise in index space.
+                cx = [s%x(i), s%x(i + 1), s%x(i + 1), s%x(i)]
+                cy = [s%y(j), s%y(j), s%y(j + 1), s%y(j + 1)]
+                cz = [s%zg(j, i), s%zg(j, i + 1), s%zg(j + 1, i + 1), s%zg(j + 1, i)]
+                depth(f) = 0.0_dp
+                do c = 1, 4
+                    call dev3(M, bl, bt, side, cx(c), cy(c), cz(c), ux, uy, uz)
+                    fx(c, f) = ux
+                    fy(c, f) = uy
+                    depth(f) = depth(f) + 0.25_dp*uz
+                end do
+            end do
+        end do
+
+        call order_far_first(depth, nf, idx)
+
+        f = 0
+        do j = 1, ny - 1
+            do i = 1, nx - 1
+                f = f + 1
+                cx = [s%x(i), s%x(i + 1), s%x(i + 1), s%x(i)]
+                cy = [s%y(j), s%y(j), s%y(j + 1), s%y(j + 1)]
+                cz = [s%zg(j, i), s%zg(j, i + 1), s%zg(j + 1, i + 1), s%zg(j + 1, i)]
+                v1 = [cx(1) - cx(2), cy(1) - cy(2), cz(1) - cz(2)]
+                v2 = [cx(2) - cx(3), cy(2) - cy(3), cz(2) - cz(3)]
+                nrm = [v1(2)*v2(3) - v1(3)*v2(2), v1(3)*v2(1) - v1(1)*v2(3), &
+                       v1(1)*v2(2) - v1(2)*v2(1)]
+                nl = sqrt(sum(nrm**2))
+                shade = 0.0_dp
+                if (nl > 0.0_dp) shade = dot_product(nrm/nl, dir)
+                depth(f) = 0.3_dp + 0.7_dp*(shade + 1.0_dp)/2.0_dp
+            end do
+        end do
+
+        do f = 1, nf
+            ! depth now carries the lighting factor for each face, and idx
+            ! the order to paint them in.
+            col = "#"//hex_pair(nint(rgb(1)*depth(idx(f)))) &
+                  //hex_pair(nint(rgb(2)*depth(idx(f)))) &
+                  //hex_pair(nint(rgb(3)*depth(idx(f))))
+            call append_polygon(b, fx(:, idx(f)), fy(:, idx(f)), 4, col, s%alpha, .true.)
+        end do
+        deallocate (fx, fy, depth, idx)
+    end subroutine render_surface
+
     pure subroutine polar_circle(cx, cy, r, px, py)
         real(dp), intent(in) :: cx, cy, r
         real(dp), intent(out) :: px(:), py(:)
@@ -6725,6 +7277,11 @@ contains
 
         if (a%polar) then
             call render_polar(b, a, ax_l, ax_r, ax_b, ax_t)
+            return
+        end if
+
+        if (a%is3d) then
+            call render_axes3d(b, a, ax_l, ax_r, ax_b, ax_t)
             return
         end if
 

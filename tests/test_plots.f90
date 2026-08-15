@@ -36,6 +36,10 @@ program test_plots
     character(len=1), parameter :: mark_codes(n_marks) = &
         ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
     integer :: i, j, k
+    integer, parameter :: n3 = 31, nl3 = 100
+    real(dp), parameter :: PI_T = 3.14159265358979323846_dp
+    real(dp) :: s3x(n3), s3y(n3), s3z(n3, n3)
+    real(dp) :: t3(nl3), l3x(nl3), l3y(nl3), l3z(nl3)
     character(len=8), parameter :: fruit(4) = &
         ["apple ", "banana", "cherry", "date  "]
     real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
@@ -838,6 +842,37 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 75) a 3D surface
+    call clf()
+    do i = 1, n3
+        s3x(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/real(n3 - 1, dp)
+        s3y(i) = s3x(i)
+    end do
+    do i = 1, n3
+        do j = 1, n3
+            s3z(i, j) = sin(sqrt(s3x(j)**2 + s3y(i)**2))
+        end do
+    end do
+    call plot_surface(s3x, s3y, s3z)
+    call title("surface3d")
+    call save_all("surface3d")
+
+! 76) a 3D line and a 3D scatter
+    call clf()
+    do i = 1, nl3
+        t3(i) = real(i - 1, dp)*4.0_dp*PI_T/real(nl3 - 1, dp)
+        l3x(i) = cos(t3(i))
+        l3y(i) = sin(t3(i))
+        l3z(i) = t3(i)/(4.0_dp*PI_T)
+    end do
+    call plot3d(l3x, l3y, l3z)
+    call scatter3d(l3x(1:nl3:10), l3y(1:nl3:10), l3z(1:nl3:10), c="r")
+    call xlabel("x")
+    call ylabel("y")
+    call zlabel("z")
+    call title("line3d")
+    call save_all("line3d")
 
 ! 74) an animation: the same line redrawn at a moving phase
     do i = 1, 20

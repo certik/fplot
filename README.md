@@ -75,6 +75,8 @@ call suptitle("figure title")
 - `hist2d` and `hexbin` for counting points into square or hexagonal bins
 - `imshow(interpolation="bilinear")` to smooth an image instead of
   showing it as blocks
+- 3D axes: `plot3d`, `scatter3d` and `plot_surface`, with `view_init`,
+  `zlabel` and `zlim`, drawn with mplot3d's camera, panes and lighting
 - Polar axes: `polar(theta, r)`, or `set_polar()` on an axes, with the
   angular grid, the degree labels and the radial labels along 22.5°
 - Patches: `add_rectangle`, `add_circle`, `add_ellipse` and `add_polygon`,
