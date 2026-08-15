@@ -9,6 +9,7 @@ module fplot
     use fplot_svg
     use fplot_render
     use fplot_backend_svg
+    use fplot_backend_pdf
     implicit none
     private
 
@@ -23,7 +24,7 @@ module fplot
     public :: imshow, colorbar, contour, contourf
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
-    public :: render_svg
+    public :: render_svg, render_pdf
     public :: subplot, suptitle, subplots_adjust, tight_layout
     public :: twinx, twiny
     public :: set_fontsize
@@ -3682,22 +3683,42 @@ contains
         svg = r%bytes()
     end function render_svg
 
-    ! Writing SVG bytes into a .png would produce a file no viewer can open,
-    ! so an unsupported extension is a hard error rather than a silent default.
-    subroutine check_svg_ext(filename)
+    function render_pdf(facecolor, transparent, bbox_inches, pad_inches) result(pdf)
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        logical, intent(in), optional :: transparent
+        real(dp), intent(in), optional :: pad_inches
+        character(len=:), allocatable :: pdf
+        type(pdf_renderer_t) :: r
+        call render_figure(r, facecolor, transparent, bbox_inches, pad_inches)
+        pdf = r%bytes()
+    end function render_pdf
+
+    ! The extension picks the backend, as it does in matplotlib. A name with
+    ! no extension at all is taken as SVG.
+    function file_ext(filename) result(ext)
         character(len=*), intent(in) :: filename
-        integer :: d, sl
         character(len=:), allocatable :: ext
+        integer :: d, sl
 
         d = index(filename, ".", back=.true.)
-        sl = max(index(filename, "/", back=.true.), index(filename, achar(92), back=.true.))
-        if (d <= sl + 1) return
-        ext = lower(filename(d + 1:len_trim(filename)))
-        if (ext == "svg") return
+        sl = max(index(filename, "/", back=.true.), &
+                 index(filename, achar(92), back=.true.))
+        if (d <= sl + 1) then
+            ext = "svg"
+        else
+            ext = lower(filename(d + 1:len_trim(filename)))
+        end if
+    end function file_ext
+
+    ! Writing SVG bytes into a .png would produce a file no viewer can open,
+    ! so an unsupported extension is a hard error rather than a silent default.
+    subroutine reject_ext(filename)
+        character(len=*), intent(in) :: filename
         print *, "fplot: cannot write ", trim(filename)
-        print *, "fplot: only .svg output is supported, not ." // ext
+        print *, "fplot: supported formats are .svg and .pdf, not ." &
+            //file_ext(filename)
         error stop "fplot: unsupported savefig format"
-    end subroutine check_svg_ext
+    end subroutine reject_ext
 
     pure function lower(s) result(t)
         character(len=*), intent(in) :: s
@@ -3724,12 +3745,19 @@ contains
         character(len=:), allocatable :: svg
         integer :: u, ios, n
 
-        call check_svg_ext(filename)
         if (present(dpi)) then
             if (dpi <= 0.0_dp) error stop "fplot: savefig dpi must be positive"
             fig_dpi = dpi
         end if
-        svg = render_svg(facecolor, transparent, bbox_inches, pad_inches)
+        select case (file_ext(filename))
+        case ("svg")
+            svg = render_svg(facecolor, transparent, bbox_inches, pad_inches)
+        case ("pdf")
+            svg = render_pdf(facecolor, transparent, bbox_inches, pad_inches)
+        case default
+            call reject_ext(filename)
+            return
+        end select
         n = len(svg)
         open (newunit=u, file=trim(filename), status="replace", action="write", &
               form="unformatted", access="stream", iostat=ios)

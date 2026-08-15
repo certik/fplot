@@ -23,16 +23,17 @@ $FLANG -c "$ROOT/src/fplot_ticks.f90"
 $FLANG -c "$ROOT/src/fplot_contour.f90"
 $FLANG -c "$ROOT/src/fplot_svg.f90"
 $FLANG -c "$ROOT/src/fplot_backend_svg.f90"
+$FLANG -c "$ROOT/src/fplot_backend_pdf.f90"
 $FLANG -c "$ROOT/src/fplot.f90"
 
 # Test program
 $FLANG -o "$BUILD/test_plots" \
     "$ROOT/tests/test_plots.f90" \
-    fplot_colors.o fplot_style.o fplot_render.o fplot_scale.o fplot_cmap.o fplot_ticks.o fplot_contour.o fplot_svg.o fplot_backend_svg.o fplot.o
+    fplot_colors.o fplot_style.o fplot_render.o fplot_scale.o fplot_cmap.o fplot_ticks.o fplot_contour.o fplot_svg.o fplot_backend_svg.o fplot_backend_pdf.o fplot.o
 
 # Demo
 $FLANG -o "$BUILD/demo" \
     "$ROOT/examples/demo.f90" \
-    fplot_colors.o fplot_style.o fplot_render.o fplot_scale.o fplot_cmap.o fplot_ticks.o fplot_contour.o fplot_svg.o fplot_backend_svg.o fplot.o
+    fplot_colors.o fplot_style.o fplot_render.o fplot_scale.o fplot_cmap.o fplot_ticks.o fplot_contour.o fplot_svg.o fplot_backend_svg.o fplot_backend_pdf.o fplot.o
 
 echo "Built: $BUILD/test_plots $BUILD/demo"
