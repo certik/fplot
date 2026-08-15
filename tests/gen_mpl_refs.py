@@ -48,6 +48,7 @@ OUT_NAMES = [
     "violinplot",
     "symlog",
     "axis_equal",
+    "tick_style",
 ]
 
 
@@ -438,6 +439,16 @@ def main() -> None:
     ax.axis("equal")
     ax.set_title("axis equal")
     save(fig, "axis_equal")
+
+    # 35 tick styling
+    fig, ax = setup_fig()
+    ax.plot(xb, hb)
+    ax.tick_params(direction="in", labelsize=8.0)
+    ax.tick_params(axis="x", rotation=45.0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_title("tick_params")
+    save(fig, "tick_style")
 
     print("All matplotlib references written.")
 

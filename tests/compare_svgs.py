@@ -46,6 +46,7 @@ CASES = [
     "violinplot",
     "symlog",
     "axis_equal",
+    "tick_style",
 ]
 
 

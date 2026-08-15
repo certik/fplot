@@ -467,5 +467,15 @@ program test_plots
     call savefig("tests/out/axis_equal.svg")
     print *, "wrote tests/out/axis_equal.svg"
 
+    ! 35) tick styling and hidden spines
+    call figure()
+    call plot(xb, hb)
+    call tick_params(direction="in", labelsize=8.0_dp)
+    call tick_params(axis="x", rotation=45.0_dp)
+    call spines(top=.false., right=.false.)
+    call title("tick_params")
+    call savefig("tests/out/tick_style.svg")
+    print *, "wrote tests/out/tick_style.svg"
+
     print *, "All test plots written."
 end program test_plots

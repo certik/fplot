@@ -46,6 +46,7 @@ call suptitle("figure title")
 - `savefig(file, transparent=, facecolor=)`
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
+- `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
 - `legend(loc=...)`, `xticks` / `yticks` with optional labels, `minorticks_on`
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default

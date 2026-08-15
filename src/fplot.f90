@@ -14,7 +14,7 @@ module fplot
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
     public :: step, stem, pie, boxplot, violinplot
-    public :: axis, set_aspect
+    public :: axis, set_aspect, tick_params, spines
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
     public :: imshow, colorbar, contour, contourf
@@ -39,6 +39,14 @@ module fplot
     real(dp), parameter :: DPI_DEFAULT = 100.0_dp
 
     ! Default figure margins (matplotlib rcParams), in figure fractions.
+    ! Tick geometry and label size, matching matplotlib's rcParams.
+    real(dp), parameter :: TICK_LEN = 3.5_dp
+    real(dp), parameter :: TICK_FONT = 10.0_dp
+    ! Minor ticks are shorter than majors by this factor.
+    real(dp), parameter :: MINOR_FRAC = 2.0_dp / 3.5_dp
+    integer, parameter :: SPINE_LEFT = 1, SPINE_RIGHT = 2
+    integer, parameter :: SPINE_BOTTOM = 3, SPINE_TOP = 4
+
     real(dp), parameter :: MARGIN_LEFT = 0.125_dp
     real(dp), parameter :: MARGIN_RIGHT = 0.9_dp
     real(dp), parameter :: MARGIN_BOTTOM = 0.11_dp
@@ -139,6 +147,12 @@ module fplot
         ! Data units per point in y over the same in x. Zero means auto.
         ! adjustable="box" shrinks the axes to suit; "datalim" widens the
         ! limits instead, which is what matplotlib's axis("equal") does.
+        ! Tick styling. dir is +1 outward, -1 inward, 0 for both.
+        real(dp) :: xtick_len = TICK_LEN, ytick_len = TICK_LEN
+        real(dp) :: xtick_dir = 1.0_dp, ytick_dir = 1.0_dp
+        real(dp) :: xtick_rot = 0.0_dp, ytick_rot = 0.0_dp
+        real(dp) :: xtick_size = TICK_FONT, ytick_size = TICK_FONT
+        logical :: spine(4) = .true.
         real(dp) :: aspect = 0.0_dp
         logical :: aspect_datalim = .false.
         ! axis("tight"): fit the data exactly, with no 5% margin.
@@ -824,6 +838,68 @@ contains
         ax(cur_i)%texts(it)%s = lab
         ax(cur_i)%texts(it)%ha = "center"
     end subroutine add_pie_label
+
+    ! matplotlib's tick_params, for the settings that change what is drawn:
+    ! which axis, the tick direction, its length, and the size and rotation
+    ! of the tick labels.
+    subroutine tick_params(axis, direction, length, labelsize, rotation)
+        character(len=*), intent(in), optional :: axis, direction
+        real(dp), intent(in), optional :: length, labelsize, rotation
+        logical :: dox, doy
+        real(dp) :: d
+
+        call ensure_fig()
+        dox = .true.
+        doy = .true.
+        if (present(axis)) then
+            select case (lower(axis))
+            case ("x")
+                doy = .false.
+            case ("y")
+                dox = .false.
+            case ("both")
+            case default
+                error stop "fplot: tick_params axis must be x, y or both"
+            end select
+        end if
+
+        if (present(direction)) then
+            select case (lower(direction))
+            case ("out")
+                d = 1.0_dp
+            case ("in")
+                d = -1.0_dp
+            case ("inout")
+                d = 0.0_dp
+            case default
+                error stop "fplot: tick direction must be in, out or inout"
+            end select
+            if (dox) ax(cur_i)%xtick_dir = d
+            if (doy) ax(cur_i)%ytick_dir = d
+        end if
+        if (present(length)) then
+            if (dox) ax(cur_i)%xtick_len = length
+            if (doy) ax(cur_i)%ytick_len = length
+        end if
+        if (present(labelsize)) then
+            if (dox) ax(cur_i)%xtick_size = labelsize
+            if (doy) ax(cur_i)%ytick_size = labelsize
+        end if
+        if (present(rotation)) then
+            if (dox) ax(cur_i)%xtick_rot = rotation
+            if (doy) ax(cur_i)%ytick_rot = rotation
+        end if
+    end subroutine tick_params
+
+    ! Show or hide individual spines. Absent arguments are left alone.
+    subroutine spines(left, right, bottom, top)
+        logical, intent(in), optional :: left, right, bottom, top
+        call ensure_fig()
+        if (present(left)) ax(cur_i)%spine(SPINE_LEFT) = left
+        if (present(right)) ax(cur_i)%spine(SPINE_RIGHT) = right
+        if (present(bottom)) ax(cur_i)%spine(SPINE_BOTTOM) = bottom
+        if (present(top)) ax(cur_i)%spine(SPINE_TOP) = top
+    end subroutine spines
 
     ! matplotlib's axis(): "on"/"off" for the frame, "equal"/"scaled" for
     ! square units, "tight" to drop the data margin, "auto" to undo them.
@@ -2352,6 +2428,52 @@ contains
         call builder_append(b, new_line("a"))
     end subroutine append_tick
 
+    subroutine append_spine(b, x1, y1, x2, y2)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x1, y1, x2, y2
+        call append_line(b, x1, y1, x2, y2, "#000000", 0.8_dp, LINE_SOLID, 1.0_dp)
+    end subroutine append_spine
+
+    ! A tick at (x, y) on a spine whose outward normal is (ox, oy). dir 1
+    ! puts it outside the axes, -1 inside, 0 straddling the spine.
+    subroutine append_tick_at(b, x, y, ox, oy, dir, length)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x, y, ox, oy, dir, length
+        real(dp) :: a, c
+        if (dir > 0.0_dp) then
+            a = 0.0_dp
+            c = length
+        else if (dir < 0.0_dp) then
+            a = 0.0_dp
+            c = -length
+        else
+            a = -length
+            c = length
+        end if
+        call append_tick(b, x + ox * a, y + oy * a, x + ox * c, y + oy * c)
+    end subroutine append_tick_at
+
+    ! A tick label, rotated about its anchor when asked. SVG rotates
+    ! clockwise and matplotlib counter-clockwise, hence the sign.
+    subroutine append_tick_text(b, x, y, s, anchor, fontsize, rot)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x, y, fontsize, rot
+        character(len=*), intent(in) :: s, anchor
+        character(len=96) :: tr
+        character(len=32) :: n1, n2, n3
+        integer :: k1, k2, k3
+
+        if (rot == 0.0_dp) then
+            call append_text(b, x, y, s, anchor, fontsize, "#000000")
+            return
+        end if
+        call fmt_num(-rot, n1, k1)
+        call fmt_num(x, n2, k2)
+        call fmt_num(y, n3, k3)
+        tr = "rotate(" // n1(1:k1) // " " // n2(1:k2) // " " // n3(1:k3) // ")"
+        call append_text(b, x, y, s, anchor, fontsize, "#000000", trim(tr))
+    end subroutine append_tick_text
+
     subroutine tick_label(labeled, lab, i, v, sc, out, n)
         logical, intent(in) :: labeled
         character(len=24), intent(in) :: lab(MAX_TICKS)
@@ -2651,42 +2773,52 @@ contains
         call builder_append(b, "</g>")
         call builder_append(b, new_line("a"))
 
-        ! spines
+        ! spines. All four still go out as one <rect>, so a plot that leaves
+        ! them alone renders exactly as it did before they could be hidden.
         if (.not. a%frame_off) then
-        call builder_append(b, '<rect x="')
-        call append_num(b, ax_l)
-        call builder_append(b, '" y="')
-        call append_num(b, ax_t)
-        call builder_append(b, '" width="')
-        call append_num(b, ax_w)
-        call builder_append(b, '" height="')
-        call append_num(b, ax_h)
-        call builder_append(b, '" fill="none" stroke="#000000" stroke-width="0.8"/>')
-        call builder_append(b, new_line("a"))
+            if (all(a%spine)) then
+                call builder_append(b, '<rect x="')
+                call append_num(b, ax_l)
+                call builder_append(b, '" y="')
+                call append_num(b, ax_t)
+                call builder_append(b, '" width="')
+                call append_num(b, ax_w)
+                call builder_append(b, '" height="')
+                call append_num(b, ax_h)
+                call builder_append(b, '" fill="none" stroke="#000000" stroke-width="0.8"/>')
+                call builder_append(b, new_line("a"))
+            else
+                if (a%spine(SPINE_LEFT)) call append_spine(b, ax_l, ax_t, ax_l, ax_b)
+                if (a%spine(SPINE_RIGHT)) call append_spine(b, ax_r, ax_t, ax_r, ax_b)
+                if (a%spine(SPINE_BOTTOM)) call append_spine(b, ax_l, ax_b, ax_r, ax_b)
+                if (a%spine(SPINE_TOP)) call append_spine(b, ax_l, ax_t, ax_r, ax_t)
+            end if
         end if
 
         ! x ticks
         do i = 1, nxt
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
-            call append_tick(b, px, ax_b, px, ax_b + 3.5_dp)
+            call append_tick_at(b, px, ax_b, 0.0_dp, 1.0_dp, a%xtick_dir, a%xtick_len)
             call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, lbl, ln)
-            call append_text(b, px, ax_b + 16.0_dp, lbl(1:ln), "center", 10.0_dp, "#000000")
+            call append_tick_text(b, px, ax_b + 16.0_dp, lbl(1:ln), "center", &
+                                  a%xtick_size, a%xtick_rot)
         end do
         do i = 1, nxm
             px = map_x(xminor(i), xmin, xmax, ax_l, ax_w, xsc)
-            call append_tick(b, px, ax_b, px, ax_b + 2.0_dp)
+            call append_tick_at(b, px, ax_b, 0.0_dp, 1.0_dp, a%xtick_dir, MINOR_FRAC * a%xtick_len)
         end do
 
         ! y ticks
         do i = 1, nyt
             py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
-            call append_tick(b, ax_l, py, ax_l - 3.5_dp, py)
+            call append_tick_at(b, ax_l, py, -1.0_dp, 0.0_dp, a%ytick_dir, a%ytick_len)
             call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, lbl, ln)
-            call append_text(b, ax_l - 7.0_dp, py + 3.5_dp, lbl(1:ln), "right", 10.0_dp, "#000000")
+            call append_tick_text(b, ax_l - 7.0_dp, py + 3.5_dp, lbl(1:ln), "right", &
+                                  a%ytick_size, a%ytick_rot)
         end do
         do i = 1, nym
             py = map_y(yminor(i), ymin, ymax, ax_b, ax_h, ysc)
-            call append_tick(b, ax_l, py, ax_l - 2.0_dp, py)
+            call append_tick_at(b, ax_l, py, -1.0_dp, 0.0_dp, a%ytick_dir, MINOR_FRAC * a%ytick_len)
         end do
 
         if (len_trim(a%xlabel) > 0) then
