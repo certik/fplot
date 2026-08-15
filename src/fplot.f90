@@ -10,6 +10,7 @@ module fplot
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: bar, hist, fill_between, errorbar, axhline, axvline
     public :: text, annotate
+    public :: xticks, yticks, minorticks_on
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg
@@ -19,6 +20,7 @@ module fplot
     integer, parameter :: SCALE_LOG = 1
     integer, parameter :: MAX_SERIES = 32
     integer, parameter :: MAX_TEXTS = 32
+    integer, parameter :: MAX_MINOR = 256
     integer, parameter :: MAX_POINTS = 100000
 
     ! Default figure margins (matplotlib rcParams), in figure fractions.
@@ -84,6 +86,13 @@ module fplot
         character(len=256) :: ylabel = ""
         logical :: grid_on = .false.
         logical :: legend_on = .false.
+        character(len=16) :: legend_loc = "upper right"
+        logical :: minor_ticks = .false.
+        ! User-specified tick positions and optional labels.
+        integer :: n_xticks = 0, n_yticks = 0
+        real(dp) :: xtick_pos(MAX_TICKS), ytick_pos(MAX_TICKS)
+        logical :: xtick_labeled = .false., ytick_labeled = .false.
+        character(len=24) :: xtick_lab(MAX_TICKS), ytick_lab(MAX_TICKS)
         integer :: xscale = SCALE_LINEAR
         integer :: yscale = SCALE_LINEAR
         logical :: xlim_set = .false.
@@ -211,10 +220,49 @@ contains
         ax(cur_i)%grid_on = on
     end subroutine grid
 
-    subroutine legend()
+    subroutine legend(loc)
+        character(len=*), intent(in), optional :: loc
         call ensure_fig()
         ax(cur_i)%legend_on = .true.
+        if (present(loc)) ax(cur_i)%legend_loc = loc
     end subroutine legend
+
+    subroutine xticks(vals, labels)
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        call ensure_fig()
+        call set_ticks(vals, labels, ax(cur_i)%n_xticks, ax(cur_i)%xtick_pos, &
+                       ax(cur_i)%xtick_labeled, ax(cur_i)%xtick_lab)
+    end subroutine xticks
+
+    subroutine yticks(vals, labels)
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        call ensure_fig()
+        call set_ticks(vals, labels, ax(cur_i)%n_yticks, ax(cur_i)%ytick_pos, &
+                       ax(cur_i)%ytick_labeled, ax(cur_i)%ytick_lab)
+    end subroutine yticks
+
+    subroutine set_ticks(vals, labels, n, pos, labeled, lab)
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        integer, intent(out) :: n
+        real(dp), intent(out) :: pos(MAX_TICKS)
+        logical, intent(out) :: labeled
+        character(len=24), intent(out) :: lab(MAX_TICKS)
+        integer :: i
+        n = min(size(vals), MAX_TICKS)
+        labeled = present(labels)
+        do i = 1, n
+            pos(i) = vals(i)
+            if (labeled) lab(i) = labels(i)
+        end do
+    end subroutine set_ticks
+
+    subroutine minorticks_on()
+        call ensure_fig()
+        ax(cur_i)%minor_ticks = .true.
+    end subroutine minorticks_on
 
     subroutine xlim(xmin, xmax)
         real(dp), intent(in) :: xmin, xmax
@@ -1084,6 +1132,132 @@ contains
         end if
     end subroutine append_errorbar
 
+    ! User-set tick positions win over the automatic locator.
+    subroutine axis_ticks(n_user, user_pos, vmin, vmax, is_log, t, nt)
+        integer, intent(in) :: n_user
+        real(dp), intent(in) :: user_pos(MAX_TICKS), vmin, vmax
+        logical, intent(in) :: is_log
+        real(dp), intent(out) :: t(MAX_TICKS)
+        integer, intent(out) :: nt
+        if (n_user > 0) then
+            nt = n_user
+            t(1:nt) = user_pos(1:nt)
+        else if (is_log) then
+            call log_ticks(vmin, vmax, t, nt)
+        else
+            call linear_ticks(vmin, vmax, 6, t, nt)
+        end if
+    end subroutine axis_ticks
+
+    ! Minor ticks subdivide each major interval; a log axis already places its
+    ! majors one decade apart, so the 2..9 multiples are what belong between.
+    subroutine minor_positions(t, nt, vmin, vmax, is_log, m, nm)
+        real(dp), intent(in) :: t(MAX_TICKS), vmin, vmax
+        integer, intent(in) :: nt
+        logical, intent(in) :: is_log
+        real(dp), intent(out) :: m(MAX_MINOR)
+        integer, intent(out) :: nm
+        integer :: i, k
+        real(dp) :: step, v
+
+        nm = 0
+        if (nt < 2) return
+        do i = 1, nt - 1
+            if (is_log) then
+                do k = 2, 9
+                    v = t(i) * real(k, dp)
+                    if (v > t(i + 1)) exit
+                    call push_minor(m, nm, v, vmin, vmax)
+                end do
+            else
+                step = (t(i + 1) - t(i)) / 5.0_dp
+                do k = 1, 4
+                    call push_minor(m, nm, t(i) + real(k, dp) * step, vmin, vmax)
+                end do
+            end if
+        end do
+    end subroutine minor_positions
+
+    subroutine push_minor(m, nm, v, vmin, vmax)
+        real(dp), intent(inout) :: m(MAX_MINOR)
+        integer, intent(inout) :: nm
+        real(dp), intent(in) :: v, vmin, vmax
+        if (v < vmin .or. v > vmax) return
+        if (nm >= MAX_MINOR) return
+        nm = nm + 1
+        m(nm) = v
+    end subroutine push_minor
+
+    ! matplotlib's "best" needs a data-overlap search; upper right is the
+    ! placement it picks for the common case, so we use it as the fallback.
+    subroutine legend_origin(loc, ax_l, ax_r, ax_t, ax_b, leg_w, leg_h, leg_x, leg_y)
+        character(len=*), intent(in) :: loc
+        real(dp), intent(in) :: ax_l, ax_r, ax_t, ax_b, leg_w, leg_h
+        real(dp), intent(out) :: leg_x, leg_y
+        real(dp), parameter :: pad = 8.0_dp
+
+        select case (trim(loc))
+        case ("upper left", "left")
+            leg_x = ax_l + pad
+            leg_y = ax_t + pad
+        case ("lower left")
+            leg_x = ax_l + pad
+            leg_y = ax_b - leg_h - pad
+        case ("lower right")
+            leg_x = ax_r - leg_w - pad
+            leg_y = ax_b - leg_h - pad
+        case ("lower center", "lower")
+            leg_x = 0.5_dp * (ax_l + ax_r - leg_w)
+            leg_y = ax_b - leg_h - pad
+        case ("upper center", "upper")
+            leg_x = 0.5_dp * (ax_l + ax_r - leg_w)
+            leg_y = ax_t + pad
+        case ("center")
+            leg_x = 0.5_dp * (ax_l + ax_r - leg_w)
+            leg_y = 0.5_dp * (ax_t + ax_b - leg_h)
+        case ("center left")
+            leg_x = ax_l + pad
+            leg_y = 0.5_dp * (ax_t + ax_b - leg_h)
+        case ("center right", "right")
+            leg_x = ax_r - leg_w - pad
+            leg_y = 0.5_dp * (ax_t + ax_b - leg_h)
+        case default
+            leg_x = ax_r - leg_w - pad
+            leg_y = ax_t + pad
+        end select
+    end subroutine legend_origin
+
+    subroutine append_tick(b, x1, y1, x2, y2)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x1, y1, x2, y2
+        call builder_append(b, '<line x1="')
+        call append_num(b, x1)
+        call builder_append(b, '" y1="')
+        call append_num(b, y1)
+        call builder_append(b, '" x2="')
+        call append_num(b, x2)
+        call builder_append(b, '" y2="')
+        call append_num(b, y2)
+        call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
+        call builder_append(b, new_line("a"))
+    end subroutine append_tick
+
+    subroutine tick_label(labeled, lab, i, v, is_log, out, n)
+        logical, intent(in) :: labeled
+        character(len=24), intent(in) :: lab(MAX_TICKS)
+        integer, intent(in) :: i
+        real(dp), intent(in) :: v
+        logical, intent(in) :: is_log
+        character(len=*), intent(out) :: out
+        integer, intent(out) :: n
+        if (labeled) then
+            n = len_trim(lab(i))
+            out(1:n) = trim(lab(i))
+        else
+            call format_tick_to(v, is_log, out, n)
+        end if
+    end subroutine tick_label
+
     subroutine render_axes(b, a, idx, W, H)
         type(svg_builder), intent(inout) :: b
         type(axes_t), intent(in) :: a
@@ -1092,7 +1266,8 @@ contains
         real(dp) :: ax_l, ax_r, ax_b, ax_t, ax_w, ax_h
         real(dp) :: xmin, xmax, ymin, ymax
         real(dp) :: xticks(MAX_TICKS), yticks(MAX_TICKS)
-        integer :: nxt, nyt, i, j, n, nl
+        real(dp) :: xminor(MAX_MINOR), yminor(MAX_MINOR)
+        integer :: nxt, nyt, nxm, nym, i, j, n, nl
         real(dp) :: px, py, ms, r, mid
         character(len=64) :: lbl
         character(len=64) :: tx, ty
@@ -1114,15 +1289,14 @@ contains
         xlog = a%xscale == SCALE_LOG
         ylog = a%yscale == SCALE_LOG
 
-        if (xlog) then
-            call log_ticks(xmin, xmax, xticks, nxt)
+        call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xlog, xticks, nxt)
+        call axis_ticks(a%n_yticks, a%ytick_pos, ymin, ymax, ylog, yticks, nyt)
+        if (a%minor_ticks) then
+            call minor_positions(xticks, nxt, xmin, xmax, xlog, xminor, nxm)
+            call minor_positions(yticks, nyt, ymin, ymax, ylog, yminor, nym)
         else
-            call linear_ticks(xmin, xmax, 6, xticks, nxt)
-        end if
-        if (ylog) then
-            call log_ticks(ymin, ymax, yticks, nyt)
-        else
-            call linear_ticks(ymin, ymax, 6, yticks, nyt)
+            nxm = 0
+            nym = 0
         end if
 
         ! clip path for this axes' data
@@ -1290,35 +1464,25 @@ contains
         ! x ticks
         do i = 1, nxt
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xlog)
-            call builder_append(b, '<line x1="')
-            call append_num(b, px)
-            call builder_append(b, '" y1="')
-            call append_num(b, ax_b)
-            call builder_append(b, '" x2="')
-            call append_num(b, px)
-            call builder_append(b, '" y2="')
-            call append_num(b, ax_b + 3.5_dp)
-            call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
-            call builder_append(b, new_line("a"))
-            call format_tick_to(xticks(i), xlog, lbl, ln)
+            call append_tick(b, px, ax_b, px, ax_b + 3.5_dp)
+            call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xlog, lbl, ln)
             call append_text(b, px, ax_b + 16.0_dp, lbl(1:ln), "center", 10.0_dp, "#000000")
+        end do
+        do i = 1, nxm
+            px = map_x(xminor(i), xmin, xmax, ax_l, ax_w, xlog)
+            call append_tick(b, px, ax_b, px, ax_b + 2.0_dp)
         end do
 
         ! y ticks
         do i = 1, nyt
             py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ylog)
-            call builder_append(b, '<line x1="')
-            call append_num(b, ax_l)
-            call builder_append(b, '" y1="')
-            call append_num(b, py)
-            call builder_append(b, '" x2="')
-            call append_num(b, ax_l - 3.5_dp)
-            call builder_append(b, '" y2="')
-            call append_num(b, py)
-            call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
-            call builder_append(b, new_line("a"))
-            call format_tick_to(yticks(i), ylog, lbl, ln)
+            call append_tick(b, ax_l, py, ax_l - 3.5_dp, py)
+            call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ylog, lbl, ln)
             call append_text(b, ax_l - 7.0_dp, py + 3.5_dp, lbl(1:ln), "right", 10.0_dp, "#000000")
+        end do
+        do i = 1, nym
+            py = map_y(yminor(i), ymin, ymax, ax_b, ax_h, ylog)
+            call append_tick(b, ax_l, py, ax_l - 2.0_dp, py)
         end do
 
         if (len_trim(a%xlabel) > 0) then
@@ -1360,8 +1524,8 @@ contains
                 leg_w = 34.0_dp + real(max_lbl, dp) * LEGEND_CHAR_W + 8.0_dp
                 leg_w = min(leg_w, ax_w - 16.0_dp)
                 leg_h = 8.0_dp + real(n_leg, dp) * row_h
-                leg_x = ax_r - leg_w - 8.0_dp
-                leg_y = ax_t + 8.0_dp
+                call legend_origin(a%legend_loc, ax_l, ax_r, ax_t, ax_b, &
+                                   leg_w, leg_h, leg_x, leg_y)
                 call builder_append(b, '<rect x="')
                 call append_num(b, leg_x)
                 call builder_append(b, '" y="')

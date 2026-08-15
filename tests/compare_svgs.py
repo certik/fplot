@@ -28,6 +28,7 @@ CASES = [
     "errorbar",
     "hv_lines",
     "text_annotate",
+    "ticks_legend",
 ]
 
 

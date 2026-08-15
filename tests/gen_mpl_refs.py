@@ -30,6 +30,7 @@ OUT_NAMES = [
     "errorbar",
     "hv_lines",
     "text_annotate",
+    "ticks_legend",
 ]
 
 
@@ -268,6 +269,20 @@ def main() -> None:
     ax.set_ylabel("y")
     ax.grid(True)
     save(fig, "text_annotate")
+
+    # 17 ticks_legend
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-", label="sin")
+    ax.plot(x, np.cos(x), "r--", label="cos")
+    ax.set_xticks([0.0, 1.5708, 3.1416, 4.7124, 6.2832],
+                  ["0", "pi/2", "pi", "3pi/2", "2pi"])
+    ax.set_yticks([-1.0, 0.0, 1.0])
+    ax.minorticks_on()
+    ax.legend(loc="lower left")
+    ax.set_title("Ticks and legend placement")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "ticks_legend")
 
     print("All matplotlib references written.")
 

@@ -273,5 +273,20 @@ program test_plots
     call savefig("tests/out/text_annotate.svg")
     print *, "wrote tests/out/text_annotate.svg"
 
+    ! 17) custom ticks, minor ticks and legend placement
+    call clf()
+    call plot(x, y, "b-", label="sin")
+    call plot(x, cos(x), "r--", label="cos")
+    call xticks([0.0_dp, 1.5708_dp, 3.1416_dp, 4.7124_dp, 6.2832_dp], &
+                ["0    ", "pi/2 ", "pi   ", "3pi/2", "2pi  "])
+    call yticks([-1.0_dp, 0.0_dp, 1.0_dp])
+    call minorticks_on()
+    call legend(loc="lower left")
+    call title("Ticks and legend placement")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/ticks_legend.svg")
+    print *, "wrote tests/out/ticks_legend.svg"
+
     print *, "All test plots written."
 end program test_plots
