@@ -12,6 +12,7 @@ module fplot
     use fplot_backend_pdf
     use fplot_backend_png
     use fplot_mathtext
+    use fplot_dates
     implicit none
     private
 
@@ -30,6 +31,7 @@ module fplot
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg, render_pdf, render_png
     public :: subplot, subplot2grid, suptitle, subplots_adjust, tight_layout
+    public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
     public :: set_fontsize
     public :: close, gcf
@@ -198,6 +200,9 @@ module fplot
         ! many cells it spans. A plain subplot spans one of each.
         integer :: g_row = 0, g_col = 0
         integer :: g_rowspan = 1, g_colspan = 1
+        ! An axis whose numbers are days since 1970-01-01, and so takes
+        ! its ticks and labels from the calendar.
+        logical :: x_date = .false., y_date = .false.
         logical :: has_mesh = .false.
         real(dp), allocatable :: mesh_x(:), mesh_y(:)
         ! Data units per point in y over the same in x. Zero means auto.
@@ -273,6 +278,8 @@ module fplot
         procedure :: step => ax_step
         procedure :: stem => ax_stem
         procedure :: imshow => ax_imshow
+        procedure :: xaxis_date => ax_xaxis_date
+        procedure :: yaxis_date => ax_yaxis_date
         procedure :: pcolormesh => ax_pcolormesh
         procedure :: pcolor => ax_pcolormesh
         procedure :: contour => ax_contour
@@ -1037,14 +1044,14 @@ contains
         real(dp) :: v, xmin, xmax, ymin, ymax
         real(dp) :: t(MAX_TICKS)
         character(len=64) :: lbl
-        integer :: nt, i, ln
+        integer :: nt, i, ln, du
         v = 0.0_dp
         call compute_limits(a, xmin, xmax, ymin, ymax)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        a%ysc, 9, t, nt)
+                        a%ysc, 9, a%y_date, t, nt, du)
         do i = 1, nt
             call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, &
-                            axis_decimals(t, nt, a%ysc), lbl, ln)
+                            axis_decimals(t, nt, a%ysc), du, lbl, ln)
             if (math_is(lbl(1:ln))) then
                 v = max(v, math_width(lbl(1:ln), a%ytick_size))
             else
@@ -1056,6 +1063,18 @@ contains
 
     ! Select the i-th axes (row-major) of an m x n grid, creating the grid
     ! if it differs from the current one.
+    ! Treat an axis as dates: its numbers are days since 1970-01-01, the
+    ! ticks land on round dates and the labels are written as dates.
+    subroutine xaxis_date()
+        call ensure_fig()
+        ax(cur_i)%x_date = .true.
+    end subroutine xaxis_date
+
+    subroutine yaxis_date()
+        call ensure_fig()
+        ax(cur_i)%y_date = .true.
+    end subroutine yaxis_date
+
     subroutine subplot(m, n, i)
         integer, intent(in) :: m, n, i
 
@@ -1359,6 +1378,18 @@ contains
         call ax_sca(self)
         call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm)
     end subroutine ax_imshow
+
+    subroutine ax_xaxis_date(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call xaxis_date()
+    end subroutine ax_xaxis_date
+
+    subroutine ax_yaxis_date(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call yaxis_date()
+    end subroutine ax_yaxis_date
 
     subroutine ax_pcolormesh(self, x, y, c, cmap, vmin, vmax, norm)
         class(axes), intent(in) :: self
@@ -4150,16 +4181,23 @@ contains
         end if
     end function tick_space
 
-    subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, nbins, t, nt)
+    subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, nbins, is_date, &
+                          t, nt, date_unit)
         integer, intent(in) :: n_user
         real(dp), intent(in) :: user_pos(MAX_TICKS), vmin, vmax
         type(scale_t), intent(in) :: sc
         integer, intent(in) :: nbins
+        logical, intent(in) :: is_date
         real(dp), intent(out) :: t(MAX_TICKS)
         integer, intent(out) :: nt
+        integer, intent(out) :: date_unit
+
+        date_unit = 0
         if (n_user > 0) then
             nt = n_user
             t(1:nt) = user_pos(1:nt)
+        else if (is_date) then
+            call date_ticks(vmin, vmax, nbins, t, nt, date_unit)
         else
             select case (sc%kind)
             case (SCALE_LOG)
@@ -4844,18 +4882,20 @@ contains
 
     ! dec is the decimal count the whole axis agreed on, or -1 when the
     ! scale writes its own labels.
-    subroutine tick_label(labeled, lab, i, v, sc, dec, out, n)
+    subroutine tick_label(labeled, lab, i, v, sc, dec, date_unit, out, n)
         logical, intent(in) :: labeled
         character(len=24), intent(in) :: lab(MAX_TICKS)
         integer, intent(in) :: i
         real(dp), intent(in) :: v
         type(scale_t), intent(in) :: sc
-        integer, intent(in) :: dec
+        integer, intent(in) :: dec, date_unit
         character(len=*), intent(out) :: out
         integer, intent(out) :: n
         if (labeled) then
             n = len_trim(lab(i))
             out(1:n) = trim(lab(i))
+        else if (date_unit > 0) then
+            call format_date(v, date_unit, out, n)
         else if (sc%kind == SCALE_LOG) then
             call format_tick_to(v, .true., out, n)
         else
@@ -4890,6 +4930,7 @@ contains
         real(dp) :: xminor(MAX_MINOR), yminor(MAX_MINOR)
         real(dp) :: span_x, span_y, sc, new_w, new_h
         integer :: nxt, nyt, nxm, nym, i, j, n, nl
+        integer :: x_unit, y_unit
         real(dp) :: px, py, ms, r, mid
         real(dp) :: x_edge, x_out, y_edge, y_out
         character(len=64) :: lbl
@@ -4942,9 +4983,11 @@ contains
         ysc = a%ysc
 
         call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xsc, &
-                        tick_space(ax_w, a%xtick_size, .true.), xticks, nxt)
+                        tick_space(ax_w, a%xtick_size, .true.), a%x_date, &
+                        xticks, nxt, x_unit)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        ysc, tick_space(ax_h, a%ytick_size, .false.), yticks, nyt)
+                        ysc, tick_space(ax_h, a%ytick_size, .false.), a%y_date, &
+                        yticks, nyt, y_unit)
         if (a%minor_ticks) then
             call minor_positions(xticks, nxt, xmin, xmax, xsc, xminor, nxm)
             call minor_positions(yticks, nyt, ymin, ymax, ysc, yminor, nym)
@@ -5173,7 +5216,7 @@ contains
             call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, a%xtick_len)
             if (.not. a%xticklabels_off) then
                 call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, &
-                                axis_decimals(xticks, nxt, xsc), lbl, ln)
+                                axis_decimals(xticks, nxt, xsc), x_unit, lbl, ln)
                 call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
                                       merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
                                       a%xtick_size, a%xtick_rot)
@@ -5199,7 +5242,7 @@ contains
             call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, a%ytick_len)
             if (.not. a%yticklabels_off) then
                 call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, &
-                                axis_decimals(yticks, nyt, ysc), lbl, ln)
+                                axis_decimals(yticks, nyt, ysc), y_unit, lbl, ln)
                 call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, lbl(1:ln), &
                                       merge("left ", "right", a%y_right), &
                                       a%ytick_size, a%ytick_rot)

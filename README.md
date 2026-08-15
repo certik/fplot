@@ -65,6 +65,8 @@ call suptitle("figure title")
 - `twinx` and `twiny` for a second y or x axis on the same plot
 - Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
   color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
+- Date axes: `date_num(y, m, d)` for the numbers and `xaxis_date()` to
+  have the ticks land on round dates and read as dates
 - `subplot2grid`: panels that span several cells of a grid, so a wide
   plot can sit over two narrow ones
 - `pcolormesh` and `pcolor`: a grid of cells with edges of your own

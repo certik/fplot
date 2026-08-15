@@ -4,6 +4,7 @@ program test_plots
     integer :: fig1
     type(axes), allocatable :: axs(:, :)
     type(axes) :: a1, a2, a3
+    real(dp) :: td(366), yd(366)
 
     integer, parameter :: n = 100
     integer, parameter :: m = 20
@@ -692,6 +693,17 @@ program test_plots
     call a3%plot(x, y)
     call a3%set_title("tall")
     call save_all("gridspec")
+
+    ! 60) a date axis
+    call clf()
+    do i = 1, 366
+        td(i) = date_num(2024, 1, 1) + real(i - 1, dp)
+        yd(i) = sin(2.0_dp * pi * real(i - 1, dp) / 365.0_dp)
+    end do
+    call plot(td, yd)
+    call xaxis_date()
+    call title("dates")
+    call save_all("dates")
 
     print *, "All test plots written."
 

@@ -10,6 +10,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
+import matplotlib.dates as mdates
+import datetime
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent
@@ -54,6 +56,7 @@ OUT_NAMES = [
     "mathtext",
     "pcolormesh",
     "gridspec",
+    "dates",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -703,6 +706,15 @@ def main() -> None:
     a3.plot(x, y)
     a3.set_title("tall")
     save(fig, "gridspec")
+
+    # 60 a date axis
+    fig, ax = setup_fig()
+    t0 = mdates.date2num(datetime.datetime(2024, 1, 1))
+    td = t0 + np.arange(0.0, 366.0, 1.0)
+    ax.plot(td, np.sin(2.0 * np.pi * np.arange(366) / 365.0))
+    ax.xaxis_date()
+    ax.set_title("dates")
+    save(fig, "dates")
 
     print("All matplotlib references written.")
 
