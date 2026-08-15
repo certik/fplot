@@ -261,5 +261,17 @@ program test_plots
     call savefig("tests/out/hv_lines.svg")
     print *, "wrote tests/out/hv_lines.svg"
 
+    ! 16) text and annotate
+    call clf()
+    call plot(x, y, "b-", label="sin")
+    call text(1.0_dp, 0.8_dp, "peak region", color="k")
+    call annotate("minimum", 4.712_dp, -1.0_dp, xtext=2.2_dp, ytext=-0.55_dp, color="r")
+    call title("Text and annotate")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call savefig("tests/out/text_annotate.svg")
+    print *, "wrote tests/out/text_annotate.svg"
+
     print *, "All test plots written."
 end program test_plots

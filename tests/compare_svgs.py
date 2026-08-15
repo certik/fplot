@@ -27,6 +27,7 @@ CASES = [
     "fill_between",
     "errorbar",
     "hv_lines",
+    "text_annotate",
 ]
 
 

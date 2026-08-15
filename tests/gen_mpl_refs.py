@@ -29,6 +29,7 @@ OUT_NAMES = [
     "fill_between",
     "errorbar",
     "hv_lines",
+    "text_annotate",
 ]
 
 
@@ -256,6 +257,17 @@ def main() -> None:
     ax.grid(True)
     ax.legend()
     save(fig, "hv_lines")
+
+    # 16 text_annotate
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-", label="sin")
+    ax.text(1.0, 0.8, "peak region", color="k")
+    ax.annotate("minimum", xy=(4.712, -1.0), xytext=(2.2, -0.55), color="r")
+    ax.set_title("Text and annotate")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    save(fig, "text_annotate")
 
     print("All matplotlib references written.")
 

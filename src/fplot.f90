@@ -9,6 +9,7 @@ module fplot
     public :: dp
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: bar, hist, fill_between, errorbar, axhline, axvline
+    public :: text, annotate
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg
@@ -17,6 +18,7 @@ module fplot
     integer, parameter :: SCALE_LINEAR = 0
     integer, parameter :: SCALE_LOG = 1
     integer, parameter :: MAX_SERIES = 32
+    integer, parameter :: MAX_TEXTS = 32
     integer, parameter :: MAX_POINTS = 100000
 
     ! Default figure margins (matplotlib rcParams), in figure fractions.
@@ -61,9 +63,22 @@ module fplot
         character(len=128) :: label = ""
     end type series_t
 
+    type :: text_t
+        real(dp) :: x = 0.0_dp, y = 0.0_dp
+        ! Arrow tail; only used when has_arrow is set.
+        real(dp) :: xtail = 0.0_dp, ytail = 0.0_dp
+        logical :: has_arrow = .false.
+        real(dp) :: fontsize = 10.0_dp
+        character(len=7) :: color = "#000000"
+        character(len=8) :: ha = "left"
+        character(len=128) :: s = ""
+    end type text_t
+
     type :: axes_t
         integer :: n_series = 0
         type(series_t) :: series(MAX_SERIES)
+        integer :: n_texts = 0
+        type(text_t) :: texts(MAX_TEXTS)
         character(len=256) :: title = ""
         character(len=256) :: xlabel = ""
         character(len=256) :: ylabel = ""
@@ -481,6 +496,61 @@ contains
         end select
     end function linestyle_from_str
 
+    ! Text at a point in data coordinates.
+    subroutine text(x, y, s, color, fontsize, ha)
+        real(dp), intent(in) :: x, y
+        character(len=*), intent(in) :: s
+        character(len=*), intent(in), optional :: color, ha
+        real(dp), intent(in), optional :: fontsize
+        call add_text(x, y, s, color, fontsize, ha, .false., 0.0_dp, 0.0_dp)
+    end subroutine text
+
+    ! Text at (xtext, ytext) with an arrow pointing at (x, y).
+    subroutine annotate(s, x, y, xtext, ytext, color, fontsize, ha)
+        character(len=*), intent(in) :: s
+        real(dp), intent(in) :: x, y
+        real(dp), intent(in), optional :: xtext, ytext, fontsize
+        character(len=*), intent(in), optional :: color, ha
+        real(dp) :: xt, yt
+        logical :: arrow
+
+        xt = x
+        yt = y
+        arrow = present(xtext) .or. present(ytext)
+        if (present(xtext)) xt = xtext
+        if (present(ytext)) yt = ytext
+        ! The label sits at the text position; the arrow runs back to (x, y).
+        call add_text(xt, yt, s, color, fontsize, ha, arrow, x, y)
+    end subroutine annotate
+
+    subroutine add_text(x, y, s, color, fontsize, ha, arrow, xarr, yarr)
+        real(dp), intent(in) :: x, y, xarr, yarr
+        character(len=*), intent(in) :: s
+        character(len=*), intent(in), optional :: color, ha
+        real(dp), intent(in), optional :: fontsize
+        logical, intent(in) :: arrow
+        integer :: it
+        character(len=7) :: col
+
+        call ensure_fig()
+        if (ax(cur_i)%n_texts >= MAX_TEXTS) return
+        ax(cur_i)%n_texts = ax(cur_i)%n_texts + 1
+        it = ax(cur_i)%n_texts
+        ax(cur_i)%texts(it)%x = x
+        ax(cur_i)%texts(it)%y = y
+        ax(cur_i)%texts(it)%s = s
+        ax(cur_i)%texts(it)%has_arrow = arrow
+        ax(cur_i)%texts(it)%xtail = xarr
+        ax(cur_i)%texts(it)%ytail = yarr
+        ax(cur_i)%texts(it)%fontsize = 10.0_dp
+        ax(cur_i)%texts(it)%ha = "left"
+        ax(cur_i)%texts(it)%color = "#000000"
+        if (present(fontsize)) ax(cur_i)%texts(it)%fontsize = fontsize
+        if (present(ha)) ax(cur_i)%texts(it)%ha = ha
+        col = resolve_color(color)
+        if (len_trim(col) > 0) ax(cur_i)%texts(it)%color = col
+    end subroutine add_text
+
     subroutine add_series(ia, x, y, fmt, label, lw, color, marker, linestyle)
         integer, intent(in) :: ia
         real(dp), intent(in) :: x(:), y(:)
@@ -880,6 +950,38 @@ contains
         end select
     end subroutine append_marker
 
+    ! Text element. anchor is a matplotlib horizontal alignment
+    ! (left/center/right) or an SVG anchor (start/middle/end).
+    subroutine append_text(b, x, y, s, anchor, fontsize, color, transform)
+        type(svg_builder), intent(inout) :: b
+        real(dp), intent(in) :: x, y, fontsize
+        character(len=*), intent(in) :: s, anchor, color
+        character(len=*), intent(in), optional :: transform
+
+        call builder_append(b, '<text x="')
+        call append_num(b, x)
+        call builder_append(b, '" y="')
+        call append_num(b, y)
+        call builder_append(b, '" text-anchor="')
+        select case (anchor)
+        case ("left", "start"); call builder_append(b, "start")
+        case ("right", "end"); call builder_append(b, "end")
+        case default; call builder_append(b, "middle")
+        end select
+        call builder_append(b, '" font-family="DejaVu Sans, sans-serif" font-size="')
+        call append_num(b, fontsize)
+        call builder_append(b, '" fill="')
+        call builder_append(b, color)
+        if (present(transform)) then
+            call builder_append(b, '" transform="')
+            call builder_append(b, transform)
+        end if
+        call builder_append(b, '">')
+        call builder_append(b, s)
+        call builder_append(b, "</text>")
+        call builder_append(b, new_line("a"))
+    end subroutine append_text
+
     ! Straight line segment in pixel coordinates.
     subroutine append_line(b, x1, y1, x2, y2, color, lw, ls)
         type(svg_builder), intent(inout) :: b
@@ -993,6 +1095,8 @@ contains
         integer :: nxt, nyt, i, j, n, nl
         real(dp) :: px, py, ms, r, mid
         character(len=64) :: lbl
+        character(len=64) :: tx, ty
+        integer :: tn, tyn
         character(len=512) :: esc
         integer :: ln, en
         logical :: xlog, ylog
@@ -1152,6 +1256,22 @@ contains
                 end do
             end if
         end do
+        ! annotations, in data coordinates
+        do i = 1, a%n_texts
+            px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xlog)
+            py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ylog)
+            if (a%texts(i)%has_arrow) then
+                call append_line(b, px, py, &
+                                 map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xlog), &
+                                 map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ylog), &
+                                 trim(a%texts(i)%color), 1.0_dp, LINE_SOLID)
+            end if
+            call xml_escape_to(a%texts(i)%s, esc, en)
+            call append_text(b, px, py + 3.5_dp, esc(1:en), &
+                             trim(a%texts(i)%ha), a%texts(i)%fontsize, &
+                             trim(a%texts(i)%color))
+        end do
+
         call builder_append(b, "</g>")
         call builder_append(b, new_line("a"))
 
@@ -1181,15 +1301,7 @@ contains
             call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
             call builder_append(b, new_line("a"))
             call format_tick_to(xticks(i), xlog, lbl, ln)
-            call builder_append(b, '<text x="')
-            call append_num(b, px)
-            call builder_append(b, '" y="')
-            call append_num(b, ax_b + 16.0_dp)
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="10" fill="#000000">')
-            call builder_append(b, lbl(1:ln))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_text(b, px, ax_b + 16.0_dp, lbl(1:ln), "center", 10.0_dp, "#000000")
         end do
 
         ! y ticks
@@ -1206,59 +1318,29 @@ contains
             call builder_append(b, '" stroke="#000000" stroke-width="0.8"/>')
             call builder_append(b, new_line("a"))
             call format_tick_to(yticks(i), ylog, lbl, ln)
-            call builder_append(b, '<text x="')
-            call append_num(b, ax_l - 7.0_dp)
-            call builder_append(b, '" y="')
-            call append_num(b, py + 3.5_dp)
-            call builder_append(b, '" text-anchor="end" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="10" fill="#000000">')
-            call builder_append(b, lbl(1:ln))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_text(b, ax_l - 7.0_dp, py + 3.5_dp, lbl(1:ln), "right", 10.0_dp, "#000000")
         end do
 
         if (len_trim(a%xlabel) > 0) then
             call xml_escape_to(a%xlabel, esc, en)
-            call builder_append(b, '<text x="')
-            call append_num(b, 0.5_dp * (ax_l + ax_r))
-            call builder_append(b, '" y="')
-            call append_num(b, ax_b + 28.6_dp)
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="11" fill="#000000">')
-            call builder_append(b, esc(1:en))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_text(b, 0.5_dp * (ax_l + ax_r), ax_b + 28.6_dp, esc(1:en), &
+                             "center", 11.0_dp, "#000000")
         end if
 
         if (len_trim(a%ylabel) > 0) then
             call xml_escape_to(a%ylabel, esc, en)
-            call builder_append(b, '<text x="')
-            call append_num(b, ax_l - 34.0_dp)
-            call builder_append(b, '" y="')
-            call append_num(b, 0.5_dp * (ax_t + ax_b))
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="11" fill="#000000" transform="rotate(-90 ')
-            call append_num(b, ax_l - 34.0_dp)
-            call builder_append(b, " ")
-            call append_num(b, 0.5_dp * (ax_t + ax_b))
-            call builder_append(b, ')">')
-            call builder_append(b, esc(1:en))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call fmt_num(ax_l - 34.0_dp, tx, tn)
+            call fmt_num(0.5_dp * (ax_t + ax_b), ty, tyn)
+            call append_text(b, ax_l - 34.0_dp, 0.5_dp * (ax_t + ax_b), esc(1:en), &
+                             "center", 11.0_dp, "#000000", &
+                             "rotate(-90 " // tx(1:tn) // " " // ty(1:tyn) // ")")
         end if
 
         ! title
         if (len_trim(a%title) > 0) then
             call xml_escape_to(a%title, esc, en)
-            call builder_append(b, '<text x="')
-            call append_num(b, 0.5_dp * (ax_l + ax_r))
-            call builder_append(b, '" y="')
-            call append_num(b, ax_t - 6.0_dp)
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="12" fill="#000000">')
-            call builder_append(b, esc(1:en))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_text(b, 0.5_dp * (ax_l + ax_r), ax_t - 6.0_dp, esc(1:en), &
+                             "center", 12.0_dp, "#000000")
         end if
 
         ! legend
@@ -1320,14 +1402,8 @@ contains
                                            trim(a%series(i)%color))
                     end if
                     call xml_escape_to(a%series(i)%label, esc, en)
-                    call builder_append(b, '<text x="')
-                    call append_num(b, leg_x + 34.0_dp)
-                    call builder_append(b, '" y="')
-                    call append_num(b, py + 3.5_dp)
-                    call builder_append(b, '" font-family="DejaVu Sans, sans-serif" font-size="10" fill="#000000">')
-                    call builder_append(b, esc(1:en))
-                    call builder_append(b, "</text>")
-                    call builder_append(b, new_line("a"))
+                    call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, esc(1:en), &
+                                     "left", 10.0_dp, "#000000")
                 end do
             end if
         end if
@@ -1376,15 +1452,8 @@ contains
         ! suptitle (figure-level, above all axes)
         if (len_trim(fig_suptitle) > 0) then
             call xml_escape_to(fig_suptitle, esc, en)
-            call builder_append(b, '<text x="')
-            call append_num(b, 0.5_dp * W)
-            call builder_append(b, '" y="')
-            call append_num(b, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp)
-            call builder_append(b, '" text-anchor="middle" font-family="DejaVu Sans, sans-serif" ')
-            call builder_append(b, 'font-size="12" fill="#000000">')
-            call builder_append(b, esc(1:en))
-            call builder_append(b, "</text>")
-            call builder_append(b, new_line("a"))
+            call append_text(b, 0.5_dp * W, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp, &
+                             esc(1:en), "center", 12.0_dp, "#000000")
         end if
 
         call builder_append(b, "</svg>")
