@@ -65,9 +65,9 @@ module fplot
     real(dp), save :: fig_w_in = 6.4_dp
     real(dp), save :: fig_h_in = 4.8_dp
     character(len=256), save :: fig_suptitle = ""
-    type(axes_t), allocatable, save, target :: ax(:)
+    type(axes_t), allocatable, save :: ax(:)
     integer, save :: n_ax = 0
-    type(axes_t), pointer, save :: cur => null()
+    integer, save :: cur_i = 0
     integer, save :: grid_m = 0, grid_n = 0
     logical, save :: fig_initialized = .false.
 
@@ -76,9 +76,9 @@ contains
     subroutine ensure_fig()
         if (.not. fig_initialized) call clf()
         ! No axes yet: create a single full-figure axes (pylab default).
-        if (.not. associated(cur)) then
+        if (cur_i < 1 .or. cur_i > n_ax) then
             call new_axes_grid(1, 1)
-            cur => ax(1)
+            cur_i = 1
         end if
     end subroutine ensure_fig
 
@@ -125,7 +125,7 @@ contains
 
     subroutine clf()
         integer :: i
-        cur => null()
+        cur_i = 0
         if (n_ax > 0 .and. allocated(ax)) then
             do i = 1, n_ax
                 call clear_axes(ax(i))
@@ -148,7 +148,7 @@ contains
         integer :: i, r, c
         real(dp) :: w, h
 
-        cur => null()
+        cur_i = 0
         if (n_ax > 0 .and. allocated(ax)) then
             do i = 1, n_ax
                 call clear_axes(ax(i))
@@ -227,10 +227,10 @@ contains
         if (.not. fig_initialized) call clf()
 
         if (n_ax == mm * nn .and. grid_m == mm .and. grid_n == nn) then
-            cur => ax(ii)
+            cur_i = ii
         else
             call new_axes_grid(mm, nn)
-            cur => ax(ii)
+            cur_i = ii
         end if
     end subroutine subplot
 
@@ -243,46 +243,46 @@ contains
     subroutine title(s)
         character(len=*), intent(in) :: s
         call ensure_fig()
-        cur%title = s
+        ax(cur_i)%title = s
     end subroutine title
 
     subroutine xlabel(s)
         character(len=*), intent(in) :: s
         call ensure_fig()
-        cur%xlabel = s
+        ax(cur_i)%xlabel = s
     end subroutine xlabel
 
     subroutine ylabel(s)
         character(len=*), intent(in) :: s
         call ensure_fig()
-        cur%ylabel = s
+        ax(cur_i)%ylabel = s
     end subroutine ylabel
 
     subroutine grid(on)
         logical, intent(in) :: on
         call ensure_fig()
-        cur%grid_on = on
+        ax(cur_i)%grid_on = on
     end subroutine grid
 
     subroutine legend()
         call ensure_fig()
-        cur%legend_on = .true.
+        ax(cur_i)%legend_on = .true.
     end subroutine legend
 
     subroutine xlim(xmin, xmax)
         real(dp), intent(in) :: xmin, xmax
         call ensure_fig()
-        cur%xmin_user = xmin
-        cur%xmax_user = xmax
-        cur%xlim_set = .true.
+        ax(cur_i)%xmin_user = xmin
+        ax(cur_i)%xmax_user = xmax
+        ax(cur_i)%xlim_set = .true.
     end subroutine xlim
 
     subroutine ylim(ymin, ymax)
         real(dp), intent(in) :: ymin, ymax
         call ensure_fig()
-        cur%ymin_user = ymin
-        cur%ymax_user = ymax
-        cur%ylim_set = .true.
+        ax(cur_i)%ymin_user = ymin
+        ax(cur_i)%ymax_user = ymax
+        ax(cur_i)%ylim_set = .true.
     end subroutine ylim
 
     subroutine plot(x, y, fmt, label, lw, color, marker, linestyle)
@@ -290,7 +290,7 @@ contains
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
         real(dp), intent(in), optional :: lw
         call ensure_fig()
-        call add_series(cur, x, y, fmt, label, lw, color, marker, linestyle)
+        call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle)
     end subroutine plot
 
     subroutine semilogx(x, y, fmt, label, lw, color)
@@ -298,8 +298,8 @@ contains
         character(len=*), intent(in), optional :: fmt, label, color
         real(dp), intent(in), optional :: lw
         call ensure_fig()
-        cur%xscale = SCALE_LOG
-        call add_series(cur, x, y, fmt, label, lw, color)
+        ax(cur_i)%xscale = SCALE_LOG
+        call add_series(cur_i, x, y, fmt, label, lw, color)
     end subroutine semilogx
 
     subroutine semilogy(x, y, fmt, label, lw, color)
@@ -307,8 +307,8 @@ contains
         character(len=*), intent(in), optional :: fmt, label, color
         real(dp), intent(in), optional :: lw
         call ensure_fig()
-        cur%yscale = SCALE_LOG
-        call add_series(cur, x, y, fmt, label, lw, color)
+        ax(cur_i)%yscale = SCALE_LOG
+        call add_series(cur_i, x, y, fmt, label, lw, color)
     end subroutine semilogy
 
     subroutine loglog(x, y, fmt, label, lw, color)
@@ -316,13 +316,13 @@ contains
         character(len=*), intent(in), optional :: fmt, label, color
         real(dp), intent(in), optional :: lw
         call ensure_fig()
-        cur%xscale = SCALE_LOG
-        cur%yscale = SCALE_LOG
-        call add_series(cur, x, y, fmt, label, lw, color)
+        ax(cur_i)%xscale = SCALE_LOG
+        ax(cur_i)%yscale = SCALE_LOG
+        call add_series(cur_i, x, y, fmt, label, lw, color)
     end subroutine loglog
 
-    subroutine add_series(a, x, y, fmt, label, lw, color, marker, linestyle)
-        type(axes_t), intent(inout) :: a
+    subroutine add_series(ia, x, y, fmt, label, lw, color, marker, linestyle)
+        integer, intent(in) :: ia
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
         real(dp), intent(in), optional :: lw
@@ -334,22 +334,22 @@ contains
         n = min(size(x), size(y))
         if (n <= 0) return
         if (n > MAX_POINTS) n = MAX_POINTS
-        if (a%n_series >= MAX_SERIES) return
+        if (ax(ia)%n_series >= MAX_SERIES) return
 
-        a%n_series = a%n_series + 1
-        is = a%n_series
-        call free_series(a, is)
+        ax(ia)%n_series = ax(ia)%n_series + 1
+        is = ax(ia)%n_series
+        call free_series(ax(ia), is)
 
-        allocate (a%series(is)%x(n), a%series(is)%y(n))
-        a%series(is)%x(1:n) = x(1:n)
-        a%series(is)%y(1:n) = y(1:n)
-        a%series(is)%n = n
-        a%series(is)%linewidth = default_linewidth
-        a%series(is)%markersize = default_markersize
-        a%series(is)%label = ""
-        a%series(is)%marker = MARKER_NONE
-        a%series(is)%linestyle = LINE_SOLID
-        a%series(is)%color = ""
+        allocate (ax(ia)%series(is)%x(n), ax(ia)%series(is)%y(n))
+        ax(ia)%series(is)%x(1:n) = x(1:n)
+        ax(ia)%series(is)%y(1:n) = y(1:n)
+        ax(ia)%series(is)%n = n
+        ax(ia)%series(is)%linewidth = default_linewidth
+        ax(ia)%series(is)%markersize = default_markersize
+        ax(ia)%series(is)%label = ""
+        ax(ia)%series(is)%marker = MARKER_NONE
+        ax(ia)%series(is)%linestyle = LINE_SOLID
+        ax(ia)%series(is)%color = ""
 
         have_fmt = .false.
         f = ""
@@ -365,61 +365,61 @@ contains
         ls = LINE_NONE
         if (have_fmt) then
             call parse_fmt(trim(f), col, m, ls)
-            a%series(is)%marker = m
+            ax(ia)%series(is)%marker = m
             if (ls == LINE_NONE .and. m == MARKER_NONE) then
-                a%series(is)%linestyle = LINE_SOLID
+                ax(ia)%series(is)%linestyle = LINE_SOLID
             else if (ls == LINE_NONE .and. m /= MARKER_NONE) then
-                a%series(is)%linestyle = LINE_NONE
+                ax(ia)%series(is)%linestyle = LINE_NONE
             else
-                a%series(is)%linestyle = ls
+                ax(ia)%series(is)%linestyle = ls
             end if
-            if (len_trim(col) > 0) a%series(is)%color = col
+            if (len_trim(col) > 0) ax(ia)%series(is)%color = col
         end if
 
         if (present(color)) then
             if (len_trim(color) > 0) then
                 if (is_hex_color(trim(color))) then
-                    a%series(is)%color = color(1:7)
+                    ax(ia)%series(is)%color = color(1:7)
                 else if (len_trim(color) == 1) then
-                    a%series(is)%color = color_from_char(color(1:1))
+                    ax(ia)%series(is)%color = color_from_char(color(1:1))
                 else if (len_trim(color) >= 2 .and. color(1:1) == "C") then
                     read (color(2:2), *) m
-                    a%series(is)%color = color_from_C(m)
+                    ax(ia)%series(is)%color = color_from_C(m)
                 end if
             end if
         end if
 
         if (present(marker)) then
             select case (trim(marker))
-            case ("o"); a%series(is)%marker = MARKER_CIRCLE
-            case ("x"); a%series(is)%marker = MARKER_X
-            case ("."); a%series(is)%marker = MARKER_POINT
-            case ("None", "none", ""); a%series(is)%marker = MARKER_NONE
+            case ("o"); ax(ia)%series(is)%marker = MARKER_CIRCLE
+            case ("x"); ax(ia)%series(is)%marker = MARKER_X
+            case ("."); ax(ia)%series(is)%marker = MARKER_POINT
+            case ("None", "none", ""); ax(ia)%series(is)%marker = MARKER_NONE
             end select
         end if
 
         if (present(linestyle)) then
             select case (trim(linestyle))
-            case ("-"); a%series(is)%linestyle = LINE_SOLID
-            case ("--"); a%series(is)%linestyle = LINE_DASHED
-            case (":"); a%series(is)%linestyle = LINE_DOTTED
-            case ("-."); a%series(is)%linestyle = LINE_DASHDOT
-            case ("None", "none", ""); a%series(is)%linestyle = LINE_NONE
+            case ("-"); ax(ia)%series(is)%linestyle = LINE_SOLID
+            case ("--"); ax(ia)%series(is)%linestyle = LINE_DASHED
+            case (":"); ax(ia)%series(is)%linestyle = LINE_DOTTED
+            case ("-."); ax(ia)%series(is)%linestyle = LINE_DASHDOT
+            case ("None", "none", ""); ax(ia)%series(is)%linestyle = LINE_NONE
             end select
         end if
 
-        if (present(lw)) a%series(is)%linewidth = lw
-        if (present(label)) a%series(is)%label = label
+        if (present(lw)) ax(ia)%series(is)%linewidth = lw
+        if (present(label)) ax(ia)%series(is)%label = label
 
-        if (len_trim(a%series(is)%color) == 0) then
-            a%series(is)%color = color_from_C(a%color_cycle)
-            a%color_cycle = a%color_cycle + 1
+        if (len_trim(ax(ia)%series(is)%color) == 0) then
+            ax(ia)%series(is)%color = color_from_C(ax(ia)%color_cycle)
+            ax(ia)%color_cycle = ax(ia)%color_cycle + 1
         end if
 
         ! marker-only format string => no line
-        if (have_fmt .and. a%series(is)%marker /= MARKER_NONE) then
+        if (have_fmt .and. ax(ia)%series(is)%marker /= MARKER_NONE) then
             if (index(f, "-") == 0 .and. index(f, ":") == 0) then
-                a%series(is)%linestyle = LINE_NONE
+                ax(ia)%series(is)%linestyle = LINE_NONE
             end if
         end if
     end subroutine add_series
