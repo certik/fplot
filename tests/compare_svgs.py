@@ -51,6 +51,8 @@ CASES = [
     "subplots_adjust",
     "twinx",
     "colors",
+    "fontsize",
+    "legend_opts",
 ]
 
 

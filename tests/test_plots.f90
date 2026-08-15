@@ -531,5 +531,26 @@ program test_plots
     call savefig("tests/out/colors.svg")
     print *, "wrote tests/out/colors.svg"
 
+    ! 40) font sizes
+    call figure()
+    call plot(xb, hb, label="sine")
+    call title("big title", fontsize=17.0_dp)
+    call xlabel("x axis", fontsize=14.0_dp)
+    call ylabel("y axis", fontsize=14.0_dp)
+    call tick_params(labelsize=13.0_dp)
+    call legend(fontsize=12.0_dp)
+    call savefig("tests/out/fontsize.svg")
+    print *, "wrote tests/out/fontsize.svg"
+
+    ! 41) legend options
+    call figure()
+    call plot(xb, hb, label="alpha")
+    call plot(xb, hb * 0.5_dp, label="beta")
+    call plot(xb, hb * 0.25_dp, label="gamma")
+    call plot(xb, hb * 0.125_dp, label="delta")
+    call legend(loc="upper right", ncol=2, title="series", frameon=.false.)
+    call savefig("tests/out/legend_opts.svg")
+    print *, "wrote tests/out/legend_opts.svg"
+
     print *, "All test plots written."
 end program test_plots

@@ -24,6 +24,7 @@ module fplot
     public :: render_svg
     public :: subplot, suptitle, subplots_adjust, tight_layout
     public :: twinx, twiny
+    public :: set_fontsize
 
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
@@ -68,6 +69,7 @@ module fplot
     real(dp), parameter :: TITLE_FONT = 12.0_dp
     real(dp), parameter :: SUPTITLE_FONT = 12.0_dp
     real(dp), parameter :: LABEL_FONT = 11.0_dp
+    real(dp), parameter :: LEGEND_FONT = 10.0_dp
     real(dp), parameter :: DIGIT_W = 0.636_dp
     ! Height of a one-line label including its leading, in font sizes.
     real(dp), parameter :: LABEL_BOX = 1.45_dp
@@ -163,6 +165,14 @@ module fplot
         real(dp) :: xtick_dir = 1.0_dp, ytick_dir = 1.0_dp
         real(dp) :: xtick_rot = 0.0_dp, ytick_rot = 0.0_dp
         real(dp) :: xtick_size = TICK_FONT, ytick_size = TICK_FONT
+        real(dp) :: title_size = TITLE_FONT
+        real(dp) :: xlabel_size = LABEL_FONT, ylabel_size = LABEL_FONT
+        real(dp) :: legend_size = LEGEND_FONT
+        integer :: legend_ncol = 1
+        logical :: legend_frame = .true.
+        character(len=64) :: legend_title = ""
+        real(dp) :: legend_bbox(2) = 0.0_dp
+        logical :: legend_has_bbox = .false.
         logical :: spine(4) = .true.
         ! Twin axes: which axes to borrow limits from, and which side this
         ! one's own ticks and label go on. A twin also lets the axes beneath
@@ -201,6 +211,12 @@ module fplot
     real(dp), save :: fig_bottom = MARGIN_BOTTOM, fig_top = MARGIN_TOP
     real(dp), save :: fig_wspace = WSPACE, fig_hspace = HSPACE
     character(len=256), save :: fig_suptitle = ""
+    ! Font sizes for anything not set on an individual axes. New axes take
+    ! their sizes from here, so set_fontsize before or after plotting behaves
+    ! the same way.
+    real(dp), save :: def_title = TITLE_FONT, def_label = LABEL_FONT
+    real(dp), save :: def_tick = TICK_FONT, def_legend = LEGEND_FONT
+    real(dp), save :: fig_suptitle_size = SUPTITLE_FONT
     type(axes_t), allocatable, save :: ax(:)
     integer, save :: n_ax = 0
     integer, save :: cur_i = 0
@@ -253,6 +269,11 @@ contains
         fig_top = MARGIN_TOP
         fig_wspace = WSPACE
         fig_hspace = HSPACE
+        def_title = TITLE_FONT
+        def_label = LABEL_FONT
+        def_tick = TICK_FONT
+        def_legend = LEGEND_FONT
+        fig_suptitle_size = SUPTITLE_FONT
         fig_initialized = .true.
     end subroutine clf
 
@@ -267,10 +288,31 @@ contains
 
         n_ax = m * n
         allocate (ax(n_ax))
+        do i = 1, n_ax
+            call apply_font_defaults(ax(i))
+        end do
         grid_m = m
         grid_n = n
         call layout_grid()
     end subroutine new_axes_grid
+
+    ! Baseline of the x tick labels below the axes. Reduces to matplotlib's
+    ! 16.0 at the default tick size and grows with the ascent of larger text.
+    pure function xtick_gap(a) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp) :: v
+        v = 8.4_dp + 0.76_dp * a%xtick_size
+    end function xtick_gap
+
+    subroutine apply_font_defaults(a)
+        type(axes_t), intent(inout) :: a
+        a%title_size = def_title
+        a%xlabel_size = def_label
+        a%ylabel_size = def_label
+        a%xtick_size = def_tick
+        a%ytick_size = def_tick
+        a%legend_size = def_legend
+    end subroutine apply_font_defaults
 
     ! Place the existing axes in the current margins. Called again whenever
     ! those margins move, so the axes objects themselves survive.
@@ -395,7 +437,7 @@ contains
             if (mod(i - 1, grid_n) > 0) inner_l = max(inner_l, decor_left(ax(i)))
             if ((i - 1) / grid_n < grid_m - 1) inner_b = max(inner_b, decor_bottom(ax(i)))
         end do
-        if (len_trim(fig_suptitle) > 0) need_t = need_t + LABEL_BOX * SUPTITLE_FONT
+        if (len_trim(fig_suptitle) > 0) need_t = need_t + LABEL_BOX * fig_suptitle_size
 
         fig_left = (p + need_l) / W
         fig_right = 1.0_dp - (p + need_r) / W
@@ -427,7 +469,7 @@ contains
         type(axes_t), intent(in) :: a
         real(dp) :: v
         v = TICK_LEN + 2.0_dp + tick_label_width(a)
-        if (len_trim(a%ylabel) > 0) v = v + LABEL_BOX * LABEL_FONT
+        if (len_trim(a%ylabel) > 0) v = v + LABEL_BOX * a%ylabel_size
     end function decor_left
 
     function decor_bottom(a) result(v)
@@ -436,14 +478,14 @@ contains
         v = TICK_LEN + 1.0_dp + 1.15_dp * a%xtick_size
         if (a%xtick_rot /= 0.0_dp) v = v + tick_label_width(a) * &
                                         abs(sin(a%xtick_rot * PI / 180.0_dp))
-        if (len_trim(a%xlabel) > 0) v = v + LABEL_BOX * LABEL_FONT
+        if (len_trim(a%xlabel) > 0) v = v + LABEL_BOX * a%xlabel_size
     end function decor_bottom
 
     function decor_top(a) result(v)
         type(axes_t), intent(in) :: a
         real(dp) :: v
         v = 0.0_dp
-        if (len_trim(a%title) > 0) v = LABEL_BOX * TITLE_FONT
+        if (len_trim(a%title) > 0) v = LABEL_BOX * a%title_size
     end function decor_top
 
     ! Widest tick label an axes will draw, in points. Tick text is digits,
@@ -480,29 +522,73 @@ contains
         cur_i = i
     end subroutine subplot
 
-    subroutine suptitle(s)
+    subroutine suptitle(s, fontsize)
         character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
         call ensure_fig()
         fig_suptitle = s
+        if (present(fontsize)) fig_suptitle_size = fontsize
     end subroutine suptitle
 
-    subroutine title(s)
+    subroutine title(s, fontsize)
         character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
         call ensure_fig()
         ax(cur_i)%title = s
+        if (present(fontsize)) ax(cur_i)%title_size = fontsize
     end subroutine title
 
-    subroutine xlabel(s)
+    subroutine xlabel(s, fontsize)
         character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
         call ensure_fig()
         ax(cur_i)%xlabel = s
+        if (present(fontsize)) ax(cur_i)%xlabel_size = fontsize
     end subroutine xlabel
 
-    subroutine ylabel(s)
+    subroutine ylabel(s, fontsize)
         character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
         call ensure_fig()
         ax(cur_i)%ylabel = s
+        if (present(fontsize)) ax(cur_i)%ylabel_size = fontsize
     end subroutine ylabel
+
+    ! One place to set text sizes. size= sets everything at once, which is the
+    ! common request; the individual arguments override it. Applies to the
+    ! axes that already exist as well as any made later, so it works whether
+    ! it is called before or after plotting.
+    subroutine set_fontsize(size, title, labels, ticks, legend)
+        real(dp), intent(in), optional :: size, title, labels, ticks, legend
+        integer :: i
+
+        call ensure_fig()
+        if (present(size)) then
+            ! Keep matplotlib's proportions: the title is a little larger than
+            ! the axis labels, which are larger than the tick labels.
+            def_title = size * TITLE_FONT / LABEL_FONT
+            def_label = size
+            def_tick = size * TICK_FONT / LABEL_FONT
+            def_legend = size * LEGEND_FONT / LABEL_FONT
+            fig_suptitle_size = size * SUPTITLE_FONT / LABEL_FONT
+        end if
+        if (present(title)) then
+            def_title = title
+            fig_suptitle_size = title
+        end if
+        if (present(labels)) def_label = labels
+        if (present(ticks)) def_tick = ticks
+        if (present(legend)) def_legend = legend
+
+        do i = 1, n_ax
+            ax(i)%title_size = def_title
+            ax(i)%xlabel_size = def_label
+            ax(i)%ylabel_size = def_label
+            ax(i)%xtick_size = def_tick
+            ax(i)%ytick_size = def_tick
+            ax(i)%legend_size = def_legend
+        end do
+    end subroutine set_fontsize
 
     subroutine grid(on)
         logical, intent(in) :: on
@@ -510,11 +596,27 @@ contains
         ax(cur_i)%grid_on = on
     end subroutine grid
 
-    subroutine legend(loc)
-        character(len=*), intent(in), optional :: loc
+    ! bbox_to_anchor is in axes coordinates, so (1.02, 1.0) with the default
+    ! loc="upper right" is matplotlib's usual recipe for parking the legend
+    ! just outside the right-hand edge. When it is given, loc names which
+    ! corner of the legend sits on the anchor rather than a position in the
+    ! axes, exactly as matplotlib treats it.
+    subroutine legend(loc, fontsize, ncol, frameon, title, bbox_to_anchor)
+        character(len=*), intent(in), optional :: loc, title
+        real(dp), intent(in), optional :: fontsize, bbox_to_anchor(2)
+        integer, intent(in), optional :: ncol
+        logical, intent(in), optional :: frameon
         call ensure_fig()
         ax(cur_i)%legend_on = .true.
         if (present(loc)) ax(cur_i)%legend_loc = loc
+        if (present(fontsize)) ax(cur_i)%legend_size = fontsize
+        if (present(ncol)) ax(cur_i)%legend_ncol = max(1, ncol)
+        if (present(frameon)) ax(cur_i)%legend_frame = frameon
+        if (present(title)) ax(cur_i)%legend_title = title
+        if (present(bbox_to_anchor)) then
+            ax(cur_i)%legend_bbox = bbox_to_anchor
+            ax(cur_i)%legend_has_bbox = .true.
+        end if
     end subroutine legend
 
     subroutine xticks(vals, labels)
@@ -2627,13 +2729,13 @@ contains
             call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
             call format_tick_to(v, .false., lbl, ln)
             call append_text(b, bx + bw + 7.0_dp, py + 3.5_dp, lbl(1:ln), &
-                             "left", 10.0_dp, "#000000")
+                             "left", a%ytick_size, "#000000")
         end do
 
         if (len_trim(a%cbar_label) > 0) then
             call xml_escape_to(a%cbar_label, esc, ln)
             call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), esc(1:ln), &
-                             "center", 11.0_dp, "#000000", &
+                             "center", a%ylabel_size, "#000000", &
                              "rotate(-90 " // trim(fmt_pt(bx + bw + 34.0_dp)) // " " // &
                              trim(fmt_pt(0.5_dp * (bt + bb))) // ")")
         end if
@@ -2661,6 +2763,33 @@ contains
 
     ! matplotlib's "best" needs a data-overlap search; upper right is the
     ! placement it picks for the common case, so we use it as the fallback.
+    ! Place the legend box against a point given in axes coordinates. loc then
+    ! names the corner of the box that touches that point, which is what lets
+    ! loc="upper left" with bbox_to_anchor=[1.02, 1] sit outside the axes.
+    subroutine legend_anchor(loc, ax_l, ax_t, ax_b, ax_w, bbox, &
+                             leg_w, leg_h, leg_x, leg_y)
+        character(len=*), intent(in) :: loc
+        real(dp), intent(in) :: ax_l, ax_t, ax_b, ax_w, bbox(2), leg_w, leg_h
+        real(dp), intent(out) :: leg_x, leg_y
+        real(dp) :: px, py
+        px = ax_l + bbox(1) * ax_w
+        py = ax_b - bbox(2) * (ax_b - ax_t)
+        if (index(loc, "right") > 0) then
+            leg_x = px - leg_w
+        else if (index(loc, "center") > 0 .and. index(loc, "left") == 0) then
+            leg_x = px - 0.5_dp * leg_w
+        else
+            leg_x = px
+        end if
+        if (index(loc, "lower") > 0) then
+            leg_y = py - leg_h
+        else if (index(loc, "upper") > 0 .or. loc == "best") then
+            leg_y = py
+        else
+            leg_y = py - 0.5_dp * leg_h
+        end if
+    end subroutine legend_anchor
+
     subroutine legend_origin(loc, ax_l, ax_r, ax_t, ax_b, leg_w, leg_h, leg_x, leg_y)
         character(len=*), intent(in) :: loc
         real(dp), intent(in) :: ax_l, ax_r, ax_t, ax_b, leg_w, leg_h
@@ -2796,8 +2925,8 @@ contains
         character(len=512) :: esc
         integer :: ln, en
         type(scale_t) :: xsc, ysc
-        integer :: n_leg, k, max_lbl
-        real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h
+        integer :: n_leg, k, max_lbl, n_col, n_row, lc, lr
+        real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h, col_w, ttl_h, leg_x0
 
         ax_l = a%left * W
         ax_r = a%right * W
@@ -3098,7 +3227,7 @@ contains
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
             call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, a%xtick_len)
             call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, lbl, ln)
-            call append_tick_text(b, px, x_edge + x_out * 16.0_dp - &
+            call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
                                   merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
                                   a%xtick_size, a%xtick_rot)
         end do
@@ -3133,19 +3262,22 @@ contains
 
         if (len_trim(a%xlabel) > 0) then
             call xml_escape_to(a%xlabel, esc, en)
-            call append_text(b, 0.5_dp * (ax_l + ax_r), ax_b + 28.6_dp, esc(1:en), &
-                             "center", 11.0_dp, "#000000")
+            call append_text(b, 0.5_dp * (ax_l + ax_r), &
+                             ax_b + xtick_gap(a) + 0.24_dp * a%xtick_size + 1.84_dp &
+                             + 0.76_dp * a%xlabel_size, esc(1:en), &
+                             "center", a%xlabel_size, "#000000")
         end if
 
         if (len_trim(a%ylabel) > 0) then
             call xml_escape_to(a%ylabel, esc, en)
             ! The right-hand label of a twinx faces the other way, so that it
             ! reads from outside the axes just as the left-hand one does.
-            mid = y_edge + y_out * 34.0_dp
+            mid = y_edge + y_out * (34.0_dp + 0.76_dp * (a%ylabel_size - LABEL_FONT) &
+                                    + 1.15_dp * (a%ytick_size - TICK_FONT))
             call fmt_num(mid, tx, tn)
             call fmt_num(0.5_dp * (ax_t + ax_b), ty, tyn)
             call append_text(b, mid, 0.5_dp * (ax_t + ax_b), esc(1:en), &
-                             "center", 11.0_dp, "#000000", &
+                             "center", a%ylabel_size, "#000000", &
                              "rotate(" // merge("90 ", "-90", a%y_right) // " " // &
                              tx(1:tn) // " " // ty(1:tyn) // ")")
         end if
@@ -3153,8 +3285,9 @@ contains
         ! title
         if (len_trim(a%title) > 0) then
             call xml_escape_to(a%title, esc, en)
-            call append_text(b, 0.5_dp * (ax_l + ax_r), ax_t - 6.0_dp, esc(1:en), &
-                             "center", 12.0_dp, "#000000")
+            call append_text(b, 0.5_dp * (ax_l + ax_r), &
+                             ax_t - 0.5_dp * a%title_size, esc(1:en), &
+                             "center", a%title_size, "#000000")
         end if
 
         if (a%cbar_on) call append_colorbar(b, a, idx, W, H)
@@ -3170,14 +3303,33 @@ contains
                 end if
             end do
             if (n_leg > 0) then
-                row_h = 18.0_dp
+                row_h = 18.0_dp * a%legend_size / LEGEND_FONT
+                n_col = min(max(1, a%legend_ncol), n_leg)
+                n_row = (n_leg + n_col - 1) / n_col
                 ! Sample line (leg_x+8 .. leg_x+28), gap to the text at
                 ! leg_x+34, the label itself, and a trailing pad.
-                leg_w = 34.0_dp + real(max_lbl, dp) * LEGEND_CHAR_W + 8.0_dp
-                leg_w = min(leg_w, ax_w - 16.0_dp)
-                leg_h = 8.0_dp + real(n_leg, dp) * row_h
-                call legend_origin(a%legend_loc, ax_l, ax_r, ax_t, ax_b, &
-                                   leg_w, leg_h, leg_x, leg_y)
+                col_w = 34.0_dp + real(max_lbl, dp) * LEGEND_CHAR_W &
+                        * a%legend_size / LEGEND_FONT + 8.0_dp
+                leg_w = real(n_col, dp) * col_w
+                ttl_h = 0.0_dp
+                if (len_trim(a%legend_title) > 0) ttl_h = row_h
+                leg_h = 8.0_dp + ttl_h + real(n_row, dp) * row_h
+                if (a%legend_has_bbox) then
+                    call legend_anchor(a%legend_loc, ax_l, ax_t, ax_b, &
+                                       ax_w, a%legend_bbox, leg_w, leg_h, &
+                                       leg_x, leg_y)
+                else
+                    leg_w = min(leg_w, ax_w - 16.0_dp)
+                    call legend_origin(a%legend_loc, ax_l, ax_r, ax_t, ax_b, &
+                                       leg_w, leg_h, leg_x, leg_y)
+                end if
+                if (len_trim(a%legend_title) > 0) then
+                    call xml_escape_to(a%legend_title, esc, en)
+                    call append_text(b, leg_x + 0.5_dp * leg_w, &
+                                     leg_y + 4.0_dp + 0.5_dp * row_h + 3.5_dp, &
+                                     esc(1:en), "center", a%legend_size, "#000000")
+                end if
+                if (a%legend_frame) then
                 call builder_append(b, '<rect x="')
                 call append_num(b, leg_x)
                 call builder_append(b, '" y="')
@@ -3188,11 +3340,16 @@ contains
                 call append_num(b, leg_h)
                 call builder_append(b, '" fill="#ffffff" stroke="#cccccc" stroke-width="0.8" rx="2"/>')
                 call builder_append(b, new_line("a"))
+                end if
+                leg_x0 = leg_x
                 k = 0
                 do i = 1, a%n_series
                     if (len_trim(a%series(i)%label) == 0) cycle
                     k = k + 1
-                    py = leg_y + 4.0_dp + (real(k, dp) - 0.5_dp) * row_h
+                    lc = (k - 1) / n_row
+                    lr = k - 1 - lc * n_row
+                    leg_x = leg_x0 + real(lc, dp) * col_w
+                    py = leg_y + 4.0_dp + ttl_h + (real(lr, dp) + 0.5_dp) * row_h
                     if (a%series(i)%linestyle /= LINE_NONE) then
                         call builder_append(b, '<line x1="')
                         call append_num(b, leg_x + 8.0_dp)
@@ -3219,7 +3376,7 @@ contains
                     end if
                     call xml_escape_to(a%series(i)%label, esc, en)
                     call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, esc(1:en), &
-                                     "left", 10.0_dp, "#000000")
+                                     "left", a%legend_size, "#000000")
                 end do
             end if
         end if
@@ -3281,7 +3438,7 @@ contains
         if (len_trim(fig_suptitle) > 0) then
             call xml_escape_to(fig_suptitle, esc, en)
             call append_text(b, 0.5_dp * W, (1.0_dp - SUPTITLE_Y) * H + 4.2_dp, &
-                             esc(1:en), "center", 12.0_dp, "#000000")
+                             esc(1:en), "center", fig_suptitle_size, "#000000")
         end if
 
         call builder_append(b, "</svg>")

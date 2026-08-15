@@ -47,7 +47,10 @@ call suptitle("figure title")
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
-- `legend(loc=...)`, `xticks` / `yticks` with optional labels, `minorticks_on`
+- `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
+  `xticks` / `yticks` with optional labels, `minorticks_on`
+- Font sizes: `fontsize=` on `title` / `xlabel` / `ylabel` / `suptitle`, and
+  `set_fontsize(size=, title=, labels=, ticks=, legend=)` to set them globally
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing

@@ -53,6 +53,8 @@ OUT_NAMES = [
     "subplots_adjust",
     "twinx",
     "colors",
+    "fontsize",
+    "legend_opts",
 ]
 
 
@@ -491,6 +493,25 @@ def main() -> None:
         ax.plot(xsm, [float(i)] * 2, color=c, lw=3.0)
     ax.set_title("colour names")
     save(fig, "colors")
+
+    # 40 font sizes
+    fig, ax = setup_fig()
+    ax.plot(xb, hb, label="sine")
+    ax.set_title("big title", fontsize=17.0)
+    ax.set_xlabel("x axis", fontsize=14.0)
+    ax.set_ylabel("y axis", fontsize=14.0)
+    ax.tick_params(labelsize=13.0)
+    ax.legend(fontsize=12.0)
+    save(fig, "fontsize")
+
+    # 41 legend options
+    fig, ax = setup_fig()
+    ax.plot(xb, hb, label="alpha")
+    ax.plot(xb, hb * 0.5, label="beta")
+    ax.plot(xb, hb * 0.25, label="gamma")
+    ax.plot(xb, hb * 0.125, label="delta")
+    ax.legend(loc="upper right", ncol=2, title="series", frameon=False)
+    save(fig, "legend_opts")
 
     print("All matplotlib references written.")
 
