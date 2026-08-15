@@ -7,7 +7,9 @@ module fplot_ticks
     integer, parameter, public :: MAX_TICKS = 32
 
     public :: linear_ticks
+    public :: nice_number
     public :: log_ticks
+    public :: symlog_ticks
     public :: format_tick_to
 
 contains
@@ -89,6 +91,48 @@ contains
         end if
         n_ticks = n
     end subroutine linear_ticks
+
+    ! Decades either side of zero, plus zero itself, thinned by a whole
+    ! stride when there are more decades than will fit.
+    subroutine symlog_ticks(vmin, vmax, ticks, n_ticks)
+        real(dp), intent(in) :: vmin, vmax
+        real(dp), intent(out) :: ticks(MAX_TICKS)
+        integer, intent(out) :: n_ticks
+        real(dp) :: lo, hi, m, v
+        integer :: nd, stride, k, n
+
+        lo = min(vmin, vmax)
+        hi = max(vmin, vmax)
+        m = max(abs(lo), abs(hi))
+        if (m <= 0.0_dp) m = 1.0_dp
+
+        nd = max(0, ceiling(log10(m)))
+        stride = 1
+        do while (2 * (nd / stride) + 1 > 9)
+            stride = stride + 1
+        end do
+
+        n = 0
+        do k = nd - mod(nd, stride), 0, -stride
+            v = -10.0_dp ** k
+            if (v >= lo .and. v <= hi) then
+                n = n + 1
+                ticks(n) = v
+            end if
+        end do
+        if (0.0_dp >= lo .and. 0.0_dp <= hi .and. n < MAX_TICKS) then
+            n = n + 1
+            ticks(n) = 0.0_dp
+        end if
+        do k = 0, nd, stride
+            v = 10.0_dp ** k
+            if (v >= lo .and. v <= hi .and. n < MAX_TICKS) then
+                n = n + 1
+                ticks(n) = v
+            end if
+        end do
+        n_ticks = n
+    end subroutine symlog_ticks
 
     subroutine log_ticks(vmin, vmax, ticks, n_ticks)
         real(dp), intent(in) :: vmin, vmax

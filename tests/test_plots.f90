@@ -14,6 +14,10 @@ program test_plots
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
     real(dp) :: xs(ns), ys(ns)
+    integer, parameter :: nd = 40
+    real(dp) :: dist1(nd), dist2(nd)
+    integer, parameter :: nsym = 201
+    real(dp) :: xsym(nsym)
     real(dp) :: xe(ne), ye(ne), ee(ne)
     real(dp), parameter :: xb(nb) = [1.0_dp, 2.0_dp, 3.0_dp, 4.0_dp, 5.0_dp, 6.0_dp]
     real(dp), parameter :: hb(nb) = [3.0_dp, 5.0_dp, 2.0_dp, 7.0_dp, 4.0_dp, 6.0_dp]
@@ -22,7 +26,10 @@ program test_plots
         2.4_dp, 2.6_dp, 2.9_dp, 3.0_dp, 3.2_dp, 3.3_dp, 3.7_dp, 4.0_dp, 4.4_dp, 4.9_dp]
     character(len=1), parameter :: mark_codes(n_marks) = &
         ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
-    integer :: i
+    integer :: i, j
+    integer, parameter :: nzr = 8, nzc = 16
+    real(dp) :: zimg(nzr, nzc)
+    real(dp) :: svals(ns), cvals(ns)
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
     ! Shared data
@@ -287,6 +294,223 @@ program test_plots
     call ylabel("y")
     call savefig("tests/out/ticks_legend.svg")
     print *, "wrote tests/out/ticks_legend.svg"
+
+    ! 18) a non-default figure size
+    call figure(figsize=[8.0_dp, 3.0_dp])
+    call plot(x, y, "b-", label="sin")
+    call title("Wide figure")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call legend()
+    call savefig("tests/out/figsize.svg")
+    print *, "wrote tests/out/figsize.svg"
+
+    ! 19) more series than the old fixed 32-slot cap.
+    ! figure(), not clf(), because clf() keeps the previous canvas size.
+    call figure()
+    do i = 1, 40
+        call plot(x, sin(x + 0.05_dp * real(i, dp)))
+    end do
+    call title("Forty series")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/many_series.svg")
+    print *, "wrote tests/out/many_series.svg"
+
+    ! 20) alpha on lines and markers
+    call figure()
+    call plot(x, y, "b-", label="sin", alpha=0.35_dp)
+    call plot(x, cos(x), "r-o", label="cos", alpha=0.6_dp)
+    call scatter(x(1:ns), y(1:ns), s=80.0_dp, c="g", label="pts", alpha=0.5_dp)
+    call title("Alpha")
+    call xlabel("x")
+    call ylabel("y")
+    call legend()
+    call savefig("tests/out/alpha.svg")
+    print *, "wrote tests/out/alpha.svg"
+
+    ! 21) a non-default figure facecolor
+    call figure()
+    call plot(x, y, "b-")
+    call title("Figure facecolor")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call savefig("tests/out/facecolor.svg", facecolor="#eeeeee")
+    print *, "wrote tests/out/facecolor.svg"
+
+    do i = 1, nzr
+        do j = 1, nzc
+            zimg(i, j) = sin(0.4_dp * real(j, dp)) + cos(0.5_dp * real(i, dp))
+        end do
+    end do
+
+    do i = 1, ns
+        svals(i) = 20.0_dp + 8.0_dp * real(i, dp)
+        cvals(i) = real(i, dp)
+    end do
+
+    ! 22) imshow with the default upper origin
+    call figure()
+    call imshow(zimg)
+    call title("imshow")
+    call savefig("tests/out/imshow.svg")
+    print *, "wrote tests/out/imshow.svg"
+
+    ! 23) imshow with an extent, lower origin and a colorbar
+    call figure()
+    call imshow(zimg, cmap="plasma", extent=[0.0_dp, 4.0_dp, 0.0_dp, 2.0_dp], &
+                origin="lower")
+    call colorbar(label="value")
+    call title("imshow with colorbar")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/imshow_cbar.svg")
+    print *, "wrote tests/out/imshow_cbar.svg"
+
+    ! 24) scatter with per-point sizes and colour-mapped values
+    call figure()
+    call scatter(x(1:ns), y(1:ns), sizes=svals, cvals=cvals, cmap="viridis")
+    call colorbar(label="c")
+    call title("Scatter with c and s arrays")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/scatter_cmap.svg")
+    print *, "wrote tests/out/scatter_cmap.svg"
+
+    ! 25) contour lines
+    call figure()
+    call contour(zimg)
+    call title("contour")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/contour.svg")
+    print *, "wrote tests/out/contour.svg"
+
+    ! 26) filled contours with a colorbar
+    call figure()
+    call contourf(zimg, cmap="coolwarm")
+    call colorbar()
+    call title("contourf")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/contourf.svg")
+    print *, "wrote tests/out/contourf.svg"
+
+    ! 27) step
+    call figure()
+    call step(xb, hb, where="mid")
+    call title("step")
+    call savefig("tests/out/step.svg")
+    print *, "wrote tests/out/step.svg"
+
+    ! 28) stem
+    call figure()
+    call stem(xb, hb)
+    call title("stem")
+    call savefig("tests/out/stem.svg")
+    print *, "wrote tests/out/stem.svg"
+
+    ! 29) barh
+    call figure()
+    call barh(xb, hb)
+    call title("barh")
+    call savefig("tests/out/barh.svg")
+    print *, "wrote tests/out/barh.svg"
+
+    ! 30) pie
+    call figure()
+    call pie(hb, labels=["a", "b", "c", "d", "e", "f"])
+    call title("pie")
+    call savefig("tests/out/pie.svg")
+    print *, "wrote tests/out/pie.svg"
+
+    do i = 1, nd
+        dist1(i) = sin(real(i, dp)) + 0.3_dp * cos(2.7_dp * real(i, dp))
+        dist2(i) = 1.0_dp + 2.0_dp * sin(0.7_dp * real(i, dp))**3
+    end do
+
+    ! 31) boxplot
+    call figure()
+    call boxplot(dist1)
+    call boxplot(dist2)
+    call title("boxplot")
+    call savefig("tests/out/boxplot.svg")
+    print *, "wrote tests/out/boxplot.svg"
+
+    ! 32) violinplot
+    call figure()
+    call violinplot(dist1)
+    call violinplot(dist2)
+    call title("violinplot")
+    call savefig("tests/out/violinplot.svg")
+    print *, "wrote tests/out/violinplot.svg"
+
+    do i = 1, nsym
+        xsym(i) = -100.0_dp + real(i - 1, dp)
+    end do
+
+    ! 33) symlog y scale
+    call figure()
+    call plot(xsym, xsym)
+    call set_yscale("symlog")
+    call title("symlog")
+    call savefig("tests/out/symlog.svg")
+    print *, "wrote tests/out/symlog.svg"
+
+    ! 34) axis("equal")
+    call figure()
+    call plot(xb, hb, marker="o")
+    call axis("equal")
+    call title("axis equal")
+    call savefig("tests/out/axis_equal.svg")
+    print *, "wrote tests/out/axis_equal.svg"
+
+    ! 35) tick styling and hidden spines
+    call figure()
+    call plot(xb, hb)
+    call tick_params(direction="in", labelsize=8.0_dp)
+    call tick_params(axis="x", rotation=45.0_dp)
+    call spines(top=.false., right=.false.)
+    call title("tick_params")
+    call savefig("tests/out/tick_style.svg")
+    print *, "wrote tests/out/tick_style.svg"
+
+    ! 36) tight_layout with long tick labels
+    call figure()
+    call subplot(1, 2, 1)
+    call plot(xb, hb * 1000.0_dp)
+    call ylabel("value")
+    call xlabel("category")
+    call subplot(1, 2, 2)
+    call plot(xb, hb)
+    call xlabel("category")
+    call tight_layout()
+    call savefig("tests/out/tight_layout.svg")
+    print *, "wrote tests/out/tight_layout.svg"
+
+    ! 37) subplots_adjust
+    call figure()
+    call subplot(2, 1, 1)
+    call plot(xb, hb)
+    call subplot(2, 1, 2)
+    call plot(xb, hb)
+    call subplots_adjust(left=0.2_dp, hspace=0.5_dp)
+    call savefig("tests/out/subplots_adjust.svg")
+    print *, "wrote tests/out/subplots_adjust.svg"
+
+    ! 38) twinx
+    call figure()
+    call plot(xb, hb)
+    call ylabel("left")
+    call xlabel("x")
+    call twinx()
+    call plot(xb, hb * 100.0_dp)
+    call ylabel("right")
+    call title("twinx")
+    call savefig("tests/out/twinx.svg")
+    print *, "wrote tests/out/twinx.svg"
 
     print *, "All test plots written."
 end program test_plots

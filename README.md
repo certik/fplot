@@ -29,16 +29,30 @@ call suptitle("figure title")
 ## Features (MVP)
 
 - `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
+- `scatter` also takes per-point `sizes=` and colour-mapped `cvals=`
+  (separate keywords because Fortran cannot overload one dummy as
+  scalar-or-array the way matplotlib's `s=` and `c=` do)
+- `step`, `stem`, `barh`, `pie`, `boxplot`, `violinplot`
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`
 - `text` and `annotate` (with a leader line to the annotated point)
+- `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
+  `aspect`, plus `colorbar`
+- `contour` and `contourf` with automatic or explicit `levels`
+- Colormaps: `viridis`, `plasma`, `inferno`, `magma`, `gray`, `coolwarm`
 - Format strings: colors `bgrcmykw` / `C0`–`C9`, linestyles `-` `--` `:` `-.`,
   markers `o x . s ^ v < > * + D`
-- Optional `label=`, `lw=`, `color=`, `marker=`
-- Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure`
+- Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
+- Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure(figsize=, dpi=)`
+- `savefig(file, transparent=, facecolor=)`
+- `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
+- `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
+- `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
 - `legend(loc=...)`, `xticks` / `yticks` with optional labels, `minorticks_on`
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing
+- `subplots_adjust` and `tight_layout`
+- `twinx` and `twiny` for a second y or x axis on the same plot
 - SVG defaults aligned with matplotlib (6.4×4.8 in, tab10 colors, subplot margins)
 
 ## Build

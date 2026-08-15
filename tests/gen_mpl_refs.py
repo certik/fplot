@@ -31,6 +31,27 @@ OUT_NAMES = [
     "hv_lines",
     "text_annotate",
     "ticks_legend",
+    "figsize",
+    "many_series",
+    "alpha",
+    "facecolor",
+    "imshow",
+    "imshow_cbar",
+    "scatter_cmap",
+    "contour",
+    "contourf",
+    "step",
+    "stem",
+    "barh",
+    "pie",
+    "boxplot",
+    "violinplot",
+    "symlog",
+    "axis_equal",
+    "tick_style",
+    "tight_layout",
+    "subplots_adjust",
+    "twinx",
 ]
 
 
@@ -39,10 +60,10 @@ def setup_fig():
     return fig, ax
 
 
-def save(fig, name: str) -> None:
+def save(fig, name: str, **kw) -> None:
     REF.mkdir(parents=True, exist_ok=True)
     path = REF / f"{name}.svg"
-    fig.savefig(path, format="svg")
+    fig.savefig(path, format="svg", **kw)
     plt.close(fig)
     print(f"wrote {path}")
 
@@ -283,6 +304,182 @@ def main() -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     save(fig, "ticks_legend")
+
+    # 18 figsize
+    fig, ax = plt.subplots(figsize=(8.0, 3.0))
+    ax.plot(x, y, "b-", label="sin")
+    ax.set_title("Wide figure")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    ax.legend()
+    save(fig, "figsize")
+
+    # 19 many_series
+    fig, ax = setup_fig()
+    for i in range(1, 41):
+        ax.plot(x, np.sin(x + 0.05 * i))
+    ax.set_title("Forty series")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "many_series")
+
+    # 20 alpha
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-", label="sin", alpha=0.35)
+    ax.plot(x, np.cos(x), "r-o", label="cos", alpha=0.6)
+    ax.scatter(x[:30], y[:30], s=80.0, c="g", label="pts", alpha=0.5)
+    ax.set_title("Alpha")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.legend()
+    save(fig, "alpha")
+
+    # 21 facecolor
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-")
+    ax.set_title("Figure facecolor")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    save(fig, "facecolor", facecolor="#eeeeee")
+
+    # 22/23 imshow
+    nzr, nzc = 8, 16
+    zimg = np.array([[np.sin(0.4 * (j + 1)) + np.cos(0.5 * (i + 1))
+                      for j in range(nzc)] for i in range(nzr)])
+
+    fig, ax = setup_fig()
+    ax.imshow(zimg)
+    ax.set_title("imshow")
+    save(fig, "imshow")
+
+    fig, ax = setup_fig()
+    im = ax.imshow(zimg, cmap="plasma", extent=(0.0, 4.0, 0.0, 2.0), origin="lower")
+    cb = fig.colorbar(im)
+    cb.set_label("value")
+    ax.set_title("imshow with colorbar")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "imshow_cbar")
+
+    # 24 scatter_cmap
+    ns = 30
+    svals = np.array([20.0 + 8.0 * (i + 1) for i in range(ns)])
+    cvals = np.array([float(i + 1) for i in range(ns)])
+    fig, ax = setup_fig()
+    sc = ax.scatter(x[:ns], y[:ns], s=svals, c=cvals, cmap="viridis")
+    cb = fig.colorbar(sc)
+    cb.set_label("c")
+    ax.set_title("Scatter with c and s arrays")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "scatter_cmap")
+
+    # 25/26 contour
+    fig, ax = setup_fig()
+    ax.contour(zimg)
+    ax.set_title("contour")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "contour")
+
+    fig, ax = setup_fig()
+    cf = ax.contourf(zimg, cmap="coolwarm")
+    fig.colorbar(cf)
+    ax.set_title("contourf")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "contourf")
+
+    # 27-30 step / stem / barh / pie
+    fig, ax = setup_fig()
+    ax.step(xb, hb, where="mid")
+    ax.set_title("step")
+    save(fig, "step")
+
+    fig, ax = setup_fig()
+    ax.stem(xb, hb)
+    ax.set_title("stem")
+    save(fig, "stem")
+
+    fig, ax = setup_fig()
+    ax.barh(xb, hb)
+    ax.set_title("barh")
+    save(fig, "barh")
+
+    fig, ax = setup_fig()
+    ax.pie(hb, labels=["a", "b", "c", "d", "e", "f"])
+    ax.set_title("pie")
+    save(fig, "pie")
+
+    # 31-32 boxplot / violinplot
+    k = np.arange(1, 41, dtype=float)
+    dist1 = np.sin(k) + 0.3 * np.cos(2.7 * k)
+    dist2 = 1.0 + 2.0 * np.sin(0.7 * k) ** 3
+
+    fig, ax = setup_fig()
+    ax.boxplot([dist1, dist2])
+    ax.set_title("boxplot")
+    save(fig, "boxplot")
+
+    fig, ax = setup_fig()
+    ax.violinplot([dist1, dist2])
+    ax.set_title("violinplot")
+    save(fig, "violinplot")
+
+    # 33 symlog
+    xsym = np.linspace(-100.0, 100.0, 201)
+    fig, ax = setup_fig()
+    ax.plot(xsym, xsym)
+    ax.set_yscale("symlog")
+    ax.set_title("symlog")
+    save(fig, "symlog")
+
+    # 34 axis equal
+    fig, ax = setup_fig()
+    ax.plot(xb, hb, marker="o")
+    ax.axis("equal")
+    ax.set_title("axis equal")
+    save(fig, "axis_equal")
+
+    # 35 tick styling
+    fig, ax = setup_fig()
+    ax.plot(xb, hb)
+    ax.tick_params(direction="in", labelsize=8.0)
+    ax.tick_params(axis="x", rotation=45.0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.set_title("tick_params")
+    save(fig, "tick_style")
+
+    # 36 tight_layout
+    fig, axs = plt.subplots(1, 2)
+    axs[0].plot(xb, hb * 1e3)
+    axs[0].set_ylabel("value")
+    axs[0].set_xlabel("category")
+    axs[1].plot(xb, hb)
+    axs[1].set_xlabel("category")
+    fig.tight_layout()
+    save(fig, "tight_layout")
+
+    # 37 subplots_adjust
+    fig, axs = plt.subplots(2, 1)
+    axs[0].plot(xb, hb)
+    axs[1].plot(xb, hb)
+    fig.subplots_adjust(left=0.2, hspace=0.5)
+    save(fig, "subplots_adjust")
+
+    # 38 twinx
+    fig, ax = setup_fig()
+    ax.plot(xb, hb)
+    ax.set_ylabel("left")
+    ax.set_xlabel("x")
+    ax2 = ax.twinx()
+    ax2.plot(xb, hb * 100.0, color="C1")
+    ax2.set_ylabel("right")
+    ax.set_title("twinx")
+    save(fig, "twinx")
 
     print("All matplotlib references written.")
 
