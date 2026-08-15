@@ -1,6 +1,7 @@
 ! fplot — pure Fortran pylab-style SVG plotting library.
 module fplot
     use fplot_style
+    use fplot_cmap
     use fplot_ticks
     use fplot_svg
     implicit none

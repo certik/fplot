@@ -15,6 +15,7 @@ echo "Using compiler: $FLANG"
 cd "$BUILD"
 # Compile modules in dependency order
 $FLANG -c "$ROOT/src/fplot_style.f90"
+$FLANG -c "$ROOT/src/fplot_cmap.f90"
 $FLANG -c "$ROOT/src/fplot_ticks.f90"
 $FLANG -c "$ROOT/src/fplot_svg.f90"
 $FLANG -c "$ROOT/src/fplot.f90"
@@ -22,11 +23,11 @@ $FLANG -c "$ROOT/src/fplot.f90"
 # Test program
 $FLANG -o "$BUILD/test_plots" \
     "$ROOT/tests/test_plots.f90" \
-    fplot_style.o fplot_ticks.o fplot_svg.o fplot.o
+    fplot_style.o fplot_cmap.o fplot_ticks.o fplot_svg.o fplot.o
 
 # Demo
 $FLANG -o "$BUILD/demo" \
     "$ROOT/examples/demo.f90" \
-    fplot_style.o fplot_ticks.o fplot_svg.o fplot.o
+    fplot_style.o fplot_cmap.o fplot_ticks.o fplot_svg.o fplot.o
 
 echo "Built: $BUILD/test_plots $BUILD/demo"
