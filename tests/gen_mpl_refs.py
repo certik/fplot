@@ -34,6 +34,7 @@ OUT_NAMES = [
     "figsize",
     "many_series",
     "alpha",
+    "facecolor",
 ]
 
 
@@ -42,10 +43,10 @@ def setup_fig():
     return fig, ax
 
 
-def save(fig, name: str) -> None:
+def save(fig, name: str, **kw) -> None:
     REF.mkdir(parents=True, exist_ok=True)
     path = REF / f"{name}.svg"
-    fig.savefig(path, format="svg")
+    fig.savefig(path, format="svg", **kw)
     plt.close(fig)
     print(f"wrote {path}")
 
@@ -316,6 +317,15 @@ def main() -> None:
     ax.set_ylabel("y")
     ax.legend()
     save(fig, "alpha")
+
+    # 21 facecolor
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-")
+    ax.set_title("Figure facecolor")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True)
+    save(fig, "facecolor", facecolor="#eeeeee")
 
     print("All matplotlib references written.")
 

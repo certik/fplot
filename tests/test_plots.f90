@@ -323,5 +323,15 @@ program test_plots
     call savefig("tests/out/alpha.svg")
     print *, "wrote tests/out/alpha.svg"
 
+    ! 21) a non-default figure facecolor
+    call figure()
+    call plot(x, y, "b-")
+    call title("Figure facecolor")
+    call xlabel("x")
+    call ylabel("y")
+    call grid(.true.)
+    call savefig("tests/out/facecolor.svg", facecolor="#eeeeee")
+    print *, "wrote tests/out/facecolor.svg"
+
     print *, "All test plots written."
 end program test_plots

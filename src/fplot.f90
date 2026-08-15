@@ -1321,11 +1321,13 @@ contains
         end if
     end subroutine tick_label
 
-    subroutine render_axes(b, a, idx, W, H)
+    subroutine render_axes(b, a, idx, W, H, clear)
         type(svg_builder), intent(inout) :: b
         type(axes_t), intent(in) :: a
         integer, intent(in) :: idx
         real(dp), intent(in) :: W, H
+        ! matplotlib's transparent=True clears the axes patch as well.
+        logical, intent(in) :: clear
         real(dp) :: ax_l, ax_r, ax_b, ax_t, ax_w, ax_h
         real(dp) :: xmin, xmax, ymin, ymax
         real(dp) :: xticks(MAX_TICKS), yticks(MAX_TICKS)
@@ -1377,16 +1379,18 @@ contains
         call builder_append(b, new_line("a"))
 
         ! axes face
-        call builder_append(b, '<rect x="')
-        call append_num(b, ax_l)
-        call builder_append(b, '" y="')
-        call append_num(b, ax_t)
-        call builder_append(b, '" width="')
-        call append_num(b, ax_w)
-        call builder_append(b, '" height="')
-        call append_num(b, ax_h)
-        call builder_append(b, '" fill="#ffffff"/>')
-        call builder_append(b, new_line("a"))
+        if (.not. clear) then
+            call builder_append(b, '<rect x="')
+            call append_num(b, ax_l)
+            call builder_append(b, '" y="')
+            call append_num(b, ax_t)
+            call builder_append(b, '" width="')
+            call append_num(b, ax_w)
+            call builder_append(b, '" height="')
+            call append_num(b, ax_h)
+            call builder_append(b, '" fill="#ffffff"/>')
+            call builder_append(b, new_line("a"))
+        end if
 
         ! grid
         if (a%grid_on) then
@@ -1637,14 +1641,22 @@ contains
         end if
     end subroutine render_axes
 
-    function render_svg() result(svg)
+    function render_svg(facecolor, transparent) result(svg)
+        character(len=*), intent(in), optional :: facecolor
+        logical, intent(in), optional :: transparent
         character(len=:), allocatable :: svg
         type(svg_builder) :: b
         real(dp) :: W, H
         character(len=512) :: esc
+        character(len=7) :: face
+        logical :: clear
         integer :: i, en
 
         call ensure_fig()
+        clear = .false.
+        if (present(transparent)) clear = transparent
+        face = resolve_color(facecolor)
+        if (len_trim(face) == 0) face = "#ffffff"
         call builder_init(b)
 
         W = fig_w_in * 72.0_dp
@@ -1664,17 +1676,21 @@ contains
         call builder_append(b, '" version="1.1">')
         call builder_append(b, new_line("a"))
 
-        ! background
-        call builder_append(b, '<rect x="0" y="0" width="')
-        call append_num(b, W)
-        call builder_append(b, '" height="')
-        call append_num(b, H)
-        call builder_append(b, '" fill="#ffffff"/>')
-        call builder_append(b, new_line("a"))
+        ! background; transparent drops the figure patch entirely
+        if (.not. clear) then
+            call builder_append(b, '<rect x="0" y="0" width="')
+            call append_num(b, W)
+            call builder_append(b, '" height="')
+            call append_num(b, H)
+            call builder_append(b, '" fill="')
+            call builder_append(b, face)
+            call builder_append(b, '"/>')
+            call builder_append(b, new_line("a"))
+        end if
 
         ! axes (subplots)
         do i = 1, n_ax
-            call render_axes(b, ax(i), i, W, H)
+            call render_axes(b, ax(i), i, W, H, clear)
         end do
 
         ! suptitle (figure-level, above all axes)
@@ -1689,12 +1705,46 @@ contains
         svg = builder_get(b)
     end function render_svg
 
-    subroutine savefig(filename)
+    ! Writing SVG bytes into a .png would produce a file no viewer can open,
+    ! so an unsupported extension is a hard error rather than a silent default.
+    subroutine check_svg_ext(filename)
         character(len=*), intent(in) :: filename
+        integer :: d, sl
+        character(len=:), allocatable :: ext
+
+        d = index(filename, ".", back=.true.)
+        sl = max(index(filename, "/", back=.true.), index(filename, achar(92), back=.true.))
+        if (d <= sl + 1) return
+        ext = lower(filename(d + 1:len_trim(filename)))
+        if (ext == "svg") return
+        print *, "fplot: cannot write ", trim(filename)
+        print *, "fplot: only .svg output is supported, not ." // ext
+        error stop "fplot: unsupported savefig format"
+    end subroutine check_svg_ext
+
+    pure function lower(s) result(t)
+        character(len=*), intent(in) :: s
+        character(len=len(s)) :: t
+        integer :: i, c
+        do i = 1, len(s)
+            c = iachar(s(i:i))
+            if (c >= iachar("A") .and. c <= iachar("Z")) then
+                t(i:i) = achar(c + 32)
+            else
+                t(i:i) = s(i:i)
+            end if
+        end do
+    end function lower
+
+    subroutine savefig(filename, transparent, facecolor)
+        character(len=*), intent(in) :: filename
+        logical, intent(in), optional :: transparent
+        character(len=*), intent(in), optional :: facecolor
         character(len=:), allocatable :: svg
         integer :: u, ios, n
 
-        svg = render_svg()
+        call check_svg_ext(filename)
+        svg = render_svg(facecolor, transparent)
         n = len(svg)
         open (newunit=u, file=trim(filename), status="replace", action="write", &
               form="unformatted", access="stream", iostat=ios)

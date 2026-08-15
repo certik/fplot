@@ -32,6 +32,7 @@ CASES = [
     "figsize",
     "many_series",
     "alpha",
+    "facecolor",
 ]
 
 

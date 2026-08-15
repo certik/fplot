@@ -33,8 +33,9 @@ call suptitle("figure title")
 - `text` and `annotate` (with a leader line to the annotated point)
 - Format strings: colors `bgrcmykw` / `C0`–`C9`, linestyles `-` `--` `:` `-.`,
   markers `o x . s ^ v < > * + D`
-- Optional `label=`, `lw=`, `color=`, `marker=`
-- Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure`
+- Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
+- Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure(figsize=, dpi=)`
+- `savefig(file, transparent=, facecolor=)`
 - `legend(loc=...)`, `xticks` / `yticks` with optional labels, `minorticks_on`
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
