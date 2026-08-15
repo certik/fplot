@@ -72,6 +72,9 @@ module fplot
         integer :: linestyle = LINE_SOLID
         real(dp) :: linewidth = 1.5_dp
         real(dp) :: markersize = 6.0_dp
+        ! Per-point overrides used by scatter; unallocated means uniform.
+        real(dp), allocatable :: psize(:)
+        character(len=7), allocatable :: pcolor(:)
         real(dp) :: width = 0.8_dp
         real(dp) :: alpha = 1.0_dp
         character(len=128) :: label = ""
@@ -107,6 +110,9 @@ module fplot
         character(len=24) :: xtick_lab(MAX_TICKS), ytick_lab(MAX_TICKS)
         ! Image (imshow). One image per axes, as in normal matplotlib use.
         logical :: has_img = .false.
+        ! Set by imshow, and by a scatter that maps c values, so that
+        ! colorbar() has a range and colormap to draw.
+        logical :: has_cmap_src = .false.
         real(dp), allocatable :: img(:, :)
         integer :: img_cmap = CMAP_VIRIDIS
         real(dp) :: img_vmin = 0.0_dp, img_vmax = 1.0_dp
@@ -328,11 +334,16 @@ contains
 
     ! Marker-only plot. s is the marker area in points^2 (matplotlib's
     ! convention), so the marker size is its square root.
-    subroutine scatter(x, y, s, c, marker, label, alpha)
+    ! s and c are the scalar forms; sizes and cvals are their per-point
+    ! equivalents. Fortran cannot overload one dummy as scalar-or-array, so
+    ! they are separate keywords rather than matplotlib's single s= and c=.
+    subroutine scatter(x, y, s, c, marker, label, alpha, sizes, cvals, cmap, vmin, vmax)
         real(dp), intent(in) :: x(:), y(:)
-        real(dp), intent(in), optional :: s, alpha
-        character(len=*), intent(in), optional :: c, marker, label
-        integer :: is
+        real(dp), intent(in), optional :: s, alpha, vmin, vmax
+        real(dp), intent(in), optional :: sizes(:), cvals(:)
+        character(len=*), intent(in), optional :: c, marker, label, cmap
+        integer :: is, n, k, id
+        real(dp) :: lo, hi
 
         call ensure_fig()
         if (present(marker)) then
@@ -343,8 +354,36 @@ contains
                             linestyle="None", alpha=alpha)
         end if
         is = ax(cur_i)%n_series
-        if (is >= 1) then
-            if (present(s)) ax(cur_i)%series(is)%markersize = sqrt(max(s, 0.0_dp))
+        if (is < 1) return
+        n = ax(cur_i)%series(is)%n
+
+        ! matplotlib's s is an area in points squared.
+        if (present(s)) ax(cur_i)%series(is)%markersize = sqrt(max(s, 0.0_dp))
+        if (present(sizes)) then
+            allocate (ax(cur_i)%series(is)%psize(n))
+            do k = 1, n
+                ax(cur_i)%series(is)%psize(k) = &
+                    sqrt(max(sizes(min(k, size(sizes))), 0.0_dp))
+            end do
+        end if
+
+        if (present(cvals)) then
+            id = CMAP_VIRIDIS
+            if (present(cmap)) id = cmap_from_str(cmap)
+            lo = minval(cvals)
+            hi = maxval(cvals)
+            if (present(vmin)) lo = vmin
+            if (present(vmax)) hi = vmax
+            if (hi <= lo) hi = lo + 1.0_dp
+            allocate (ax(cur_i)%series(is)%pcolor(n))
+            do k = 1, n
+                ax(cur_i)%series(is)%pcolor(k) = &
+                    cmap_color(id, (cvals(min(k, size(cvals))) - lo) / (hi - lo))
+            end do
+            ax(cur_i)%has_cmap_src = .true.
+            ax(cur_i)%img_cmap = id
+            ax(cur_i)%img_vmin = lo
+            ax(cur_i)%img_vmax = hi
         end if
     end subroutine scatter
 
@@ -486,6 +525,7 @@ contains
         allocate (ax(cur_i)%img(nr, nc))
         ax(cur_i)%img = z
         ax(cur_i)%has_img = .true.
+        ax(cur_i)%has_cmap_src = .true.
 
         ax(cur_i)%img_cmap = CMAP_VIRIDIS
         if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
@@ -516,7 +556,7 @@ contains
     subroutine colorbar(label)
         character(len=*), intent(in), optional :: label
         call ensure_fig()
-        if (.not. ax(cur_i)%has_img) return
+        if (.not. ax(cur_i)%has_cmap_src) return
         if (ax(cur_i)%cbar_on) return
         ax(cur_i)%cbar_on = .true.
         if (present(label)) ax(cur_i)%cbar_label = label
@@ -1498,6 +1538,18 @@ contains
         t = t(1:n)
     end function fmt_pt
 
+    ! Per-point colour when scatter mapped c values, otherwise the series colour.
+    function point_color(s, j) result(col)
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        character(len=7) :: col
+        if (allocated(s%pcolor)) then
+            col = s%pcolor(j)
+        else
+            col = s%color
+        end if
+    end function point_color
+
     ! matplotlib's "best" needs a data-overlap search; upper right is the
     ! placement it picks for the common case, so we use it as the fallback.
     subroutine legend_origin(loc, ax_l, ax_r, ax_t, ax_b, leg_w, leg_h, leg_x, leg_y)
@@ -1768,8 +1820,9 @@ contains
                     if (a%yscale == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
                     px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
                     py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog)
+                    if (allocated(a%series(i)%psize)) ms = a%series(i)%psize(j)
                     call append_marker(b, a%series(i)%marker, px, py, ms, &
-                                       trim(a%series(i)%color), a%series(i)%alpha)
+                                       point_color(a%series(i), j), a%series(i)%alpha)
                 end do
             end if
         end do

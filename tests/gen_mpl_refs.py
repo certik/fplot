@@ -37,6 +37,7 @@ OUT_NAMES = [
     "facecolor",
     "imshow",
     "imshow_cbar",
+    "scatter_cmap",
 ]
 
 
@@ -347,6 +348,19 @@ def main() -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     save(fig, "imshow_cbar")
+
+    # 24 scatter_cmap
+    ns = 30
+    svals = np.array([20.0 + 8.0 * (i + 1) for i in range(ns)])
+    cvals = np.array([float(i + 1) for i in range(ns)])
+    fig, ax = setup_fig()
+    sc = ax.scatter(x[:ns], y[:ns], s=svals, c=cvals, cmap="viridis")
+    cb = fig.colorbar(sc)
+    cb.set_label("c")
+    ax.set_title("Scatter with c and s arrays")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    save(fig, "scatter_cmap")
 
     print("All matplotlib references written.")
 

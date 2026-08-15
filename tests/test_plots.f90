@@ -25,6 +25,7 @@ program test_plots
     integer :: i, j
     integer, parameter :: nzr = 8, nzc = 16
     real(dp) :: zimg(nzr, nzc)
+    real(dp) :: svals(ns), cvals(ns)
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
     ! Shared data
@@ -341,6 +342,11 @@ program test_plots
         end do
     end do
 
+    do i = 1, ns
+        svals(i) = 20.0_dp + 8.0_dp * real(i, dp)
+        cvals(i) = real(i, dp)
+    end do
+
     ! 22) imshow with the default upper origin
     call figure()
     call imshow(zimg)
@@ -358,6 +364,16 @@ program test_plots
     call ylabel("y")
     call savefig("tests/out/imshow_cbar.svg")
     print *, "wrote tests/out/imshow_cbar.svg"
+
+    ! 24) scatter with per-point sizes and colour-mapped values
+    call figure()
+    call scatter(x(1:ns), y(1:ns), sizes=svals, cvals=cvals, cmap="viridis")
+    call colorbar(label="c")
+    call title("Scatter with c and s arrays")
+    call xlabel("x")
+    call ylabel("y")
+    call savefig("tests/out/scatter_cmap.svg")
+    print *, "wrote tests/out/scatter_cmap.svg"
 
     print *, "All test plots written."
 end program test_plots

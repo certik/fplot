@@ -35,6 +35,7 @@ CASES = [
     "facecolor",
     "imshow",
     "imshow_cbar",
+    "scatter_cmap",
 ]
 
 

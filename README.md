@@ -29,6 +29,9 @@ call suptitle("figure title")
 ## Features (MVP)
 
 - `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
+- `scatter` also takes per-point `sizes=` and colour-mapped `cvals=`
+  (separate keywords because Fortran cannot overload one dummy as
+  scalar-or-array the way matplotlib's `s=` and `c=` do)
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`
 - `text` and `annotate` (with a leader line to the annotated point)
 - `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
