@@ -46,6 +46,7 @@ OUT_NAMES = [
     "pie",
     "boxplot",
     "violinplot",
+    "symlog",
 ]
 
 
@@ -421,6 +422,14 @@ def main() -> None:
     ax.violinplot([dist1, dist2])
     ax.set_title("violinplot")
     save(fig, "violinplot")
+
+    # 33 symlog
+    xsym = np.linspace(-100.0, 100.0, 201)
+    fig, ax = setup_fig()
+    ax.plot(xsym, xsym)
+    ax.set_yscale("symlog")
+    ax.set_title("symlog")
+    save(fig, "symlog")
 
     print("All matplotlib references written.")
 

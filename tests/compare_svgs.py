@@ -44,6 +44,7 @@ CASES = [
     "pie",
     "boxplot",
     "violinplot",
+    "symlog",
 ]
 
 

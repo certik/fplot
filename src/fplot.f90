@@ -1,6 +1,7 @@
 ! fplot — pure Fortran pylab-style SVG plotting library.
 module fplot
     use fplot_style
+    use fplot_scale
     use fplot_cmap
     use fplot_contour
     use fplot_ticks
@@ -10,6 +11,7 @@ module fplot
 
     public :: dp
     public :: plot, scatter, semilogx, semilogy, loglog
+    public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
     public :: step, stem, pie, axis_off, boxplot, violinplot
     public :: text, annotate
@@ -20,8 +22,6 @@ module fplot
     public :: render_svg
     public :: subplot, suptitle
 
-    integer, parameter :: SCALE_LINEAR = 0
-    integer, parameter :: SCALE_LOG = 1
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
     integer, parameter :: INIT_SLOTS = 8
@@ -139,8 +139,8 @@ module fplot
         logical :: aspect_equal = .false.
         logical :: cbar_on = .false.
         character(len=32) :: cbar_label = ""
-        integer :: xscale = SCALE_LINEAR
-        integer :: yscale = SCALE_LINEAR
+        type(scale_t) :: xsc
+        type(scale_t) :: ysc
         logical :: xlim_set = .false.
         logical :: ylim_set = .false.
         real(dp) :: xmin_user = 0.0_dp, xmax_user = 1.0_dp
@@ -163,6 +163,10 @@ module fplot
     integer, save :: cur_i = 0
     integer, save :: grid_m = 0, grid_n = 0
     logical, save :: fig_initialized = .false.
+
+    ! Pie wedges and colorbar cells are laid out in figure geometry, not on a
+    ! user scale, so they map through a plain linear one.
+    type(scale_t), parameter :: linear_scale = scale_t(SCALE_LINEAR, 2.0_dp, 1.0_dp)
 
 contains
 
@@ -404,12 +408,54 @@ contains
         end if
     end subroutine scatter
 
+    ! Choose the axis transform explicitly: "linear", "log" or "symlog".
+    ! Until now the scale was only ever implied by which plotting call was
+    ! used, which leaves no way to put a log axis under a bar chart.
+    subroutine set_xscale(name, linthresh, linscale)
+        character(len=*), intent(in) :: name
+        real(dp), intent(in), optional :: linthresh, linscale
+        call ensure_fig()
+        ax(cur_i)%xsc = make_scale(name, linthresh, linscale)
+    end subroutine set_xscale
+
+    subroutine set_yscale(name, linthresh, linscale)
+        character(len=*), intent(in) :: name
+        real(dp), intent(in), optional :: linthresh, linscale
+        call ensure_fig()
+        ax(cur_i)%ysc = make_scale(name, linthresh, linscale)
+    end subroutine set_yscale
+
+    function make_scale(name, linthresh, linscale) result(s)
+        character(len=*), intent(in) :: name
+        real(dp), intent(in), optional :: linthresh, linscale
+        type(scale_t) :: s
+
+        select case (lower(name))
+        case ("linear")
+            s%kind = SCALE_LINEAR
+        case ("log")
+            s%kind = SCALE_LOG
+        case ("symlog")
+            s%kind = SCALE_SYMLOG
+        case default
+            error stop "fplot: unknown scale, expected linear, log or symlog"
+        end select
+        if (present(linthresh)) then
+            if (linthresh <= 0.0_dp) error stop "fplot: linthresh must be positive"
+            s%linthresh = linthresh
+        end if
+        if (present(linscale)) then
+            if (linscale <= 0.0_dp) error stop "fplot: linscale must be positive"
+            s%linscale = linscale
+        end if
+    end function make_scale
+
     subroutine semilogx(x, y, fmt, label, lw, color)
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: fmt, label, color
         real(dp), intent(in), optional :: lw
         call ensure_fig()
-        ax(cur_i)%xscale = SCALE_LOG
+        ax(cur_i)%xsc%kind = SCALE_LOG
         call add_series(cur_i, x, y, fmt, label, lw, color)
     end subroutine semilogx
 
@@ -418,7 +464,7 @@ contains
         character(len=*), intent(in), optional :: fmt, label, color
         real(dp), intent(in), optional :: lw
         call ensure_fig()
-        ax(cur_i)%yscale = SCALE_LOG
+        ax(cur_i)%ysc%kind = SCALE_LOG
         call add_series(cur_i, x, y, fmt, label, lw, color)
     end subroutine semilogy
 
@@ -427,8 +473,8 @@ contains
         character(len=*), intent(in), optional :: fmt, label, color
         real(dp), intent(in), optional :: lw
         call ensure_fig()
-        ax(cur_i)%xscale = SCALE_LOG
-        ax(cur_i)%yscale = SCALE_LOG
+        ax(cur_i)%xsc%kind = SCALE_LOG
+        ax(cur_i)%ysc%kind = SCALE_LOG
         call add_series(cur_i, x, y, fmt, label, lw, color)
     end subroutine loglog
 
@@ -1225,7 +1271,7 @@ contains
             do j = 1, a%series(i)%n
                 if (a%series(i)%kind /= SERIES_HLINE) then
                     xv = a%series(i)%x(j)
-                    if (.not. (a%xscale == SCALE_LOG .and. xv - hw <= 0.0_dp)) then
+                    if (.not. (a%xsc%kind == SCALE_LOG .and. xv - hw <= 0.0_dp)) then
                         anyx = .true.
                         xmin = min(xmin, xv - hw)
                         xmax = max(xmax, xv + hw)
@@ -1248,7 +1294,7 @@ contains
                         ylo = yv - a%series(i)%y2(j)
                         yhi = yv + a%series(i)%y2(j)
                     end select
-                    if (.not. (a%yscale == SCALE_LOG .and. yhi <= 0.0_dp)) then
+                    if (.not. (a%ysc%kind == SCALE_LOG .and. yhi <= 0.0_dp)) then
                         anyy = .true.
                         ymin = min(ymin, ylo)
                         ymax = max(ymax, yhi)
@@ -1290,7 +1336,7 @@ contains
                 xmin = 0.0_dp
                 xmax = 1.0_dp
             end if
-            call expand_limits(xmin, xmax, a%xscale == SCALE_LOG, sx_lo, sx_hi)
+            call expand_limits(xmin, xmax, a%xsc, sx_lo, sx_hi)
         end if
 
         if (a%ylim_set) then
@@ -1301,7 +1347,7 @@ contains
                 ymin = 0.0_dp
                 ymax = 1.0_dp
             end if
-            call expand_limits(ymin, ymax, a%yscale == SCALE_LOG, sticky_lo, sticky_hi)
+            call expand_limits(ymin, ymax, a%ysc, sticky_lo, sticky_hi)
         end if
 
         if (a%has_cont) then
@@ -1340,66 +1386,55 @@ contains
 
     ! Pad a data range by matplotlib's 5% margin. A sticky edge (the bar
     ! baseline) is left exactly where it is.
-    subroutine expand_limits(lo, hi, is_log, sticky_lo, sticky_hi)
+    subroutine expand_limits(lo, hi, sc, sticky_lo, sticky_hi)
         real(dp), intent(inout) :: lo, hi
-        logical, intent(in) :: is_log, sticky_lo, sticky_hi
-        real(dp) :: d, f
+        type(scale_t), intent(in) :: sc
+        logical, intent(in) :: sticky_lo, sticky_hi
+        real(dp) :: u0, u1, d
 
-        if (is_log) then
+        if (sc%kind == SCALE_LOG) then
             if (lo <= 0.0_dp) lo = tiny(1.0_dp)
             if (hi <= lo) hi = lo * 10.0_dp
-            d = log10(hi / lo)
-            if (d <= 0.0_dp) d = 1.0_dp
-            f = 10.0_dp ** (0.05_dp * d)
-            if (.not. sticky_lo) lo = lo / f
-            if (.not. sticky_hi) hi = hi * f
-        else
-            d = hi - lo
-            if (abs(d) < 1.0e-30_dp) d = 1.0_dp
-            if (.not. sticky_lo) lo = lo - 0.05_dp * d
-            if (.not. sticky_hi) hi = hi + 0.05_dp * d
         end if
+
+        ! The margin is 5% of the drawn length, so it has to be measured in
+        ! transformed space; on a linear axis that is the same thing.
+        u0 = scale_fwd(sc, lo)
+        u1 = scale_fwd(sc, hi)
+        d = u1 - u0
+        if (abs(d) < 1.0e-30_dp) d = 1.0_dp
+        if (.not. sticky_lo) lo = scale_inv(sc, u0 - 0.05_dp * d)
+        if (.not. sticky_hi) hi = scale_inv(sc, u1 + 0.05_dp * d)
     end subroutine expand_limits
 
-    pure function map_x(x, xmin, xmax, ax_l, ax_w, is_log) result(px)
+    pure function map_x(x, xmin, xmax, ax_l, ax_w, sc) result(px)
         real(dp), intent(in) :: x, xmin, xmax, ax_l, ax_w
-        logical, intent(in) :: is_log
-        real(dp) :: px, t
-        if (is_log) then
-            if (x <= 0.0_dp .or. xmin <= 0.0_dp .or. xmax <= xmin) then
-                px = ax_l
-                return
-            end if
-            t = (log10(x) - log10(xmin)) / (log10(xmax) - log10(xmin))
-        else
-            if (xmax == xmin) then
-                t = 0.5_dp
-            else
-                t = (x - xmin) / (xmax - xmin)
-            end if
-        end if
-        px = ax_l + t * ax_w
+        type(scale_t), intent(in) :: sc
+        real(dp) :: px
+        px = ax_l + axis_frac(x, xmin, xmax, sc) * ax_w
     end function map_x
 
-    pure function map_y(y, ymin, ymax, ax_b, ax_h, is_log) result(py)
+    pure function map_y(y, ymin, ymax, ax_b, ax_h, sc) result(py)
         real(dp), intent(in) :: y, ymin, ymax, ax_b, ax_h
-        logical, intent(in) :: is_log
-        real(dp) :: py, t
-        if (is_log) then
-            if (y <= 0.0_dp .or. ymin <= 0.0_dp .or. ymax <= ymin) then
-                py = ax_b
-                return
-            end if
-            t = (log10(y) - log10(ymin)) / (log10(ymax) - log10(ymin))
-        else
-            if (ymax == ymin) then
-                t = 0.5_dp
-            else
-                t = (y - ymin) / (ymax - ymin)
-            end if
-        end if
-        py = ax_b - t * ax_h
+        type(scale_t), intent(in) :: sc
+        real(dp) :: py
+        py = ax_b - axis_frac(y, ymin, ymax, sc) * ax_h
     end function map_y
+
+    ! Where v sits along the axis, as a fraction from the low end. Every
+    ! scale is linear once the values have gone through its transform.
+    pure function axis_frac(v, vmin, vmax, sc) result(t)
+        real(dp), intent(in) :: v, vmin, vmax
+        type(scale_t), intent(in) :: sc
+        real(dp) :: t, u0, u1
+        u0 = scale_fwd(sc, vmin)
+        u1 = scale_fwd(sc, vmax)
+        if (u1 == u0) then
+            t = 0.5_dp
+        else
+            t = (scale_fwd(sc, v) - u0) / (u1 - u0)
+        end if
+    end function axis_frac
 
     subroutine append_num(b, x)
         type(svg_builder), intent(inout) :: b
@@ -1653,27 +1688,27 @@ contains
     end subroutine append_line
 
     ! One bar of a bar/hist series, drawn from the y = 0 baseline.
-    subroutine append_bar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+    subroutine append_bar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         type(svg_builder), intent(inout) :: b
         type(series_t), intent(in) :: s
         integer, intent(in) :: j
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
-        logical, intent(in) :: xlog, ylog
+        type(scale_t), intent(in) :: xsc, ysc
         real(dp) :: xa, xb, ya, yb, hw
 
         hw = 0.5_dp * s%width
         if (s%kind == SERIES_BARH) then
             ! x holds the bar position and y its length, so the roles of the
             ! two axes are simply swapped.
-            ya = map_y(s%x(j) - hw, ymin, ymax, ax_b, ax_h, ylog)
-            yb = map_y(s%x(j) + hw, ymin, ymax, ax_b, ax_h, ylog)
-            xa = map_x(0.0_dp, xmin, xmax, ax_l, ax_w, xlog)
-            xb = map_x(s%y(j), xmin, xmax, ax_l, ax_w, xlog)
+            ya = map_y(s%x(j) - hw, ymin, ymax, ax_b, ax_h, ysc)
+            yb = map_y(s%x(j) + hw, ymin, ymax, ax_b, ax_h, ysc)
+            xa = map_x(0.0_dp, xmin, xmax, ax_l, ax_w, xsc)
+            xb = map_x(s%y(j), xmin, xmax, ax_l, ax_w, xsc)
         else
-            xa = map_x(s%x(j) - hw, xmin, xmax, ax_l, ax_w, xlog)
-            xb = map_x(s%x(j) + hw, xmin, xmax, ax_l, ax_w, xlog)
-            ya = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ylog)
-            yb = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog)
+            xa = map_x(s%x(j) - hw, xmin, xmax, ax_l, ax_w, xsc)
+            xb = map_x(s%x(j) + hw, xmin, xmax, ax_l, ax_w, xsc)
+            ya = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ysc)
+            yb = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         end if
 
         call builder_append(b, '<rect x="')
@@ -1692,40 +1727,40 @@ contains
     end subroutine append_bar
 
     ! Shaded region between y and y2, as a single closed polygon.
-    subroutine append_fill(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+    subroutine append_fill(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         type(svg_builder), intent(inout) :: b
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
-        logical, intent(in) :: xlog, ylog
+        type(scale_t), intent(in) :: xsc, ysc
         integer :: j, np
         real(dp), allocatable :: px(:), py(:)
 
         np = 2 * s%n
         allocate (px(np), py(np))
         do j = 1, s%n
-            px(j) = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xlog)
-            py(j) = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog)
+            px(j) = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+            py(j) = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         end do
         ! Return along the lower edge to close the band.
         do j = 1, s%n
-            px(s%n + j) = map_x(s%x(s%n - j + 1), xmin, xmax, ax_l, ax_w, xlog)
-            py(s%n + j) = map_y(s%y2(s%n - j + 1), ymin, ymax, ax_b, ax_h, ylog)
+            px(s%n + j) = map_x(s%x(s%n - j + 1), xmin, xmax, ax_l, ax_w, xsc)
+            py(s%n + j) = map_y(s%y2(s%n - j + 1), ymin, ymax, ax_b, ax_h, ysc)
         end do
         call append_polygon(b, px, py, np, trim(s%color), s%alpha)
     end subroutine append_fill
 
     ! Vertical error bar with caps for point j.
-    subroutine append_errorbar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+    subroutine append_errorbar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         type(svg_builder), intent(inout) :: b
         type(series_t), intent(in) :: s
         integer, intent(in) :: j
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
-        logical, intent(in) :: xlog, ylog
+        type(scale_t), intent(in) :: xsc, ysc
         real(dp) :: px, plo, phi, cap
 
-        px = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xlog)
-        plo = map_y(s%y(j) - s%y2(j), ymin, ymax, ax_b, ax_h, ylog)
-        phi = map_y(s%y(j) + s%y2(j), ymin, ymax, ax_b, ax_h, ylog)
+        px = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+        plo = map_y(s%y(j) - s%y2(j), ymin, ymax, ax_b, ax_h, ysc)
+        phi = map_y(s%y(j) + s%y2(j), ymin, ymax, ax_b, ax_h, ysc)
         call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
 
         cap = s%width
@@ -1736,28 +1771,33 @@ contains
     end subroutine append_errorbar
 
     ! User-set tick positions win over the automatic locator.
-    subroutine axis_ticks(n_user, user_pos, vmin, vmax, is_log, t, nt)
+    subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, t, nt)
         integer, intent(in) :: n_user
         real(dp), intent(in) :: user_pos(MAX_TICKS), vmin, vmax
-        logical, intent(in) :: is_log
+        type(scale_t), intent(in) :: sc
         real(dp), intent(out) :: t(MAX_TICKS)
         integer, intent(out) :: nt
         if (n_user > 0) then
             nt = n_user
             t(1:nt) = user_pos(1:nt)
-        else if (is_log) then
-            call log_ticks(vmin, vmax, t, nt)
         else
-            call linear_ticks(vmin, vmax, 6, t, nt)
+            select case (sc%kind)
+            case (SCALE_LOG)
+                call log_ticks(vmin, vmax, t, nt)
+            case (SCALE_SYMLOG)
+                call symlog_ticks(vmin, vmax, t, nt)
+            case default
+                call linear_ticks(vmin, vmax, 6, t, nt)
+            end select
         end if
     end subroutine axis_ticks
 
     ! Minor ticks subdivide each major interval; a log axis already places its
     ! majors one decade apart, so the 2..9 multiples are what belong between.
-    subroutine minor_positions(t, nt, vmin, vmax, is_log, m, nm)
+    subroutine minor_positions(t, nt, vmin, vmax, sc, m, nm)
         real(dp), intent(in) :: t(MAX_TICKS), vmin, vmax
         integer, intent(in) :: nt
-        logical, intent(in) :: is_log
+        type(scale_t), intent(in) :: sc
         real(dp), intent(out) :: m(MAX_MINOR)
         integer, intent(out) :: nm
         integer :: i, k
@@ -1766,7 +1806,7 @@ contains
         nm = 0
         if (nt < 2) return
         do i = 1, nt - 1
-            if (is_log) then
+            if (sc%kind == SCALE_LOG) then
                 do k = 2, 9
                     v = t(i) * real(k, dp)
                     if (v > t(i + 1)) exit
@@ -1793,11 +1833,11 @@ contains
 
     ! Box, median, whiskers at 1.5 IQR clipped to the data, and the outliers
     ! beyond them as open circles.
-    subroutine append_box(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+    subroutine append_box(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         type(svg_builder), intent(inout) :: b
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
-        logical, intent(in) :: xlog, ylog
+        type(scale_t), intent(in) :: xsc, ysc
         real(dp) :: q1, q2, q3, iqr, wlo, whi, hw, cw
         real(dp) :: xl, xr, cl, cr, xc, y1, y3, ym, yl, yh
         integer :: j
@@ -1823,16 +1863,16 @@ contains
 
         hw = 0.5_dp * s%width
         cw = 0.25_dp * s%width
-        xl = map_x(s%pos - hw, xmin, xmax, ax_l, ax_w, xlog)
-        xr = map_x(s%pos + hw, xmin, xmax, ax_l, ax_w, xlog)
-        cl = map_x(s%pos - cw, xmin, xmax, ax_l, ax_w, xlog)
-        cr = map_x(s%pos + cw, xmin, xmax, ax_l, ax_w, xlog)
-        xc = map_x(s%pos, xmin, xmax, ax_l, ax_w, xlog)
-        y1 = map_y(q1, ymin, ymax, ax_b, ax_h, ylog)
-        y3 = map_y(q3, ymin, ymax, ax_b, ax_h, ylog)
-        ym = map_y(q2, ymin, ymax, ax_b, ax_h, ylog)
-        yl = map_y(wlo, ymin, ymax, ax_b, ax_h, ylog)
-        yh = map_y(whi, ymin, ymax, ax_b, ax_h, ylog)
+        xl = map_x(s%pos - hw, xmin, xmax, ax_l, ax_w, xsc)
+        xr = map_x(s%pos + hw, xmin, xmax, ax_l, ax_w, xsc)
+        cl = map_x(s%pos - cw, xmin, xmax, ax_l, ax_w, xsc)
+        cr = map_x(s%pos + cw, xmin, xmax, ax_l, ax_w, xsc)
+        xc = map_x(s%pos, xmin, xmax, ax_l, ax_w, xsc)
+        y1 = map_y(q1, ymin, ymax, ax_b, ax_h, ysc)
+        y3 = map_y(q3, ymin, ymax, ax_b, ax_h, ysc)
+        ym = map_y(q2, ymin, ymax, ax_b, ax_h, ysc)
+        yl = map_y(wlo, ymin, ymax, ax_b, ax_h, ysc)
+        yh = map_y(whi, ymin, ymax, ax_b, ax_h, ysc)
 
         call append_stroke_path(b, [xl, xr, xr, xl, xl], [y1, y1, y3, y3, y1], 5, &
                                 trim(s%color), 1.0_dp, s%alpha)
@@ -1844,7 +1884,7 @@ contains
 
         do j = 1, s%n
             if (s%y(j) >= wlo .and. s%y(j) <= whi) cycle
-            call append_open_circle(b, xc, map_y(s%y(j), ymin, ymax, ax_b, ax_h, ylog), &
+            call append_open_circle(b, xc, map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc), &
                                     3.0_dp, trim(s%color))
         end do
     end subroutine append_box
@@ -1867,11 +1907,11 @@ contains
 
     ! Mirrored Gaussian kernel density estimate, plus the min/max/range bars
     ! matplotlib draws over it.
-    subroutine append_violin(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+    subroutine append_violin(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         type(svg_builder), intent(inout) :: b
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
-        logical, intent(in) :: xlog, ylog
+        type(scale_t), intent(in) :: xsc, ysc
         integer, parameter :: NK = 100
         real(dp) :: g(NK), d(NK)
         real(dp) :: px(2 * NK), py(2 * NK)
@@ -1901,25 +1941,25 @@ contains
 
         hw = 0.5_dp * s%width
         do i = 1, NK
-            px(i) = map_x(s%pos - hw * d(i) / dmax, xmin, xmax, ax_l, ax_w, xlog)
-            py(i) = map_y(g(i), ymin, ymax, ax_b, ax_h, ylog)
-            px(2 * NK + 1 - i) = map_x(s%pos + hw * d(i) / dmax, xmin, xmax, ax_l, ax_w, xlog)
+            px(i) = map_x(s%pos - hw * d(i) / dmax, xmin, xmax, ax_l, ax_w, xsc)
+            py(i) = map_y(g(i), ymin, ymax, ax_b, ax_h, ysc)
+            px(2 * NK + 1 - i) = map_x(s%pos + hw * d(i) / dmax, xmin, xmax, ax_l, ax_w, xsc)
             py(2 * NK + 1 - i) = py(i)
         end do
         call append_polygon(b, px, py, 2 * NK, trim(s%color), 0.3_dp)
 
         cw = 0.5_dp * hw
-        call append_line(b, map_x(s%pos, xmin, xmax, ax_l, ax_w, xlog), &
-                         map_y(lo, ymin, ymax, ax_b, ax_h, ylog), &
-                         map_x(s%pos, xmin, xmax, ax_l, ax_w, xlog), &
-                         map_y(hi, ymin, ymax, ax_b, ax_h, ylog), &
+        call append_line(b, map_x(s%pos, xmin, xmax, ax_l, ax_w, xsc), &
+                         map_y(lo, ymin, ymax, ax_b, ax_h, ysc), &
+                         map_x(s%pos, xmin, xmax, ax_l, ax_w, xsc), &
+                         map_y(hi, ymin, ymax, ax_b, ax_h, ysc), &
                          trim(s%color), 1.5_dp, LINE_SOLID, 1.0_dp)
         do i = 1, 2
             u = merge(lo, hi, i == 1)
-            call append_line(b, map_x(s%pos - cw, xmin, xmax, ax_l, ax_w, xlog), &
-                             map_y(u, ymin, ymax, ax_b, ax_h, ylog), &
-                             map_x(s%pos + cw, xmin, xmax, ax_l, ax_w, xlog), &
-                             map_y(u, ymin, ymax, ax_b, ax_h, ylog), &
+            call append_line(b, map_x(s%pos - cw, xmin, xmax, ax_l, ax_w, xsc), &
+                             map_y(u, ymin, ymax, ax_b, ax_h, ysc), &
+                             map_x(s%pos + cw, xmin, xmax, ax_l, ax_w, xsc), &
+                             map_y(u, ymin, ymax, ax_b, ax_h, ysc), &
                              trim(s%color), 1.5_dp, LINE_SOLID, 1.0_dp)
         end do
     end subroutine append_violin
@@ -1934,8 +1974,8 @@ contains
 
         tot = sum(s%y(1:s%n))
         if (tot <= 0.0_dp) return
-        cx = map_x(0.0_dp, xmin, xmax, ax_l, ax_w, .false.)
-        cy = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, .false.)
+        cx = map_x(0.0_dp, xmin, xmax, ax_l, ax_w, linear_scale)
+        cy = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, linear_scale)
 
         a1 = 0.0_dp
         do i = 1, s%n
@@ -1968,17 +2008,17 @@ contains
     subroutine append_wedge_point(b, ang, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
         type(svg_builder), intent(inout) :: b
         real(dp), intent(in) :: ang, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
-        call append_num(b, map_x(cos(ang), xmin, xmax, ax_l, ax_w, .false.))
+        call append_num(b, map_x(cos(ang), xmin, xmax, ax_l, ax_w, linear_scale))
         call builder_append(b, " ")
-        call append_num(b, map_y(sin(ang), ymin, ymax, ax_b, ax_h, .false.))
+        call append_num(b, map_y(sin(ang), ymin, ymax, ax_b, ax_h, linear_scale))
     end subroutine append_wedge_point
 
     ! Walk every cell as two triangles, emitting filled bands or level lines.
-    subroutine append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+    subroutine append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         type(svg_builder), intent(inout) :: b
         type(axes_t), intent(in) :: a
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
-        logical, intent(in) :: xlog, ylog
+        type(scale_t), intent(in) :: xsc, ysc
         integer :: nr, nc, i, j, k, tri, nq, ns, nlev, v
         real(dp) :: dx, dy, gx(2), gy(2)
         real(dp) :: tx(3), ty(3), tv(3)
@@ -2010,8 +2050,8 @@ contains
                             call tri_band(tx, ty, tv, lo, hi, qx, qy, nq)
                             if (nq < 3) cycle
                             do v = 1, nq
-                                px(v) = map_x(qx(v), xmin, xmax, ax_l, ax_w, xlog)
-                                py(v) = map_y(qy(v), ymin, ymax, ax_b, ax_h, ylog)
+                                px(v) = map_x(qx(v), xmin, xmax, ax_l, ax_w, xsc)
+                                py(v) = map_y(qy(v), ymin, ymax, ax_b, ax_h, ysc)
                             end do
                             t = (real(k, dp) - 0.5_dp) / real(nlev - 1, dp)
                             call append_polygon(b, px, py, nq, &
@@ -2023,10 +2063,10 @@ contains
                             if (ns /= 2) cycle
                             t = real(k - 1, dp) / real(max(nlev - 1, 1), dp)
                             call append_stroke_path(b, &
-                                [map_x(sx(1), xmin, xmax, ax_l, ax_w, xlog), &
-                                 map_x(sx(2), xmin, xmax, ax_l, ax_w, xlog)], &
-                                [map_y(sy(1), ymin, ymax, ax_b, ax_h, ylog), &
-                                 map_y(sy(2), ymin, ymax, ax_b, ax_h, ylog)], &
+                                [map_x(sx(1), xmin, xmax, ax_l, ax_w, xsc), &
+                                 map_x(sx(2), xmin, xmax, ax_l, ax_w, xsc)], &
+                                [map_y(sy(1), ymin, ymax, ax_b, ax_h, ysc), &
+                                 map_y(sy(2), ymin, ymax, ax_b, ax_h, ysc)], &
                                 2, cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
                         end do
                     end if
@@ -2054,11 +2094,11 @@ contains
     ! One <rect> per sample. SVG has no raster primitive we can reach without
     ! embedding an encoded image, and nearest-neighbour cells are what
     ! matplotlib's default interpolation looks like at these sizes anyway.
-    subroutine append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+    subroutine append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         type(svg_builder), intent(inout) :: b
         type(axes_t), intent(in) :: a
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
-        logical, intent(in) :: xlog, ylog
+        type(scale_t), intent(in) :: xsc, ysc
         integer :: nr, nc, i, j
         real(dp) :: xe0, xe1, ye0, ye1, px0, px1, py0, py1, t, dxc, dyc
 
@@ -2070,13 +2110,13 @@ contains
         do i = 1, nr
             ye0 = a%img_ext(3) + real(i - 1, dp) * dyc
             ye1 = ye0 + dyc
-            py0 = map_y(ye0, ymin, ymax, ax_b, ax_h, ylog)
-            py1 = map_y(ye1, ymin, ymax, ax_b, ax_h, ylog)
+            py0 = map_y(ye0, ymin, ymax, ax_b, ax_h, ysc)
+            py1 = map_y(ye1, ymin, ymax, ax_b, ax_h, ysc)
             do j = 1, nc
                 xe0 = a%img_ext(1) + real(j - 1, dp) * dxc
                 xe1 = xe0 + dxc
-                px0 = map_x(xe0, xmin, xmax, ax_l, ax_w, xlog)
-                px1 = map_x(xe1, xmin, xmax, ax_l, ax_w, xlog)
+                px0 = map_x(xe0, xmin, xmax, ax_l, ax_w, xsc)
+                px1 = map_x(xe1, xmin, xmax, ax_l, ax_w, xsc)
                 t = (a%img(i, j) - a%img_vmin) / (a%img_vmax - a%img_vmin)
                 call append_cell(b, min(px0, px1), min(py0, py1), &
                                  abs(px1 - px0), abs(py1 - py0), &
@@ -2256,19 +2296,19 @@ contains
         call builder_append(b, new_line("a"))
     end subroutine append_tick
 
-    subroutine tick_label(labeled, lab, i, v, is_log, out, n)
+    subroutine tick_label(labeled, lab, i, v, sc, out, n)
         logical, intent(in) :: labeled
         character(len=24), intent(in) :: lab(MAX_TICKS)
         integer, intent(in) :: i
         real(dp), intent(in) :: v
-        logical, intent(in) :: is_log
+        type(scale_t), intent(in) :: sc
         character(len=*), intent(out) :: out
         integer, intent(out) :: n
         if (labeled) then
             n = len_trim(lab(i))
             out(1:n) = trim(lab(i))
         else
-            call format_tick_to(v, is_log, out, n)
+            call format_tick_to(v, sc%kind == SCALE_LOG, out, n)
         end if
     end subroutine tick_label
 
@@ -2291,7 +2331,7 @@ contains
         integer :: tn, tyn
         character(len=512) :: esc
         integer :: ln, en
-        logical :: xlog, ylog
+        type(scale_t) :: xsc, ysc
         integer :: n_leg, k, max_lbl
         real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h
 
@@ -2319,15 +2359,15 @@ contains
                 ax_b = ax_t + ax_h
             end if
         end if
-        xlog = a%xscale == SCALE_LOG
-        ylog = a%yscale == SCALE_LOG
+        xsc = a%xsc
+        ysc = a%ysc
 
-        call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xlog, xticks, nxt)
+        call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xsc, xticks, nxt)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        ylog, yticks, nyt)
+                        ysc, yticks, nyt)
         if (a%minor_ticks) then
-            call minor_positions(xticks, nxt, xmin, xmax, xlog, xminor, nxm)
-            call minor_positions(yticks, nyt, ymin, ymax, ylog, yminor, nym)
+            call minor_positions(xticks, nxt, xmin, xmax, xsc, xminor, nxm)
+            call minor_positions(yticks, nyt, ymin, ymax, ysc, yminor, nym)
         else
             nxm = 0
             nym = 0
@@ -2372,7 +2412,7 @@ contains
         ! grid
         if (a%grid_on) then
             do i = 1, nxt
-                px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xlog)
+                px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
                 call builder_append(b, '<line x1="')
                 call append_num(b, px)
                 call builder_append(b, '" y1="')
@@ -2385,7 +2425,7 @@ contains
                 call builder_append(b, new_line("a"))
             end do
             do i = 1, nyt
-                py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ylog)
+                py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
                 call builder_append(b, '<line x1="')
                 call append_num(b, ax_l)
                 call builder_append(b, '" y1="')
@@ -2405,9 +2445,9 @@ contains
             call builder_append(b, ')">')
             call builder_append(b, new_line("a"))
             if (a%has_img) &
-                call append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                call append_image(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
             if (a%has_cont) &
-                call append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                call append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
             call builder_append(b, "</g>")
             call builder_append(b, new_line("a"))
         end if
@@ -2424,11 +2464,11 @@ contains
             select case (a%series(i)%kind)
             case (SERIES_BOX)
                 call append_box(b, a%series(i), xmin, xmax, ymin, ymax, &
-                                ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                                ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 cycle
             case (SERIES_VIOLIN)
                 call append_violin(b, a%series(i), xmin, xmax, ymin, ymax, &
-                                   ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                                   ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 cycle
             case (SERIES_PIE)
                 call append_pie(b, a%series(i), xmin, xmax, ymin, ymax, &
@@ -2437,23 +2477,23 @@ contains
             case (SERIES_STEM)
                 ! Stalk from the baseline to each sample, then the baseline
                 ! itself, which matplotlib always draws in red.
-                py = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ylog)
+                py = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ysc)
                 do j = 1, n
-                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
+                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
                     call append_line(b, px, py, px, &
-                                     map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog), &
+                                     map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc), &
                                      trim(a%series(i)%color), a%series(i)%linewidth, &
                                      LINE_SOLID, a%series(i)%alpha)
                 end do
                 call append_line(b, &
-                                 map_x(a%series(i)%x(1), xmin, xmax, ax_l, ax_w, xlog), py, &
-                                 map_x(a%series(i)%x(n), xmin, xmax, ax_l, ax_w, xlog), py, &
+                                 map_x(a%series(i)%x(1), xmin, xmax, ax_l, ax_w, xsc), py, &
+                                 map_x(a%series(i)%x(n), xmin, xmax, ax_l, ax_w, xsc), py, &
                                  "#d62728", a%series(i)%linewidth, LINE_SOLID, &
                                  a%series(i)%alpha)
                 do j = 1, n
                     call append_marker(b, MARKER_CIRCLE, &
-                                       map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog), &
-                                       map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog), &
+                                       map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc), &
+                                       map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc), &
                                        a%series(i)%markersize, trim(a%series(i)%color), &
                                        a%series(i)%alpha)
                 end do
@@ -2461,21 +2501,21 @@ contains
             case (SERIES_BAR, SERIES_BARH)
                 do j = 1, n
                     call append_bar(b, a%series(i), j, xmin, xmax, ymin, ymax, &
-                                    ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                                    ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 end do
                 cycle
             case (SERIES_FILL)
                 call append_fill(b, a%series(i), xmin, xmax, ymin, ymax, &
-                                 ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                                 ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 cycle
             case (SERIES_HLINE)
-                py = map_y(a%series(i)%y(1), ymin, ymax, ax_b, ax_h, ylog)
+                py = map_y(a%series(i)%y(1), ymin, ymax, ax_b, ax_h, ysc)
                 call append_line(b, ax_l, py, ax_l + ax_w, py, &
                                  trim(a%series(i)%color), a%series(i)%linewidth, &
                                  a%series(i)%linestyle, a%series(i)%alpha)
                 cycle
             case (SERIES_VLINE)
-                px = map_x(a%series(i)%x(1), xmin, xmax, ax_l, ax_w, xlog)
+                px = map_x(a%series(i)%x(1), xmin, xmax, ax_l, ax_w, xsc)
                 call append_line(b, px, ax_b, px, ax_b - ax_h, &
                                  trim(a%series(i)%color), a%series(i)%linewidth, &
                                  a%series(i)%linestyle, a%series(i)%alpha)
@@ -2483,7 +2523,7 @@ contains
             case (SERIES_ERRORBAR)
                 do j = 1, n
                     call append_errorbar(b, a%series(i), j, xmin, xmax, ymin, ymax, &
-                                         ax_l, ax_w, ax_b, ax_h, xlog, ylog)
+                                         ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 end do
             end select
 
@@ -2498,10 +2538,10 @@ contains
                 call builder_append(b, ' points="')
                 nl = 0
                 do j = 1, n
-                    if (a%xscale == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
-                    if (a%yscale == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
-                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
-                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog)
+                    if (a%xsc%kind == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
+                    if (a%ysc%kind == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
+                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
+                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc)
                     if (nl > 0) call builder_append(b, " ")
                     call append_num(b, px)
                     call builder_append(b, ",")
@@ -2515,10 +2555,10 @@ contains
             if (a%series(i)%marker /= MARKER_NONE) then
                 ms = a%series(i)%markersize
                 do j = 1, n
-                    if (a%xscale == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
-                    if (a%yscale == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
-                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xlog)
-                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ylog)
+                    if (a%xsc%kind == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
+                    if (a%ysc%kind == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
+                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
+                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc)
                     if (allocated(a%series(i)%psize)) ms = a%series(i)%psize(j)
                     call append_marker(b, a%series(i)%marker, px, py, ms, &
                                        point_color(a%series(i), j), a%series(i)%alpha)
@@ -2527,12 +2567,12 @@ contains
         end do
         ! annotations, in data coordinates
         do i = 1, a%n_texts
-            px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xlog)
-            py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ylog)
+            px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xsc)
+            py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ysc)
             if (a%texts(i)%has_arrow) then
                 call append_line(b, px, py, &
-                                 map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xlog), &
-                                 map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ylog), &
+                                 map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xsc), &
+                                 map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ysc), &
                                  trim(a%texts(i)%color), 1.0_dp, LINE_SOLID, 1.0_dp)
             end if
             call xml_escape_to(a%texts(i)%s, esc, en)
@@ -2560,25 +2600,25 @@ contains
 
         ! x ticks
         do i = 1, nxt
-            px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xlog)
+            px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
             call append_tick(b, px, ax_b, px, ax_b + 3.5_dp)
-            call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xlog, lbl, ln)
+            call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, lbl, ln)
             call append_text(b, px, ax_b + 16.0_dp, lbl(1:ln), "center", 10.0_dp, "#000000")
         end do
         do i = 1, nxm
-            px = map_x(xminor(i), xmin, xmax, ax_l, ax_w, xlog)
+            px = map_x(xminor(i), xmin, xmax, ax_l, ax_w, xsc)
             call append_tick(b, px, ax_b, px, ax_b + 2.0_dp)
         end do
 
         ! y ticks
         do i = 1, nyt
-            py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ylog)
+            py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
             call append_tick(b, ax_l, py, ax_l - 3.5_dp, py)
-            call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ylog, lbl, ln)
+            call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, lbl, ln)
             call append_text(b, ax_l - 7.0_dp, py + 3.5_dp, lbl(1:ln), "right", 10.0_dp, "#000000")
         end do
         do i = 1, nym
-            py = map_y(yminor(i), ymin, ymax, ax_b, ax_h, ylog)
+            py = map_y(yminor(i), ymin, ymax, ax_b, ax_h, ysc)
             call append_tick(b, ax_l, py, ax_l - 2.0_dp, py)
         end do
 

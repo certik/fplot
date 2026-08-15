@@ -16,6 +16,8 @@ program test_plots
     real(dp) :: xs(ns), ys(ns)
     integer, parameter :: nd = 40
     real(dp) :: dist1(nd), dist2(nd)
+    integer, parameter :: nsym = 201
+    real(dp) :: xsym(nsym)
     real(dp) :: xe(ne), ye(ne), ee(ne)
     real(dp), parameter :: xb(nb) = [1.0_dp, 2.0_dp, 3.0_dp, 4.0_dp, 5.0_dp, 6.0_dp]
     real(dp), parameter :: hb(nb) = [3.0_dp, 5.0_dp, 2.0_dp, 7.0_dp, 4.0_dp, 6.0_dp]
@@ -444,6 +446,18 @@ program test_plots
     call title("violinplot")
     call savefig("tests/out/violinplot.svg")
     print *, "wrote tests/out/violinplot.svg"
+
+    do i = 1, nsym
+        xsym(i) = -100.0_dp + real(i - 1, dp)
+    end do
+
+    ! 33) symlog y scale
+    call figure()
+    call plot(xsym, xsym)
+    call set_yscale("symlog")
+    call title("symlog")
+    call savefig("tests/out/symlog.svg")
+    print *, "wrote tests/out/symlog.svg"
 
     print *, "All test plots written."
 end program test_plots
