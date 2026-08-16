@@ -852,6 +852,19 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 101) bars with error bars, edge alignment and their own tick labels
+    call clf()
+    call subplot(1, 2, 1)
+    call bar([0.0_dp, 1.0_dp, 2.0_dp], [3.0_dp, 5.0_dp, 2.0_dp], &
+             yerr=[0.4_dp, 0.6_dp, 0.3_dp], capsize=4.0_dp, &
+             tick_label=["a", "b", "c"])
+    call title("yerr")
+    call subplot(1, 2, 2)
+    call bar([0.0_dp, 1.0_dp, 2.0_dp], [3.0_dp, 5.0_dp, 2.0_dp], &
+             align="edge", color="g")
+    call title("align=edge")
+    call save_all("bar_err")
+
 ! 100) axes that count down, and limits read back out
     call clf()
     call plot(x, y, "b-")

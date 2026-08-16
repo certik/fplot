@@ -250,6 +250,10 @@ module fplot
         character(len=7) :: hcolor = ""
         character(len=7) :: edgecolor = "#ffffff"
         real(dp) :: edgewidth = 0.5_dp
+        ! Error bars carry their own colour and weight, apart from whatever
+        ! the line or the bars are drawn in.
+        character(len=7) :: ecolor = ""
+        real(dp) :: elw = 1.5_dp, ecap = 0.0_dp
         ! 3D: the third coordinate of a line or scatter, and the grid of a
         ! surface, in the row = y, column = x order the 2D grids use.
         real(dp), allocatable :: z(:)
@@ -1788,15 +1792,19 @@ contains
     end subroutine ax_scatter
 
     subroutine ax_bar(self, x, height, width, color, label, alpha, bottom, &
-                      colors, edgecolor, linewidth)
+                      colors, edgecolor, linewidth, hatch, yerr, align, &
+                      tick_label, ecolor, capsize)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), height(:)
         real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
-        character(len=*), intent(in), optional :: color, label, edgecolor
-        character(len=*), intent(in), optional :: colors(:)
+        real(dp), intent(in), optional :: yerr(:), capsize
+        character(len=*), intent(in), optional :: color, label, edgecolor, hatch
+        character(len=*), intent(in), optional :: colors(:), align, ecolor
+        character(len=*), intent(in), optional :: tick_label(:)
         call ax_sca(self)
         call bar(x, height, width, color, label, alpha, bottom, colors, &
-                 edgecolor, linewidth)
+                 edgecolor, linewidth, hatch, yerr, align, tick_label, &
+                 ecolor, capsize)
     end subroutine ax_bar
 
     subroutine ax_barh(self, y, width, height, color, label, alpha, left, &
@@ -5011,18 +5019,47 @@ contains
     ! bottom stacks this series on top of another; colors gives every bar
     ! its own color, as matplotlib's list-valued color does.
     subroutine bar_num(x, height, width, color, label, alpha, bottom, colors, &
-                       edgecolor, linewidth, hatch)
+                       edgecolor, linewidth, hatch, yerr, align, tick_label, &
+                       ecolor, capsize)
         real(dp), intent(in) :: x(:), height(:)
         real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        real(dp), intent(in), optional :: yerr(:), capsize
         character(len=*), intent(in), optional :: color, label, edgecolor, hatch
-        character(len=*), intent(in), optional :: colors(:)
-        integer :: is
+        character(len=*), intent(in), optional :: colors(:), align, ecolor
+        character(len=*), intent(in), optional :: tick_label(:)
+        real(dp), allocatable :: pos(:)
+        integer :: is, n
 
         call ensure_fig()
-        is = new_shape_series(SERIES_BAR, x, height, color, label, alpha)
+        n = min(size(x), size(height))
+        allocate (pos(n))
+        pos = x(1:n)
+        ! align="edge" measures from the left edge of the bar rather than
+        ! from its middle, so the positions move by half a width.
+        if (present(align)) then
+            if (align == "edge") then
+                if (present(width)) then
+                    pos = pos + 0.5_dp*width
+                else
+                    pos = pos + 0.4_dp
+                end if
+            end if
+        end if
+        is = new_shape_series(SERIES_BAR, pos, height, color, label, alpha)
         if (is < 1) return
         if (present(width)) ax(cur_i)%series(is)%width = width
         call bar_options(is, bottom, colors, edgecolor, linewidth, hatch)
+        if (present(yerr)) then
+            call set_arm(ax(cur_i)%series(is)%eylo, n, yerr)
+            call set_arm(ax(cur_i)%series(is)%eyhi, n, yerr)
+            ! matplotlib draws bar error bars in black, with no caps unless
+            ! a capsize is asked for.
+            ax(cur_i)%series(is)%ecolor = "#000000"
+            ax(cur_i)%series(is)%ecap = 0.0_dp
+            if (present(ecolor)) ax(cur_i)%series(is)%ecolor = resolve_color(ecolor)
+            if (present(capsize)) ax(cur_i)%series(is)%ecap = capsize
+        end if
+        if (present(tick_label)) call xticks(pos, tick_label)
     end subroutine bar_num
 
     subroutine bar_cat(cats, height, width, color, label, alpha, bottom, &
@@ -5398,18 +5435,20 @@ contains
     ! yerr/xerr are symmetric; the _lo/_hi pairs give an asymmetric error,
     ! matplotlib's 2xN array written as two arrays.
     subroutine errorbar(x, y, yerr, fmt, color, label, capsize, marker, &
-                        xerr, yerr_lo, yerr_hi, xerr_lo, xerr_hi)
+                        xerr, yerr_lo, yerr_hi, xerr_lo, xerr_hi, &
+                        ecolor, elinewidth, lw, alpha)
         real(dp), intent(in) :: x(:), y(:)
         real(dp), intent(in), optional :: yerr(:), xerr(:)
         real(dp), intent(in), optional :: yerr_lo(:), yerr_hi(:)
         real(dp), intent(in), optional :: xerr_lo(:), xerr_hi(:)
         character(len=*), intent(in), optional :: fmt, color, label, marker
-        real(dp), intent(in), optional :: capsize
+        character(len=*), intent(in), optional :: ecolor
+        real(dp), intent(in), optional :: capsize, elinewidth, lw, alpha
         integer :: is, n, mk, ls
         character(len=7) :: col
 
         call ensure_fig()
-        is = new_shape_series(SERIES_ERRORBAR, x, y, color, label)
+        is = new_shape_series(SERIES_ERRORBAR, x, y, color, label, alpha)
         if (is < 1) return
         n = ax(cur_i)%series(is)%n
         call set_arm(ax(cur_i)%series(is)%eylo, n, yerr, yerr_lo)
@@ -5429,6 +5468,9 @@ contains
         ! width doubles as the cap half-width, in points.
         ax(cur_i)%series(is)%width = 3.0_dp
         if (present(capsize)) ax(cur_i)%series(is)%width = capsize
+        if (present(ecolor)) ax(cur_i)%series(is)%ecolor = resolve_color(ecolor)
+        if (present(elinewidth)) ax(cur_i)%series(is)%elw = elinewidth
+        if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
     end subroutine errorbar
 
     ! One arm of the error bars: the asymmetric value if it was given, else
@@ -5991,6 +6033,10 @@ contains
                         ! series they were stacked on.
                         ylo = min(bar_base(a%series(i), j), bar_base(a%series(i), j) + yv)
                         yhi = max(bar_base(a%series(i), j), bar_base(a%series(i), j) + yv)
+                        ylo = min(ylo, bar_base(a%series(i), j) + yv &
+                                  - arm(a%series(i)%eylo, j))
+                        yhi = max(yhi, bar_base(a%series(i), j) + yv &
+                                  + arm(a%series(i)%eyhi, j))
                     case (SERIES_FILL)
                         ylo = min(yv, a%series(i)%y2(j))
                         yhi = max(yv, a%series(i)%y2(j))
@@ -7016,7 +7062,31 @@ contains
             call append_hatch(b, [xa, xb, xb, xa], [ya, ya, yb, yb], 4, &
                               trim(s%hatch), trim(s%hcolor), s%alpha)
         if (s%bar_labels) call append_bar_label(b, s, j, xa, xb, ya, yb)
+        if (allocated(s%eyhi)) call append_bar_err(b, s, j, ymin, ymax, ax_b, &
+                                                   ax_h, ysc, 0.5_dp*(xa + xb))
     end subroutine append_bar
+
+    ! The error bar on top of a bar. It is centred on the end of the bar,
+    ! which is where the value is, not on the value axis origin.
+    subroutine append_bar_err(b, s, j, ymin, ymax, ax_b, ax_h, ysc, px)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp), intent(in) :: ymin, ymax, ax_b, ax_h, px
+        type(scale_t), intent(in) :: ysc
+        real(dp) :: top, plo, phi, cap
+
+        top = bar_base(s, j) + s%y(j)
+        plo = map_y(top - arm(s%eylo, j), ymin, ymax, ax_b, ax_h, ysc)
+        phi = map_y(top + arm(s%eyhi, j), ymin, ymax, ax_b, ax_h, ysc)
+        call append_line(b, px, plo, px, phi, trim(s%ecolor), s%elw, LINE_SOLID, 1.0_dp)
+        cap = s%ecap
+        if (cap <= 0.0_dp) return
+        call append_line(b, px - cap, plo, px + cap, plo, trim(s%ecolor), &
+                         s%elw, LINE_SOLID, 1.0_dp)
+        call append_line(b, px - cap, phi, px + cap, phi, trim(s%ecolor), &
+                         s%elw, LINE_SOLID, 1.0_dp)
+    end subroutine append_bar_err
 
     ! Where a bar starts: y = 0 unless the series was stacked on another.
     pure function bar_base(s, j) result(v)
@@ -7418,33 +7488,37 @@ contains
         integer, intent(in) :: j
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
-        real(dp) :: px, py, plo, phi, cap
+        real(dp) :: px, py, plo, phi, cap, elw
+        character(len=7) :: ec
 
         px = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
         py = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         cap = s%width
+        elw = s%elw
+        ec = s%ecolor
+        if (len_trim(ec) == 0) ec = s%color
 
         if (allocated(s%eylo) .or. allocated(s%eyhi)) then
             plo = map_y(s%y(j) - arm(s%eylo, j), ymin, ymax, ax_b, ax_h, ysc)
             phi = map_y(s%y(j) + arm(s%eyhi, j), ymin, ymax, ax_b, ax_h, ysc)
-            call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+            call append_line(b, px, plo, px, phi, trim(ec), elw, LINE_SOLID, s%alpha)
             if (cap > 0.0_dp) then
-                call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), &
-                                 1.0_dp, LINE_SOLID, s%alpha)
-                call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), &
-                                 1.0_dp, LINE_SOLID, s%alpha)
+                call append_line(b, px - cap, plo, px + cap, plo, trim(ec), &
+                                 elw, LINE_SOLID, s%alpha)
+                call append_line(b, px - cap, phi, px + cap, phi, trim(ec), &
+                                 elw, LINE_SOLID, s%alpha)
             end if
         end if
 
         if (allocated(s%exlo) .or. allocated(s%exhi)) then
             plo = map_x(s%x(j) - arm(s%exlo, j), xmin, xmax, ax_l, ax_w, xsc)
             phi = map_x(s%x(j) + arm(s%exhi, j), xmin, xmax, ax_l, ax_w, xsc)
-            call append_line(b, plo, py, phi, py, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+            call append_line(b, plo, py, phi, py, trim(ec), elw, LINE_SOLID, s%alpha)
             if (cap > 0.0_dp) then
-                call append_line(b, plo, py - cap, plo, py + cap, trim(s%color), &
-                                 1.0_dp, LINE_SOLID, s%alpha)
-                call append_line(b, phi, py - cap, phi, py + cap, trim(s%color), &
-                                 1.0_dp, LINE_SOLID, s%alpha)
+                call append_line(b, plo, py - cap, plo, py + cap, trim(ec), &
+                                 elw, LINE_SOLID, s%alpha)
+                call append_line(b, phi, py - cap, phi, py + cap, trim(ec), &
+                                 elw, LINE_SOLID, s%alpha)
             end if
         end if
     end subroutine append_errorbar

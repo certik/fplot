@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "bar_err",
     "invert_axes",
     "annotate_arrow",
     "transform_axes",
@@ -871,6 +872,15 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 101 bars with error bars, edge alignment and their own tick labels
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].bar([0, 1, 2], [3, 5, 2], yerr=[0.4, 0.6, 0.3], capsize=4,
+               tick_label=["a", "b", "c"])
+    axs[0].set_title("yerr")
+    axs[1].bar([0, 1, 2], [3, 5, 2], align="edge", color="g")
+    axs[1].set_title("align=edge")
+    save(fig, "bar_err")
 
     # 100 axes that count down, and limits read back out
     fig, ax = setup_fig()

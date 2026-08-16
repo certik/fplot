@@ -30,6 +30,8 @@ call suptitle("figure title")
 ## Features
 
 - `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
+- `bar` takes `yerr=`, `capsize=`, `align="edge"` and `tick_label=`;
+  `errorbar` takes `ecolor=`, `elinewidth=`, `lw=` and `alpha=`
 - `plot(y)` with a single array numbers the points `0, 1, 2, ...` for x
 - `xlim`/`ylim` to set, `get_xlim`/`get_ylim` to read back what autoscaling
   chose, and `invert_xaxis`/`invert_yaxis` to make an axis count down
