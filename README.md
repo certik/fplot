@@ -143,6 +143,8 @@ call suptitle("figure title")
   have the ticks land on round dates and read as dates
 - `subplot2grid`: panels that span several cells of a grid, so a wide
   plot can sit over two narrow ones
+- `subplot_mosaic(["AB", "CC"], keys, axs)`: the panels drawn as a small
+  picture of the figure, one character per cell, a panel per character
 - `gridspec(width_ratios=, height_ratios=)`: columns and rows of unequal
   size, for a wide panel beside a narrow one
 - `pcolormesh` and `pcolor`: a grid of cells with edges of your own

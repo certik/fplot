@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "mosaic",
     "legend_labels",
     "violin_opts",
     "box_opts",
@@ -884,6 +885,17 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 114 panels drawn as a picture of the figure
+    fig = plt.figure(figsize=(6.4, 4.8))
+    mos = fig.subplot_mosaic("AB\nCC")
+    mos["A"].plot(x, y)
+    mos["A"].set_title("A")
+    mos["B"].plot(x, y2, "r-")
+    mos["B"].set_title("B")
+    mos["C"].plot(x, 0.5 * y, "g-")
+    mos["C"].set_title("C")
+    save(fig, "mosaic")
 
     # 113 names given at legend time, and a line kept out of it
     fig, ax = setup_fig()

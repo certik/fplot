@@ -48,7 +48,8 @@ module fplot
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
     public :: view_init, zlabel, zlim
-    public :: subplot, subplot2grid, gridspec, suptitle, subplots_adjust, tight_layout
+    public :: subplot, subplot2grid, subplot_mosaic, gridspec, suptitle
+    public :: subplots_adjust, tight_layout
     public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
     public :: set_fontsize, set_zorder
@@ -1677,6 +1678,61 @@ contains
         call layout_grid()
         h%idx = cur_i
     end function subplot2grid
+
+    ! matplotlib's subplot_mosaic, drawn as a picture of the figure: one
+    ! string per row of the grid, one character per cell, and a panel for
+    ! every distinct character, spanning the cells that carry it. A space
+    ! or a full stop leaves the cell empty.
+    !
+    ! keys comes back holding the characters in the order they were first
+    ! met, so axs(k) is the panel named keys(k:k).
+    subroutine subplot_mosaic(rows, keys, axs)
+        character(len=*), intent(in) :: rows(:)
+        character(len=*), intent(out) :: keys
+        type(axes), intent(out) :: axs(:)
+        integer :: nr, nc, i, j, k, m, nk, r0, r1, c0, c1
+        character(len=1) :: c
+
+        call ensure_fig()
+        call clf()
+        nr = size(rows)
+        nc = 0
+        do i = 1, nr
+            nc = max(nc, len_trim(rows(i)))
+        end do
+        keys = ""
+        nk = 0
+        if (nr < 1 .or. nc < 1) return
+
+        do i = 1, nr
+            do j = 1, min(nc, len(rows(i)))
+                c = rows(i)(j:j)
+                if (c == " " .or. c == ".") cycle
+                if (index(keys, c) > 0) cycle
+                nk = nk + 1
+                if (nk > len(keys) .or. nk > size(axs)) return
+                keys(nk:nk) = c
+
+                ! The panel covers the block of cells carrying this
+                ! character, which matplotlib requires to be a rectangle.
+                r0 = nr
+                r1 = 1
+                c0 = nc
+                c1 = 1
+                do k = 1, nr
+                    do m = 1, min(nc, len(rows(k)))
+                        if (rows(k)(m:m) /= c) cycle
+                        r0 = min(r0, k)
+                        r1 = max(r1, k)
+                        c0 = min(c0, m)
+                        c1 = max(c1, m)
+                    end do
+                end do
+                axs(nk) = subplot2grid([nr, nc], [r0 - 1, c0 - 1], &
+                                       rowspan=r1 - r0 + 1, colspan=c1 - c0 + 1)
+            end do
+        end do
+    end subroutine subplot_mosaic
 
     ! ----------------------------------------------------------------------
     ! Axes handles. subplots makes a new figure, as matplotlib's does, and

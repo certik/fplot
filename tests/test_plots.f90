@@ -24,6 +24,8 @@ program test_plots
     real(dp) :: xs(ns), ys(ns)
     integer, parameter :: nd = 40
     real(dp) :: dist1(nd), dist2(nd), boxmat(2, nd)
+    character(len=8) :: mkeys
+    type(axes) :: mos(8)
     integer, parameter :: nsym = 201
     real(dp) :: xsym(nsym)
     integer, parameter :: nsm = 2
@@ -853,6 +855,17 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 114) panels drawn as a picture of the figure
+    call clf()
+    call subplot_mosaic(["AB", "CC"], mkeys, mos)
+    call mos(1)%plot(x, y)
+    call mos(1)%set_title("A")
+    call mos(2)%plot(x, y2, "r-")
+    call mos(2)%set_title("B")
+    call mos(3)%plot(x, 0.5_dp*y, "g-")
+    call mos(3)%set_title("C")
+    call save_all("mosaic")
 
 ! 113) names given at legend time, and a line kept out of it
     call clf()
