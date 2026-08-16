@@ -867,12 +867,12 @@ def main() -> None:
     ax.set_title("table")
     save(fig, "table")
 
-    # 95 fractions and roots
+    # 95 fractions, roots and greek
     fig, ax = setup_fig()
     ax.plot(x, y)
     ax.set_xlabel(r"$\frac{x}{2}$")
     ax.set_ylabel(r"$\sqrt{y}$")
-    ax.set_title(r"$T = 2\sqrt{\frac{L}{g}}$")
+    ax.set_title(r"$T = 2\pi\sqrt{\frac{L}{g}}$, $\Omega = \alpha + \beta$")
     save(fig, "mathtext_frac")
 
     # 94 hatched fills

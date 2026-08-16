@@ -12,6 +12,7 @@
 ! which is TeX's own rule and matplotlib's.
 module fplot_mathtext
     use fplot_glyphs, only: EM, glyph_advance
+    use fplot_style, only: utf8_next, utf8_char
     implicit none
     private
 
@@ -244,7 +245,7 @@ contains
         real(dp), intent(out) :: xend
         logical, intent(in), optional :: math
         logical :: mm
-        integer :: j
+        integer :: j, code
 
         mm = .true.
         if (present(math)) mm = math
@@ -266,6 +267,14 @@ contains
             return
         end select
 
+        code = greek_code(cmd_name(s))
+        if (code > 0) then
+            ! Lowercase greek slopes and uppercase greek stands upright,
+            ! which is how TeX sets them and what matplotlib draws.
+            call emit_run(utf8_char(code), size, x0, y0, runs, nr, xend, &
+                          code >= 945)
+            return
+        end if
         if (cmd_name(s) == "frac") then
             call layout_frac(s, size, x0, y0, runs, nr, xend, mm)
             return
@@ -490,6 +499,51 @@ contains
         yes = (c >= "a" .and. c <= "z") .or. (c >= "A" .and. c <= "Z")
     end function is_alpha
 
+    ! The greek letters, by their TeX names. Everything else is left to
+    ! degrade to its own name, which at least shows what was asked for.
+    pure function greek_code(name) result(code)
+        character(len=*), intent(in) :: name
+        integer :: code
+        select case (name)
+        case ("alpha"); code = 945
+        case ("beta"); code = 946
+        case ("gamma"); code = 947
+        case ("delta"); code = 948
+        case ("epsilon", "varepsilon"); code = 949
+        case ("zeta"); code = 950
+        case ("eta"); code = 951
+        case ("theta", "vartheta"); code = 952
+        case ("iota"); code = 953
+        case ("kappa"); code = 954
+        case ("lambda"); code = 955
+        case ("mu"); code = 956
+        case ("nu"); code = 957
+        case ("xi"); code = 958
+        case ("pi"); code = 960
+        case ("rho", "varrho"); code = 961
+        case ("varsigma"); code = 962
+        case ("sigma"); code = 963
+        case ("tau"); code = 964
+        case ("upsilon"); code = 965
+        case ("phi", "varphi"); code = 966
+        case ("chi"); code = 967
+        case ("psi"); code = 968
+        case ("omega"); code = 969
+        case ("Gamma"); code = 915
+        case ("Delta"); code = 916
+        case ("Theta"); code = 920
+        case ("Lambda"); code = 923
+        case ("Xi"); code = 926
+        case ("Pi"); code = 928
+        case ("Sigma"); code = 931
+        case ("Upsilon"); code = 933
+        case ("Phi"); code = 934
+        case ("Psi"); code = 936
+        case ("Omega"); code = 937
+        case default; code = 0
+        end select
+    end function greek_code
+
     ! ------------------------------------------------------------------
     ! Runs
     ! ------------------------------------------------------------------
@@ -555,10 +609,13 @@ contains
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: size
         real(dp) :: w
-        integer :: i
+        integer :: i, code, nb
         w = 0.0_dp
-        do i = 1, len(s)
-            w = w + glyph_advance(iachar(s(i:i)))
+        i = 1
+        do while (i <= len(s))
+            call utf8_next(s, i, code, nb)
+            w = w + glyph_advance(code)
+            i = i + nb
         end do
         w = w*size/EM
     end function run_width
