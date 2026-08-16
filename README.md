@@ -162,7 +162,9 @@ call suptitle("figure title")
   nothing to say about, and `set_cmap_colors` to build one from a list of
   stops; missing samples are left clear unless `set_bad` says otherwise
 - `errorbar` with `xerr=` and asymmetric `yerr_lo=`/`yerr_hi=` arms
-- `fill_between(where=)` to shade only where a condition holds
+- `fill_between(where=, interpolate=)` to shade only where a condition
+  holds, carried out to the crossing point
+- `scatter(edgecolors=, linewidths=)` to outline the markers
 - `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled",
   weights=, stacked=, orientation="horizontal", log=, rwidth=)`
 - `axhspan`/`axvspan` shaded bands and `hlines`/`vlines` line runs

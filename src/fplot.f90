@@ -3160,11 +3160,12 @@ contains
     ! s and c are the scalar forms; sizes and cvals are their per-point
     ! equivalents. Fortran cannot overload one dummy as scalar-or-array, so
     ! they are separate keywords rather than matplotlib's single s= and c=.
-    subroutine scatter(x, y, s, c, marker, label, alpha, sizes, cvals, cmap, vmin, vmax)
+    subroutine scatter(x, y, s, c, marker, label, alpha, sizes, cvals, cmap, vmin, vmax, &
+                       edgecolors, linewidths)
         real(dp), intent(in) :: x(:), y(:)
-        real(dp), intent(in), optional :: s, alpha, vmin, vmax
+        real(dp), intent(in), optional :: s, alpha, vmin, vmax, linewidths
         real(dp), intent(in), optional :: sizes(:), cvals(:)
-        character(len=*), intent(in), optional :: c, marker, label, cmap
+        character(len=*), intent(in), optional :: c, marker, label, cmap, edgecolors
         integer :: is, n, k, id
         real(dp) :: lo, hi
 
@@ -3179,6 +3180,12 @@ contains
         is = ax(cur_i)%n_series
         if (is < 1) return
         n = ax(cur_i)%series(is)%n
+
+        ! matplotlib draws scatter markers with no edge at all by default,
+        ! so an edge only appears once one is asked for.
+        if (present(edgecolors)) &
+            ax(cur_i)%series(is)%mec = resolve_color(edgecolors)
+        if (present(linewidths)) ax(cur_i)%series(is)%mew = max(linewidths, 0.0_dp)
 
         ! matplotlib's s is an area in points squared.
         if (present(s)) ax(cur_i)%series(is)%markersize = sqrt(max(s, 0.0_dp))
@@ -5571,38 +5578,44 @@ contains
     ! Shade between y1 and y2 (default 0).
     ! where selects the x range to shade. matplotlib fills each run of true
     ! values as its own polygon, and so does this.
-    subroutine fill_between(x, y1, y2, color, label, alpha, where, hatch, edgecolor)
+    subroutine fill_between(x, y1, y2, color, label, alpha, where, hatch, edgecolor, &
+                            interpolate)
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
         character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
-        logical, intent(in), optional :: where(:)
-        call fill_core(.false., x, y1, y2, color, label, alpha, where, hatch, edgecolor)
+        logical, intent(in), optional :: where(:), interpolate
+        call fill_core(.false., x, y1, y2, color, label, alpha, where, hatch, edgecolor, &
+                       interpolate)
     end subroutine fill_between
 
     ! The same band, but between two curves in x, run along y. The stored
     ! series carries the independent coordinate in x and the two edges in
     ! y and y2 exactly as fill_between does; only `horiz` says which way
     ! round the limits and the polygon are read.
-    subroutine fill_betweenx(y, x1, x2, color, label, alpha, where, hatch, edgecolor)
+    subroutine fill_betweenx(y, x1, x2, color, label, alpha, where, hatch, edgecolor, &
+                             interpolate)
         real(dp), intent(in) :: y(:), x1(:)
         real(dp), intent(in), optional :: x2(:)
         character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
-        logical, intent(in), optional :: where(:)
-        call fill_core(.true., y, x1, x2, color, label, alpha, where, hatch, edgecolor)
+        logical, intent(in), optional :: where(:), interpolate
+        call fill_core(.true., y, x1, x2, color, label, alpha, where, hatch, edgecolor, &
+                       interpolate)
     end subroutine fill_betweenx
 
-    subroutine fill_core(horiz, x, y1, y2, color, label, alpha, where, hatch, edgecolor)
+    subroutine fill_core(horiz, x, y1, y2, color, label, alpha, where, hatch, edgecolor, &
+                         interpolate)
         logical, intent(in) :: horiz
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
         character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
-        logical, intent(in), optional :: where(:)
-        integer :: n, i, j, k
+        logical, intent(in), optional :: where(:), interpolate
+        integer :: n, i, j, k, m
         character(len=7) :: col
-        logical :: first
+        logical :: first, interp
+        real(dp), allocatable :: xr(:), ar(:), br(:)
 
         call ensure_fig()
         n = min(size(x), size(y1))
@@ -5611,6 +5624,9 @@ contains
             call add_fill(horiz, x(1:n), y1(1:n), y2, color, label, alpha, hatch, edgecolor)
             return
         end if
+
+        interp = .false.
+        if (present(interpolate)) interp = interpolate .and. present(y2)
 
         ! Every run after the first reuses the color of the first, and only
         ! the first carries the label, so the group is one legend entry.
@@ -5627,10 +5643,23 @@ contains
                 if (.not. where(j + 1)) exit
                 j = j + 1
             end do
-            if (first) then
-                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), color, label, alpha, hatch, edgecolor)
+            if (interp) then
+                call interp_run(x, y1, y2, i, j, n, xr, ar, br, m)
             else
-                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), col, alpha=alpha, &
+                m = j - i + 1
+                xr = x(i:j)
+                ar = y1(i:j)
+                if (allocated(br)) deallocate (br)
+                allocate (br(m))
+                br = 0.0_dp
+                if (present(y2)) then
+                    if (size(y2) >= j) br = y2(i:j)
+                end if
+            end if
+            if (first) then
+                call add_fill(horiz, xr(1:m), ar(1:m), br(1:m), color, label, alpha, hatch, edgecolor)
+            else
+                call add_fill(horiz, xr(1:m), ar(1:m), br(1:m), col, alpha=alpha, &
                               hatch=hatch, edgecolor=edgecolor)
             end if
             k = ax(cur_i)%n_series
@@ -5643,6 +5672,74 @@ contains
             i = j + 1
         end do
     end subroutine fill_core
+
+    ! matplotlib's interpolate=: the shaded run is carried out to the point
+    ! where the two curves actually cross, instead of stopping at the last
+    ! sample on the near side of the crossing. The crossing is found by
+    ! linear interpolation of y1 - y2 across the straddling interval, which
+    ! is what matplotlib does too.
+    subroutine interp_run(x, y1, y2, i, j, n, xr, ar, br, m)
+        real(dp), intent(in) :: x(:), y1(:), y2(:)
+        integer, intent(in) :: i, j, n
+        real(dp), allocatable, intent(out) :: xr(:), ar(:), br(:)
+        integer, intent(out) :: m
+        integer :: k
+        real(dp) :: t, xc, yc
+        logical :: pre, post
+
+        pre = i > 1
+        post = j < n
+        m = (j - i + 1)
+        allocate (xr(m + 2), ar(m + 2), br(m + 2))
+        m = 0
+        if (pre) then
+            call crossing(x, y1, y2, i - 1, i, t, xc, yc)
+            if (t >= 0.0_dp) then
+                m = 1
+                xr(1) = xc
+                ar(1) = yc
+                br(1) = yc
+            end if
+        end if
+        do k = i, j
+            m = m + 1
+            xr(m) = x(k)
+            ar(m) = y1(k)
+            br(m) = y2(k)
+        end do
+        if (post) then
+            call crossing(x, y1, y2, j, j + 1, t, xc, yc)
+            if (t >= 0.0_dp) then
+                m = m + 1
+                xr(m) = xc
+                ar(m) = yc
+                br(m) = yc
+            end if
+        end if
+    end subroutine interp_run
+
+    ! Where y1 - y2 changes sign between samples p and q. t < 0 says the
+    ! two never meet there and the caller should leave the run as it is.
+    subroutine crossing(x, y1, y2, p, q, t, xc, yc)
+        real(dp), intent(in) :: x(:), y1(:), y2(:)
+        integer, intent(in) :: p, q
+        real(dp), intent(out) :: t, xc, yc
+        real(dp) :: d0, d1
+
+        d0 = y1(p) - y2(p)
+        d1 = y1(q) - y2(q)
+        t = -1.0_dp
+        xc = 0.0_dp
+        yc = 0.0_dp
+        if (abs(d0 - d1) <= 0.0_dp) return
+        t = d0 / (d0 - d1)
+        if (t < 0.0_dp .or. t > 1.0_dp) then
+            t = -1.0_dp
+            return
+        end if
+        xc = x(p) + t * (x(q) - x(p))
+        yc = y1(p) + t * (y1(q) - y1(p))
+    end subroutine crossing
 
     ! matplotlib's stackplot: every row of y is one layer, drawn as a band
     ! from the sum of the layers below it to that sum plus its own values.

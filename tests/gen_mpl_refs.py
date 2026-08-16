@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "scatter_edge",
     "figlegend",
     "tick_locator",
     "cmap_special",
@@ -879,6 +880,16 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 109 marker edges and a band carried to the crossing
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].scatter(x[:16], y[:16], s=120.0, c="skyblue",
+                   edgecolors="black", linewidths=1.5)
+    axs[1].plot(x, y, "b-")
+    axs[1].plot(x, y2, "r-")
+    axs[1].fill_between(x, y, y2, color="green", alpha=0.4,
+                        where=y > y2, interpolate=True)
+    save(fig, "scatter_edge")
 
     # 108 one legend for the whole figure
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))

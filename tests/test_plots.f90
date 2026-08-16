@@ -854,6 +854,18 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 109) marker edges and a band carried to the crossing
+    call clf()
+    call subplot(1, 2, 1)
+    call scatter(x(1:16), y(1:16), s=120.0_dp, c="skyblue", &
+                 edgecolors="black", linewidths=1.5_dp)
+    call subplot(1, 2, 2)
+    call plot(x, y, "b-")
+    call plot(x, y2, "r-")
+    call fill_between(x, y, y2, color="green", alpha=0.4_dp, &
+                      where=y > y2, interpolate=.true.)
+    call save_all("scatter_edge")
+
 ! 108) one legend for the whole figure
     call clf()
     call subplot(1, 2, 1)
