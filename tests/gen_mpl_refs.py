@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "annotate_curve",
     "constrained",
     "mosaic",
     "legend_labels",
@@ -886,6 +887,19 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 116 a bowed connector and a box with round corners
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    a.plot(x, y)
+    a.annotate("peak", xy=(1.57, 1.0), xytext=(3.5, 0.6), ha="center",
+               arrowprops=dict(arrowstyle="->",
+                               connectionstyle="arc3,rad=0.3"),
+               bbox=dict(boxstyle="round,pad=0.5", fc="#ffff99",
+                         ec="#333333"))
+    a.annotate("trough", xy=(4.71, -1.0), xytext=(1.5, -0.6), ha="center",
+               arrowprops=dict(arrowstyle="->",
+                               connectionstyle="arc3,rad=-0.4"))
+    save(fig, "annotate_curve")
 
     # 115 margins refitted to the decorations at draw time
     fig, cax = plt.subplots(1, 2, figsize=(6.4, 4.8), layout="constrained")

@@ -856,6 +856,17 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 116) a bowed connector and a box with round corners
+    call clf()
+    call plot(x, y)
+    call annotate("peak", 1.57_dp, 1.0_dp, 3.5_dp, 0.6_dp, &
+                  arrowstyle="->", connectionstyle="arc3,rad=0.3", &
+                  boxstyle="round,pad=0.5", bbox_facecolor="#ffff99", &
+                  bbox_edgecolor="#333333", ha="center")
+    call annotate("trough", 4.71_dp, -1.0_dp, 1.5_dp, -0.6_dp, &
+                  arrowstyle="->", connectionstyle="arc3,rad=-0.4", ha="center")
+    call save_all("annotate_curve")
+
 ! 115) margins refitted to the decorations at draw time
     call clf()
     call subplots(1, 2, axs)

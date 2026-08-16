@@ -53,7 +53,9 @@ call suptitle("figure title")
   annotated point, with `arrowcolor=`, `arrowlw=` and `shrink=`), with
   `rotation=`, `va=`, a `bbox_facecolor=` box behind them and lines broken
   at `achar(10)`; `figtext` places on the canvas instead of in the axes, and
-  `transform="axes"` places in fractions of the axes box
+  `transform="axes"` places in fractions of the axes box.
+  `connectionstyle="arc3,rad=0.3"` bows the leader out of the straight
+  line, and `boxstyle="round,pad=0.5"` rounds the corners of the box
 - `imshow` of an (row, column, channel) array paints the colours given,
   three channels for RGB or four for RGBA
 - `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel

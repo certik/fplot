@@ -294,6 +294,9 @@ module fplot
         logical :: arrow_head = .false.
         character(len=7) :: arrow_color = "#000000"
         real(dp) :: arrow_lw = 1.0_dp, arrow_shrink = 2.0_dp
+        ! matplotlib's "arc3": the shaft bows out of the straight line by
+        ! this fraction of its length. Zero leaves it straight.
+        real(dp) :: arc_rad = 0.0_dp
         real(dp) :: fontsize = 10.0_dp
         character(len=7) :: color = "#000000"
         character(len=8) :: ha = "left"
@@ -307,6 +310,9 @@ module fplot
         logical :: has_box = .false.
         character(len=7) :: box_fc = "#ffffff", box_ec = ""
         real(dp) :: box_alpha = 1.0_dp, box_pad = 0.3_dp
+        ! "square" or "round"; round corners have matplotlib's radius of
+        ! one pad.
+        character(len=8) :: box_style = "square"
         ! figtext places in figure coordinates rather than data ones;
         ! transform="axes" places in fractions of the axes box, so that a
         ! note stays put when the data range changes.
@@ -6364,19 +6370,43 @@ contains
         end select
     end function linestyle_from_str
 
+    ! One number out of a matplotlib style string, as in "arc3,rad=0.3"
+    ! or "round,pad=0.5". The default comes back when the key is absent.
+    function style_number(spec, key, dflt) result(v)
+        character(len=*), intent(in) :: spec, key
+        real(dp), intent(in) :: dflt
+        real(dp) :: v
+        integer :: i, j, ios
+
+        v = dflt
+        i = index(spec, trim(key)//"=")
+        if (i == 0) return
+        i = i + len_trim(key) + 1
+        j = index(spec(i:), ",")
+        if (j == 0) then
+            j = len_trim(spec)
+        else
+            j = i + j - 2
+        end if
+        if (j < i) return
+        read (spec(i:j), *, iostat=ios) v
+        if (ios /= 0) v = dflt
+    end function style_number
+
     ! Text at a point in data coordinates.
     subroutine text(x, y, s, color, fontsize, ha, fontweight, fontstyle, &
                     va, rotation, bbox_facecolor, bbox_edgecolor, bbox_alpha, &
-                    bbox_pad, transform)
+                    bbox_pad, transform, boxstyle)
         real(dp), intent(in) :: x, y
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
-        character(len=*), intent(in), optional :: transform
+        character(len=*), intent(in), optional :: transform, boxstyle
         real(dp), intent(in), optional :: fontsize, rotation, bbox_alpha, bbox_pad
         call add_text(x, y, s, color, fontsize, ha, .false., 0.0_dp, 0.0_dp, &
                       fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                      bbox_edgecolor, bbox_alpha, bbox_pad, transform)
+                      bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
+                      boxstyle=boxstyle)
     end subroutine text
 
     ! The same, but placed in figure coordinates, so that a note can sit
@@ -6399,13 +6429,15 @@ contains
     subroutine annotate(s, x, y, xtext, ytext, color, fontsize, ha, &
                         fontweight, fontstyle, va, rotation, bbox_facecolor, &
                         bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
-                        arrowstyle, arrowcolor, arrowlw, shrink)
+                        arrowstyle, arrowcolor, arrowlw, shrink, &
+                        connectionstyle, boxstyle)
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: x, y
         real(dp), intent(in), optional :: xtext, ytext, fontsize
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
         character(len=*), intent(in), optional :: transform, arrowstyle, arrowcolor
+        character(len=*), intent(in), optional :: connectionstyle, boxstyle
         real(dp), intent(in), optional :: rotation, bbox_alpha, bbox_pad
         real(dp), intent(in), optional :: arrowlw, shrink
         real(dp) :: xt, yt
@@ -6421,18 +6453,21 @@ contains
         call add_text(xt, yt, s, color, fontsize, ha, arrow, x, y, &
                       fontweight, fontstyle, va, rotation, bbox_facecolor, &
                       bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
-                      arrowstyle, arrowcolor, arrowlw, shrink)
+                      arrowstyle, arrowcolor, arrowlw, shrink, &
+                      connectionstyle, boxstyle)
     end subroutine annotate
 
     subroutine add_text(x, y, s, color, fontsize, ha, arrow, xarr, yarr, &
                         fontweight, fontstyle, va, rotation, bbox_facecolor, &
                         bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
-                        arrowstyle, arrowcolor, arrowlw, shrink)
+                        arrowstyle, arrowcolor, arrowlw, shrink, &
+                        connectionstyle, boxstyle)
         real(dp), intent(in) :: x, y, xarr, yarr
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
         character(len=*), intent(in), optional :: transform, arrowstyle, arrowcolor
+        character(len=*), intent(in), optional :: connectionstyle, boxstyle
         real(dp), intent(in), optional :: fontsize, rotation, bbox_alpha, bbox_pad
         real(dp), intent(in), optional :: arrowlw, shrink
         logical, intent(in) :: arrow
@@ -6468,6 +6503,14 @@ contains
         end if
         if (present(bbox_alpha)) ax(cur_i)%texts(it)%box_alpha = bbox_alpha
         if (present(bbox_pad)) ax(cur_i)%texts(it)%box_pad = bbox_pad
+        if (present(boxstyle)) then
+            ax(cur_i)%texts(it)%has_box = .true.
+            ax(cur_i)%texts(it)%box_style = boxstyle
+            ax(cur_i)%texts(it)%box_pad = style_number(boxstyle, "pad", &
+                                                       ax(cur_i)%texts(it)%box_pad)
+        end if
+        if (present(connectionstyle)) &
+            ax(cur_i)%texts(it)%arc_rad = style_number(connectionstyle, "rad", 0.0_dp)
         col = resolve_color(color)
         if (len_trim(col) > 0) ax(cur_i)%texts(it)%color = col
         if (present(arrowstyle)) &
@@ -7468,21 +7511,41 @@ contains
         type(text_t), intent(in) :: t
         real(dp), intent(in) :: px, py, tx, ty
         real(dp) :: dx, dy, d, ux, uy, x0, y0, x1, y1, hl, hw
-        real(dp) :: bx(3), by(3)
+        real(dp) :: bx(3), by(3), cx, cy, qx(4), qy(4)
 
         dx = tx - px
         dy = ty - py
         d = sqrt(dx*dx + dy*dy)
         if (d <= 0.0_dp) return
-        ux = dx/d
-        uy = dy/d
+        ! The control point of matplotlib's arc3: the midpoint pushed out
+        ! sideways by rad times the length of the chord. The sideways
+        ! direction is matplotlib's, which is the other way round here
+        ! because pixels count downwards.
+        cx = 0.5_dp*(px + tx) - t%arc_rad*dy
+        cy = 0.5_dp*(py + ty) + t%arc_rad*dx
+        ! Both ends are pulled back along the direction the shaft leaves in,
+        ! which for a bowed shaft is the direction of the control point.
+        call unit_towards(px, py, cx, cy, tx, ty, ux, uy)
         if (d <= 2.0_dp*t%arrow_shrink) return
         x0 = px + ux*t%arrow_shrink
         y0 = py + uy*t%arrow_shrink
-        x1 = tx - ux*t%arrow_shrink
-        y1 = ty - uy*t%arrow_shrink
-        call append_line(b, x0, y0, x1, y1, trim(t%arrow_color), t%arrow_lw, &
-                         LINE_SOLID, 1.0_dp)
+        call unit_towards(tx, ty, cx, cy, px, py, ux, uy)
+        x1 = tx + ux*t%arrow_shrink
+        y1 = ty + uy*t%arrow_shrink
+        ! The head points the way the shaft arrives, so keep that direction.
+        ux = -ux
+        uy = -uy
+        if (t%arc_rad == 0.0_dp) then
+            call append_line(b, x0, y0, x1, y1, trim(t%arrow_color), t%arrow_lw, &
+                             LINE_SOLID, 1.0_dp)
+        else
+            ! The quadratic through the control point, written as the cubic
+            ! the renderer draws.
+            qx = [x0, x0 + 2.0_dp/3.0_dp*(cx - x0), x1 + 2.0_dp/3.0_dp*(cx - x1), x1]
+            qy = [y0, y0 + 2.0_dp/3.0_dp*(cy - y0), y1 + 2.0_dp/3.0_dp*(cy - y1), y1]
+            call b%draw_path(qx, qy, [VERB_MOVE, VERB_CUBIC], 2, &
+                             pen(trim(t%arrow_color), t%arrow_lw, 1.0_dp))
+        end if
         if (.not. t%arrow_head) return
         hl = 0.4_dp*t%fontsize
         hw = 0.2_dp*t%fontsize
@@ -7495,6 +7558,29 @@ contains
         call append_stroke_path(b, bx, by, 3, trim(t%arrow_color), t%arrow_lw, &
                                 1.0_dp)
     end subroutine append_arrow
+
+    ! Unit vector from (x, y) towards (cx, cy), or towards the far end
+    ! when the two coincide.
+    subroutine unit_towards(x, y, cx, cy, fx, fy, ux, uy)
+        real(dp), intent(in) :: x, y, cx, cy, fx, fy
+        real(dp), intent(out) :: ux, uy
+        real(dp) :: dx, dy, d
+        dx = cx - x
+        dy = cy - y
+        d = sqrt(dx*dx + dy*dy)
+        if (d <= 0.0_dp) then
+            dx = fx - x
+            dy = fy - y
+            d = sqrt(dx*dx + dy*dy)
+        end if
+        if (d <= 0.0_dp) then
+            ux = 0.0_dp
+            uy = 0.0_dp
+            return
+        end if
+        ux = dx/d
+        uy = dy/d
+    end subroutine unit_towards
 
     ! One annotation: its box, then its lines. A string is broken at every
     ! newline and the lines are stacked at matplotlib's spacing of 1.2 times
@@ -7543,7 +7629,11 @@ contains
             if (base == BASE_MIDDLE) y0 = py + dy - 0.5_dp*t%fontsize
             if (base == BASE_TOP) y0 = py + dy
             if (base == BASE_BOTTOM) y0 = py + dy - hgt
-            if (len_trim(t%box_ec) > 0) then
+            if (trim(t%box_style) == "round") then
+                call append_round_rect(b, x0 - pad, y0 - pad, wmax + 2.0_dp*pad, &
+                                       hgt + 2.0_dp*pad, pad, trim(t%box_fc), &
+                                       t%box_alpha, trim(t%box_ec))
+            else if (len_trim(t%box_ec) > 0) then
                 call append_rect(b, x0 - pad, y0 - pad, wmax + 2.0_dp*pad, &
                                  hgt + 2.0_dp*pad, trim(t%box_fc), t%box_alpha, &
                                  trim(t%box_ec), 1.0_dp)
@@ -7716,6 +7806,40 @@ contains
     end subroutine hatch_line
 
     ! An axis aligned filled rectangle, optionally outlined.
+    ! A rectangle with quarter-circle corners of radius r, which is
+    ! matplotlib's "round" box style.
+    subroutine append_round_rect(b, x, y, w, h, r, color, alpha, edge)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: x, y, w, h, r, alpha
+        character(len=*), intent(in) :: color, edge
+        real(dp) :: px(17), py(17), k, rr
+        integer :: v(10)
+        type(paint_t) :: p
+
+        rr = min(r, 0.5_dp*w, 0.5_dp*h)
+        k = rr*(1.0_dp - 0.5522847498307933_dp)
+        px = [x + rr, x + w - rr, x + w - k, x + w, x + w, &
+              x + w, x + w, x + w - k, x + w - rr, x + rr, &
+              x + k, x, x, x, x, x + k, x + rr]
+        py = [y, y, y, y + k, y + rr, &
+              y + h - rr, y + h - k, y + h, y + h, y + h, &
+              y + h, y + h - k, y + h - rr, y + rr, y + k, y, y]
+        v = [VERB_MOVE, VERB_LINE, VERB_CUBIC, VERB_LINE, VERB_CUBIC, &
+             VERB_LINE, VERB_CUBIC, VERB_LINE, VERB_CUBIC, VERB_CLOSE]
+        p%clip = g_clip
+        if (len_trim(color) > 0) then
+            p%filled = .true.
+            p%fill_rgb = hex_rgb(color)
+            p%fill_alpha = alpha
+        end if
+        if (len_trim(edge) > 0) then
+            p%stroked = .true.
+            p%stroke_rgb = hex_rgb(edge)
+            p%line_width = 1.0_dp
+        end if
+        call b%draw_path(px, py, v, 10, p)
+    end subroutine append_round_rect
+
     subroutine append_rect(b, x, y, w, h, color, alpha, edge, elw)
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x, y, w, h
