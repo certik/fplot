@@ -154,6 +154,9 @@ call suptitle("figure title")
   per band, and a colorbar of blocks to match
 - `norm="centered"` with `vcenter=`, `norm="power"` with `gamma=` and
   `norm="symlog"` with `linthresh=`, on `imshow` and `pcolormesh`
+- `set_bad`, `set_under` and `set_over` for the samples a colormap has
+  nothing to say about, and `set_cmap_colors` to build one from a list of
+  stops; missing samples are left clear unless `set_bad` says otherwise
 - `errorbar` with `xerr=` and asymmetric `yerr_lo=`/`yerr_hi=` arms
 - `fill_between(where=)` to shade only where a condition holds
 - `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled",

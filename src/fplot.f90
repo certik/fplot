@@ -42,6 +42,7 @@ module fplot
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: get_xlim, get_ylim, invert_xaxis, invert_yaxis
+    public :: set_bad, set_under, set_over, set_cmap_colors
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
@@ -361,6 +362,10 @@ module fplot
         real(dp), allocatable :: img_bounds(:)
         real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: img_origin_upper = .true.
+        ! Colours for the values a colormap has nothing to say about, and
+        ! a colormap of the caller's own making.
+        character(len=7) :: cmap_bad = "", cmap_under = "", cmap_over = ""
+        character(len=7), allocatable :: cmap_list(:)
         ! An image whose colours are given outright rather than through a
         ! colormap: (row, column, channel) with three or four channels.
         real(dp), allocatable :: img_rgb(:, :, :)
@@ -3377,9 +3382,13 @@ contains
             lo = huge(1.0_dp)
             if (any(z > 0.0_dp)) lo = minval(z, mask=(z > 0.0_dp))
             hi = maxval(z)
+        else if (any(z == z)) then
+            ! Values that are not there at all say nothing about the range.
+            lo = minval(z, mask=(z == z))
+            hi = maxval(z, mask=(z == z))
         else
-            lo = minval(z)
-            hi = maxval(z)
+            lo = 0.0_dp
+            hi = 1.0_dp
         end if
         if (present(vmin)) lo = vmin
         if (present(vmax)) hi = vmax
@@ -3462,7 +3471,7 @@ contains
         character(len=16), parameter :: D = "0123456789abcdef"
         integer :: c(4), k
         if (.not. a%has_rgb) then
-            hex = cmap_color(a%img_cmap, cmap_t(a, a%img(i, j)))
+            hex = img_color(a, a%img(i, j))
             return
         end if
         call img_rgba(a, i, j, c)
@@ -3479,11 +3488,19 @@ contains
         integer, intent(in) :: i, j
         integer, intent(out) :: c(4)
         c(4) = 255
+        if (.not. a%has_rgb) then
+            if (img_bad_hidden(a, a%img(i, j))) then
+                ! matplotlib leaves missing samples fully transparent
+                ! unless a colour was set aside for them.
+                c = [255, 255, 255, 0]
+                return
+            end if
+        end if
         if (a%has_rgb) then
             c(1:3) = nint(255.0_dp*a%img_rgb(i, j, 1:3))
             if (size(a%img_rgb, 3) >= 4) c(4) = nint(255.0_dp*a%img_rgb(i, j, 4))
         else
-            c(1:3) = hex_rgb(cmap_color(a%img_cmap, cmap_t(a, a%img(i, j))))
+            c(1:3) = hex_rgb(img_color(a, a%img(i, j)))
         end if
     end subroutine img_rgba
 
@@ -8417,8 +8434,7 @@ contains
                                      + fu*a%img(i0 + 1, j1 + 1)) &
                       + fv*((1.0_dp - fu)*a%img(i1 + 1, j0 + 1) &
                             + fu*a%img(i1 + 1, j1 + 1))
-                t = cmap_t(a, val)
-                rgba(1:3, j, i) = hex_rgb(cmap_color(a%img_cmap, t))
+                rgba(1:3, j, i) = hex_rgb(img_color(a, val))
                 rgba(4, j, i) = 255
             end do
         end do
@@ -8477,6 +8493,7 @@ contains
                 end if
                 px0 = map_x(xe0, xmin, xmax, ax_l, ax_w, xsc)
                 px1 = map_x(xe1, xmin, xmax, ax_l, ax_w, xsc)
+                if (img_bad_hidden(a, a%img(i, j))) cycle
                 call append_cell(b, min(px0, px1), min(py0, py1), &
                                  abs(px1 - px0), abs(py1 - py0), &
                                  img_hex(a, i, j))
@@ -8587,7 +8604,7 @@ contains
                 y1 = (a%img_bounds(i + 1) - lo) / (hi - lo)
                 v = 0.5_dp * (a%img_bounds(i) + a%img_bounds(i + 1))
                 call cbar_band(b, a%cbar_horiz, bx, bt, bw, bh, y0, y1, &
-                               cmap_color(a%img_cmap, cmap_t(a, v)))
+                               img_color(a, v))
             end do
         else
             do i = 1, CBAR_SLICES
@@ -8595,7 +8612,7 @@ contains
                 y1 = real(i, dp) / real(CBAR_SLICES, dp)
                 t = (real(i, dp) - 0.5_dp) / real(CBAR_SLICES, dp)
                 call cbar_band(b, a%cbar_horiz, bx, bt, bw, bh, y0, y1, &
-                               cmap_color(a%img_cmap, t))
+                               map_color(a, t))
             end do
         end if
         call clear_clip()
@@ -8690,6 +8707,111 @@ contains
         if (present(gamma)) ax(cur_i)%img_gamma = gamma
         if (present(linthresh)) ax(cur_i)%img_linthresh = linthresh
     end subroutine norm_params
+
+    ! A place on the colormap as a colour, honouring a colormap the caller
+    ! built themselves.
+    pure function map_color(a, t) result(hex)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: t
+        character(len=7) :: hex
+        real(dp) :: u, f
+        integer :: n, i0
+        if (.not. allocated(a%cmap_list)) then
+            hex = cmap_color(a%img_cmap, t)
+            return
+        end if
+        n = size(a%cmap_list)
+        if (n == 1) then
+            hex = a%cmap_list(1)
+            return
+        end if
+        u = max(0.0_dp, min(1.0_dp, t))*real(n - 1, dp)
+        i0 = min(n - 2, int(u))
+        f = u - real(i0, dp)
+        hex = blend_hex(a%cmap_list(i0 + 1), a%cmap_list(i0 + 2), f)
+    end function map_color
+
+    ! Two colours mixed, as a colormap built from a list of stops mixes them.
+    pure function blend_hex(c0, c1, f) result(hex)
+        character(len=*), intent(in) :: c0, c1
+        real(dp), intent(in) :: f
+        character(len=7) :: hex
+        character(len=16), parameter :: D = "0123456789abcdef"
+        integer :: a3(3), b3(3), v, k
+        a3 = hex_rgb(c0)
+        b3 = hex_rgb(c1)
+        hex = "#000000"
+        do k = 1, 3
+            v = nint(real(a3(k), dp) + f*real(b3(k) - a3(k), dp))
+            v = max(0, min(255, v))
+            hex(2*k:2*k) = D(v/16 + 1:v/16 + 1)
+            hex(2*k + 1:2*k + 1) = D(mod(v, 16) + 1:mod(v, 16) + 1)
+        end do
+    end function blend_hex
+
+    ! Whether a sample is simply not drawn: it is missing and nothing was
+    ! said about what to put in its place.
+    pure function img_bad_hidden(a, v) result(hidden)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: v
+        logical :: hidden
+        hidden = (.not. finite(v)) .and. len_trim(a%cmap_bad) == 0
+    end function img_bad_hidden
+
+    ! The colour of one value: the colours set aside for the values that
+    ! fall outside the range, or off the scale altogether, take precedence
+    ! over the colormap itself.
+    pure function img_color(a, v) result(hex)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: v
+        character(len=7) :: hex
+        if (.not. finite(v)) then
+            hex = a%cmap_bad
+            if (len_trim(hex) == 0) hex = map_color(a, 0.0_dp)
+            return
+        end if
+        if (v < a%img_vmin .and. len_trim(a%cmap_under) > 0) then
+            hex = a%cmap_under
+            return
+        end if
+        if (v > a%img_vmax .and. len_trim(a%cmap_over) > 0) then
+            hex = a%cmap_over
+            return
+        end if
+        hex = map_color(a, cmap_t(a, v))
+    end function img_color
+
+    ! matplotlib's Colormap.set_bad / set_under / set_over, and
+    ! LinearSegmentedColormap.from_list, applied to the current axes.
+    subroutine set_bad(color)
+        character(len=*), intent(in) :: color
+        call ensure_fig()
+        ax(cur_i)%cmap_bad = resolve_color(color)
+    end subroutine set_bad
+
+    subroutine set_under(color)
+        character(len=*), intent(in) :: color
+        call ensure_fig()
+        ax(cur_i)%cmap_under = resolve_color(color)
+    end subroutine set_under
+
+    subroutine set_over(color)
+        character(len=*), intent(in) :: color
+        call ensure_fig()
+        ax(cur_i)%cmap_over = resolve_color(color)
+    end subroutine set_over
+
+    subroutine set_cmap_colors(colors)
+        character(len=*), intent(in) :: colors(:)
+        integer :: i
+        call ensure_fig()
+        if (allocated(ax(cur_i)%cmap_list)) deallocate (ax(cur_i)%cmap_list)
+        if (size(colors) < 1) return
+        allocate (ax(cur_i)%cmap_list(size(colors)))
+        do i = 1, size(colors)
+            ax(cur_i)%cmap_list(i) = resolve_color(colors(i))
+        end do
+    end subroutine set_cmap_colors
 
     pure function norm_from_str(s) result(k)
         character(len=*), intent(in) :: s

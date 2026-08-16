@@ -854,6 +854,28 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 106) colours for what is off the scale, and a colormap of our own
+    call clf()
+    zero = 0.0_dp
+    qnan = zero/zero
+    do i = 1, 16
+        do j = 1, 16
+            zn(i, j) = real(i + j, dp)
+        end do
+    end do
+    zn(4:6, 4:6) = qnan
+    call subplot(1, 2, 1)
+    call imshow(zn, cmap="viridis", vmin=8.0_dp, vmax=24.0_dp)
+    call set_bad("red")
+    call set_under("black")
+    call set_over("white")
+    call title("bad/under/over")
+    call subplot(1, 2, 2)
+    call imshow(zn)
+    call set_cmap_colors(["#000080", "#ffffff", "#800000"])
+    call title("own colormap")
+    call save_all("cmap_special")
+
 ! 105) three ways of spreading values over a colormap
     call clf()
     do i = 1, 16

@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "cmap_special",
     "norms",
     "imshow_rgb",
     "hist_orient",
@@ -876,6 +877,25 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 106 colours for what is off the scale, and a colormap of our own
+    from matplotlib.colors import LinearSegmentedColormap
+    zn2 = np.zeros((16, 16))
+    for i in range(16):
+        for j in range(16):
+            zn2[i, j] = (i + 1) + (j + 1)
+    zn2[3:6, 3:6] = np.nan
+    cm = plt.get_cmap("viridis").copy()
+    cm.set_bad("red")
+    cm.set_under("black")
+    cm.set_over("white")
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].imshow(zn2, cmap=cm, vmin=8, vmax=24)
+    axs[0].set_title("bad/under/over")
+    own = LinearSegmentedColormap.from_list("own", ["#000080", "#ffffff", "#800000"])
+    axs[1].imshow(zn2, cmap=own)
+    axs[1].set_title("own colormap")
+    save(fig, "cmap_special")
 
     # 105 three ways of spreading values over a colormap
     from matplotlib.colors import TwoSlopeNorm, PowerNorm, SymLogNorm
