@@ -27,7 +27,7 @@ call title("bottom")
 call suptitle("figure title")
 ```
 
-## Features (MVP)
+## Features
 
 - `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
 - `scatter` also takes per-point `sizes=` and color-mapped `cvals=`
@@ -166,6 +166,23 @@ call display_data("image/svg+xml", render_svg())
 
 `show()` always writes `fplot_show.svg` (works with Flang and LFortran offline).
 
-## Comparison note
+## Fidelity to matplotlib
 
-Output is **visually** similar to matplotlib, not bit-identical SVG. Matplotlib embeds DejaVu glyph outlines and rich metadata; fplot uses SVG `<text>` and simpler geometry.
+fplot is measured against matplotlib rather than described as similar to it:
+every feature has a case in `tests/test_plots.f90` and a matplotlib reference
+in `tests/gen_mpl_refs.py`, and the comparisons above put a number on the
+difference. As of this writing, over 75 cases:
+
+| format | cases | mean difference |
+| --- | --- | --- |
+| PNG | 75 | 1.55/255 |
+| PDF | 74 | 1.99/255 |
+| EPS | 75 | 3.61/255 |
+| GIF | 20 frames | 0.60/255 |
+
+What is left is mostly antialiasing along edges, and text: fplot draws with
+its own compiled-in DejaVu Sans metrics and glyph outlines, so a stem lands
+on the same pixel column as matplotlib's but not always with the same
+coverage. The SVG is not matplotlib's SVG byte for byte, and is not meant to
+be: matplotlib writes every glyph as a path and attaches its own metadata,
+while fplot writes `<text>` and leaves the glyphs to the viewer.
