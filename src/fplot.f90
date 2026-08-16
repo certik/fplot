@@ -36,7 +36,7 @@ module fplot
     public :: axis, set_aspect, tick_params, spines
     public :: margins, autoscale
     public :: text, annotate, figtext, set_facecolor
-    public :: xticks, yticks, minorticks_on
+    public :: xticks, yticks, minorticks_on, locator_params
     public :: ticklabel_format, tick_format, tick_locator
     public :: imshow, colorbar, contour, contourf, clabel
     public :: title, xlabel, ylabel, grid, legend
@@ -325,6 +325,11 @@ module fplot
         ! User-specified tick positions and optional labels.
         integer :: n_xticks = 0, n_yticks = 0
         real(dp) :: xtick_pos(MAX_TICKS), ytick_pos(MAX_TICKS)
+        ! Minor ticks placed by hand, and the ends the locator is told to
+        ! leave alone ("lower", "upper" or "both").
+        integer :: n_xminor = 0, n_yminor = 0
+        real(dp) :: xminor_pos(MAX_TICKS), yminor_pos(MAX_TICKS)
+        character(len=6) :: xtick_prune = "", ytick_prune = ""
         logical :: xtick_labeled = .false., ytick_labeled = .false.
         character(len=24) :: xtick_lab(MAX_TICKS), ytick_lab(MAX_TICKS)
         ! Image (imshow). One image per axes, as in normal matplotlib use.
@@ -2513,20 +2518,22 @@ contains
         call set_yscale(name, linthresh, linscale)
     end subroutine ax_set_yscale
 
-    subroutine ax_set_xticks(self, vals, labels)
+    subroutine ax_set_xticks(self, vals, labels, minor)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: vals(:)
         character(len=*), intent(in), optional :: labels(:)
+        logical, intent(in), optional :: minor
         call ax_sca(self)
-        call xticks(vals, labels)
+        call xticks(vals, labels, minor)
     end subroutine ax_set_xticks
 
-    subroutine ax_set_yticks(self, vals, labels)
+    subroutine ax_set_yticks(self, vals, labels, minor)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: vals(:)
         character(len=*), intent(in), optional :: labels(:)
+        logical, intent(in), optional :: minor
         call ax_sca(self)
-        call yticks(vals, labels)
+        call yticks(vals, labels, minor)
     end subroutine ax_set_yticks
 
     subroutine ax_set_aspect(self, ratio, adjustable)
@@ -2872,21 +2879,86 @@ contains
         end select
     end subroutine which_axis
 
-    subroutine xticks(vals, labels)
+    subroutine xticks(vals, labels, minor)
         real(dp), intent(in) :: vals(:)
         character(len=*), intent(in), optional :: labels(:)
+        logical, intent(in), optional :: minor
         call ensure_fig()
+        if (is_minor(minor)) then
+            call set_minor_ticks(vals, ax(cur_i)%n_xminor, ax(cur_i)%xminor_pos)
+            return
+        end if
         call set_ticks(vals, labels, ax(cur_i)%n_xticks, ax(cur_i)%xtick_pos, &
                        ax(cur_i)%xtick_labeled, ax(cur_i)%xtick_lab)
     end subroutine xticks
 
-    subroutine yticks(vals, labels)
+    subroutine yticks(vals, labels, minor)
         real(dp), intent(in) :: vals(:)
         character(len=*), intent(in), optional :: labels(:)
+        logical, intent(in), optional :: minor
         call ensure_fig()
+        if (is_minor(minor)) then
+            call set_minor_ticks(vals, ax(cur_i)%n_yminor, ax(cur_i)%yminor_pos)
+            return
+        end if
         call set_ticks(vals, labels, ax(cur_i)%n_yticks, ax(cur_i)%ytick_pos, &
                        ax(cur_i)%ytick_labeled, ax(cur_i)%ytick_lab)
     end subroutine yticks
+
+    pure function is_minor(minor) result(v)
+        logical, intent(in), optional :: minor
+        logical :: v
+        v = .false.
+        if (present(minor)) v = minor
+    end function is_minor
+
+    subroutine set_minor_ticks(vals, n, pos)
+        real(dp), intent(in) :: vals(:)
+        integer, intent(out) :: n
+        real(dp), intent(out) :: pos(MAX_TICKS)
+        integer :: i
+        n = min(size(vals), MAX_TICKS)
+        do i = 1, n
+            pos(i) = vals(i)
+        end do
+    end subroutine set_minor_ticks
+
+    ! matplotlib's locator_params: how many intervals the locator may use,
+    ! and whether to drop the tick at one end so that it does not collide
+    ! with a neighbouring subplot.
+    subroutine locator_params(axis, nbins, prune)
+        character(len=*), intent(in), optional :: axis, prune
+        integer, intent(in), optional :: nbins
+        logical :: dox, doy
+        call ensure_fig()
+        call which_axis(axis, dox, doy)
+        if (present(nbins)) then
+            if (dox) ax(cur_i)%xtick_nbins = nbins
+            if (doy) ax(cur_i)%ytick_nbins = nbins
+        end if
+        if (present(prune)) then
+            if (dox) ax(cur_i)%xtick_prune = prune
+            if (doy) ax(cur_i)%ytick_prune = prune
+        end if
+    end subroutine locator_params
+
+    ! Drop the tick at one or both ends of a located set.
+    pure subroutine prune_ticks(prune, t, n)
+        character(len=*), intent(in) :: prune
+        real(dp), intent(inout) :: t(:)
+        integer, intent(inout) :: n
+        if (n <= 0) return
+        select case (trim(prune))
+        case ("lower", "both")
+            t(1:n - 1) = t(2:n)
+            n = n - 1
+        end select
+        if (n <= 0) return
+        select case (trim(prune))
+        case ("upper", "both")
+            n = n - 1
+        end select
+    end subroutine prune_ticks
 
     subroutine set_ticks(vals, labels, n, pos, labeled, lab)
         real(dp), intent(in) :: vals(:)
@@ -9810,6 +9882,8 @@ contains
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
                         ysc, nbins_for(a%ytick_nbins, ax_h, a%ytick_size, .false.), &
                         a%y_date, yticks, nyt, y_unit, a%ytick_base)
+        if (a%n_xticks == 0) call prune_ticks(a%xtick_prune, xticks, nxt)
+        if (a%n_yticks == 0) call prune_ticks(a%ytick_prune, yticks, nyt)
         xfmt = axis_fmt(xticks, nxt, a, .true., xmin, xmax)
         yfmt = axis_fmt(yticks, nyt, a, .false., min(ymin, ymax), max(ymin, ymax))
         if (wants_minor(a) .or. a%xsc%kind == SCALE_LOG .or. &
@@ -9819,6 +9893,16 @@ contains
         else
             nxm = 0
             nym = 0
+        end if
+        ! Minor ticks placed by hand stand in for the automatic ones, and
+        ! asking for them is asking to see them.
+        if (a%n_xminor > 0) then
+            nxm = a%n_xminor
+            xminor(1:nxm) = a%xminor_pos(1:nxm)
+        end if
+        if (a%n_yminor > 0) then
+            nym = a%n_yminor
+            yminor(1:nym) = a%yminor_pos(1:nym)
         end if
 
         ! axis("off") leaves only the artists: no frame, no ticks, no labels.
@@ -10120,8 +10204,10 @@ contains
         end if
         if (a%yaxis_off) nyt = 0
         if (a%xaxis_off) nxt = 0
-        if (a%xaxis_off .or. .not. (a%minor_ticks .or. xsc%kind == SCALE_LOG)) nxm = 0
-        if (a%yaxis_off .or. .not. (a%minor_ticks .or. ysc%kind == SCALE_LOG)) nym = 0
+        if (a%xaxis_off .or. .not. (a%minor_ticks .or. a%n_xminor > 0 .or. &
+                                    xsc%kind == SCALE_LOG)) nxm = 0
+        if (a%yaxis_off .or. .not. (a%minor_ticks .or. a%n_yminor > 0 .or. &
+                                    ysc%kind == SCALE_LOG)) nym = 0
 
         do i = 1, nxt
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)

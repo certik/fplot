@@ -854,6 +854,19 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 107) minor ticks placed by hand, and a pruned locator
+    call clf()
+    call subplot(2, 1, 1)
+    call plot(x, y, "b-")
+    call xticks([0.0_dp, 2.0_dp, 4.0_dp, 6.0_dp])
+    call xticks([1.0_dp, 3.0_dp, 5.0_dp], minor=.true.)
+    call title("minor by hand")
+    call subplot(2, 1, 2)
+    call plot(x, y, "r-")
+    call locator_params(axis="y", prune="both")
+    call title("prune=both")
+    call save_all("tick_locator")
+
 ! 106) colours for what is off the scale, and a colormap of our own
     call clf()
     zero = 0.0_dp

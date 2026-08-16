@@ -78,7 +78,9 @@ call suptitle("figure title")
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
 - `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
-  `xticks` / `yticks` with optional labels, `minorticks_on`
+  `xticks` / `yticks` with optional labels, `minorticks_on`,
+  `xticks(vals, minor=.true.)` to place minor ticks by hand, and
+  `locator_params(axis=, nbins=, prune=)`
 - Formatters and locators: `tick_format(axis, "percent"/"comma"/"fixed")`,
   `tick_locator(axis, base=, nbins=)` and `ticklabel_format(style=,
   useoffset=, scilimits=)`. An axis whose labels would otherwise repeat

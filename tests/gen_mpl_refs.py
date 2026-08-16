@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "tick_locator",
     "cmap_special",
     "norms",
     "imshow_rgb",
@@ -877,6 +878,17 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 107 minor ticks placed by hand, and a pruned locator
+    fig, axs = plt.subplots(2, 1, figsize=(6.4, 4.8))
+    axs[0].plot(x, y, "b-")
+    axs[0].set_xticks([0.0, 2.0, 4.0, 6.0])
+    axs[0].set_xticks([1.0, 3.0, 5.0], minor=True)
+    axs[0].set_title("minor by hand")
+    axs[1].plot(x, y, "r-")
+    axs[1].locator_params(axis="y", prune="both")
+    axs[1].set_title("prune=both")
+    save(fig, "tick_locator")
 
     # 106 colours for what is off the scale, and a colormap of our own
     from matplotlib.colors import LinearSegmentedColormap
