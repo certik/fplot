@@ -475,8 +475,8 @@ module fplot
         procedure :: inset_axes => ax_inset_axes
         procedure :: secondary_xaxis => ax_secondary_xaxis
         procedure :: secondary_yaxis => ax_secondary_yaxis
-        procedure, private :: ax_plot, ax_plot_cat
-        generic :: plot => ax_plot, ax_plot_cat
+        procedure, private :: ax_plot, ax_plot_cat, ax_plot_y
+        generic :: plot => ax_plot, ax_plot_cat, ax_plot_y
         procedure :: scatter => ax_scatter
         procedure, private :: ax_bar, ax_bar_cat, ax_barh, ax_barh_cat
         generic :: bar => ax_bar, ax_bar_cat
@@ -577,7 +577,7 @@ module fplot
     end interface barh
 
     interface plot
-        module procedure plot_num, plot_cat
+        module procedure plot_num, plot_cat, plot_y
     end interface plot
 
     interface subplots
@@ -1707,6 +1707,23 @@ contains
                   markersize, markerfacecolor, markeredgecolor, &
                   markeredgewidth, markevery, drawstyle, dashes)
     end subroutine ax_plot
+
+    subroutine ax_plot_y(self, y, fmt, label, lw, color, marker, linestyle, &
+                         alpha, markersize, markerfacecolor, markeredgecolor, &
+                         markeredgewidth, markevery, drawstyle, dashes)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        character(len=*), intent(in), optional :: markerfacecolor, markeredgecolor
+        character(len=*), intent(in), optional :: drawstyle
+        real(dp), intent(in), optional :: lw, alpha, markersize, markeredgewidth
+        real(dp), intent(in), optional :: dashes(:)
+        integer, intent(in), optional :: markevery
+        call ax_sca(self)
+        call plot(y, fmt, label, lw, color, marker, linestyle, alpha, &
+                  markersize, markerfacecolor, markeredgecolor, &
+                  markeredgewidth, markevery, drawstyle, dashes)
+    end subroutine ax_plot_y
 
     subroutine ax_plot_cat(self, cats, y, fmt, label, lw, color, marker, &
                            linestyle, alpha)
@@ -2869,6 +2886,29 @@ contains
                 dashes(1:ax(cur_i)%series(is)%n_dash)
         end if
     end subroutine plot_num
+
+    ! plot(y): matplotlib numbers the points 0, 1, 2 ... when it is given
+    ! only one array, and so does this.
+    subroutine plot_y(y, fmt, label, lw, color, marker, linestyle, alpha, &
+                      markersize, markerfacecolor, markeredgecolor, &
+                      markeredgewidth, markevery, drawstyle, dashes)
+        real(dp), intent(in) :: y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        character(len=*), intent(in), optional :: markerfacecolor, markeredgecolor
+        character(len=*), intent(in), optional :: drawstyle
+        real(dp), intent(in), optional :: lw, alpha, markersize, markeredgewidth
+        real(dp), intent(in), optional :: dashes(:)
+        integer, intent(in), optional :: markevery
+        integer :: i
+        real(dp) :: idx(size(y))
+
+        do i = 1, size(y)
+            idx(i) = real(i - 1, dp)
+        end do
+        call plot_num(idx, y, fmt, label, lw, color, marker, linestyle, alpha, &
+                      markersize, markerfacecolor, markeredgecolor, &
+                      markeredgewidth, markevery, drawstyle, dashes)
+    end subroutine plot_y
 
     subroutine plot_cat(cats, y, fmt, label, lw, color, marker, linestyle, alpha)
         character(len=*), intent(in) :: cats(:)

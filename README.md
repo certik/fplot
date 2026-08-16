@@ -30,6 +30,7 @@ call suptitle("figure title")
 ## Features
 
 - `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
+- `plot(y)` with a single array numbers the points `0, 1, 2, ...` for x
 - `scatter` also takes per-point `sizes=` and color-mapped `cvals=`
   (separate keywords because Fortran cannot overload one dummy as
   scalar-or-array the way matplotlib's `s=` and `c=` do)

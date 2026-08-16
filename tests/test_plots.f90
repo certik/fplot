@@ -850,6 +850,13 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 97) one array is enough
+    call clf()
+    call plot(y)
+    call plot(y*0.5_dp, "o--")
+    call title("plot(y)")
+    call save_all("plot_y")
+
 ! 96) a wireframe and a colormapped surface
     call clf()
     do i = 1, n3

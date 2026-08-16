@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "plot_y",
     "basic_line",
     "multi_style",
     "markers_only",
@@ -867,6 +868,13 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 97 one array is enough
+    fig, ax = setup_fig()
+    ax.plot(y)
+    ax.plot(y * 0.5, "o--")
+    ax.set_title("plot(y)")
+    save(fig, "plot_y")
 
     # 96 a wireframe and a colormapped surface
     fig = plt.figure(figsize=(6.4, 4.8))
