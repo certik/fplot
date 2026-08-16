@@ -854,6 +854,20 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 112) violins across, with the mean and median marked
+    call clf()
+    boxmat(1, :) = dist1
+    boxmat(2, :) = dist2
+    call subplot(1, 2, 1)
+    call violinplot(boxmat, labels=["one", "two"], showmeans=.true., &
+                    showmedians=.true.)
+    call title("means")
+    call subplot(1, 2, 2)
+    call violinplot(boxmat, labels=["one", "two"], vert=.false., &
+                    showextrema=.false.)
+    call title("across")
+    call save_all("violin_opts")
+
 ! 111) boxes across, waisted, filled and with the mean marked
     call clf()
     boxmat(1, :) = dist1

@@ -41,6 +41,8 @@ call suptitle("figure title")
 - `step`, `stem`, `barh`, `pie`, `boxplot`, `violinplot`
 - `boxplot(y)` for one dataset or `boxplot(y(:,:), labels=)` for a row
   each, with `vert=`, `notch=`, `showmeans=`, `patch_artist=` and `whis=`
+- `violinplot` the same way, with `vert=`, `showmeans=`, `showmedians=`
+  and `showextrema=`
 - `pie(explode=, startangle=, counterclock=, autopct=, pctdistance=,
   labeldistance=, radius=, colors=, edgecolor=, linewidth=)`
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`

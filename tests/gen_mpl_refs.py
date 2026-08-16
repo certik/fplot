@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "violin_opts",
     "box_opts",
     "pie_opts",
     "scatter_edge",
@@ -882,6 +883,17 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 112 violins across, with the mean and median marked
+    boxmat = np.vstack([dist1, dist2])
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].violinplot([boxmat[0], boxmat[1]], showmeans=True, showmedians=True)
+    axs[0].set_xticks([1, 2], ["one", "two"])
+    axs[0].set_title("means")
+    axs[1].violinplot([boxmat[0], boxmat[1]], vert=False, showextrema=False)
+    axs[1].set_yticks([1, 2], ["one", "two"])
+    axs[1].set_title("across")
+    save(fig, "violin_opts")
 
     # 111 boxes across, waisted, filled and with the mean marked
     boxmat = np.vstack([dist1, dist2])

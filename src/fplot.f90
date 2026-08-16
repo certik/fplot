@@ -8467,55 +8467,83 @@ contains
         type(scale_t), intent(in) :: xsc, ysc
         integer, parameter :: NK = 100
         real(dp) :: g(NK), d(NK)
-        real(dp) :: px(2 * NK), py(2 * NK)
-        real(dp) :: lo, hi, mu, var, h, dmax, hw, cw, u
+        real(dp) :: px(2*NK), py(2*NK)
+        real(dp) :: lo, hi, mu, var, h, dmax, hw, cw, u, med
+        real(dp) :: c_lo, c_hi, ctr
         integer :: i, j
 
         lo = s%y(1)
         hi = s%y(s%n)
         if (hi <= lo) return
 
-        mu = sum(s%y(1:s%n)) / real(s%n, dp)
-        var = sum((s%y(1:s%n) - mu)**2) / real(s%n - 1, dp)
+        mu = sum(s%y(1:s%n))/real(s%n, dp)
+        var = sum((s%y(1:s%n) - mu)**2)/real(s%n - 1, dp)
         ! Scott's rule, as used by scipy's gaussian_kde and so by matplotlib.
-        h = sqrt(var) * real(s%n, dp)**(-0.2_dp)
+        h = sqrt(var)*real(s%n, dp)**(-0.2_dp)
         if (h <= 0.0_dp) return
 
         do i = 1, NK
-            g(i) = lo + (hi - lo) * real(i - 1, dp) / real(NK - 1, dp)
+            g(i) = lo + (hi - lo)*real(i - 1, dp)/real(NK - 1, dp)
             d(i) = 0.0_dp
             do j = 1, s%n
-                u = (g(i) - s%y(j)) / h
-                d(i) = d(i) + exp(-0.5_dp * u * u)
+                u = (g(i) - s%y(j))/h
+                d(i) = d(i) + exp(-0.5_dp*u*u)
             end do
         end do
         dmax = maxval(d)
         if (dmax <= 0.0_dp) return
 
-        hw = 0.5_dp * s%width
+        hw = 0.5_dp*s%width
+        cw = 0.5_dp*hw
         do i = 1, NK
-            px(i) = map_x(s%pos - hw * d(i) / dmax, xmin, xmax, ax_l, ax_w, xsc)
-            py(i) = map_y(g(i), ymin, ymax, ax_b, ax_h, ysc)
-            px(2 * NK + 1 - i) = map_x(s%pos + hw * d(i) / dmax, xmin, xmax, ax_l, ax_w, xsc)
-            py(2 * NK + 1 - i) = py(i)
+            call box_pt(s, pos_coord(s, s%pos - hw*d(i)/dmax, xmin, xmax, ymin, ymax, &
+                                     ax_l, ax_w, ax_b, ax_h, xsc, ysc), &
+                        g(i), px, py, i, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, pos_coord(s, s%pos + hw*d(i)/dmax, xmin, xmax, ymin, ymax, &
+                                     ax_l, ax_w, ax_b, ax_h, xsc, ysc), &
+                        g(i), px, py, 2*NK + 1 - i, xmin, xmax, ymin, ymax, &
+                        ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         end do
-        call append_polygon(b, px, py, 2 * NK, trim(s%color), 0.3_dp)
+        call append_polygon(b, px, py, 2*NK, trim(s%color), 0.3_dp)
 
-        cw = 0.5_dp * hw
-        call append_line(b, map_x(s%pos, xmin, xmax, ax_l, ax_w, xsc), &
-                         map_y(lo, ymin, ymax, ax_b, ax_h, ysc), &
-                         map_x(s%pos, xmin, xmax, ax_l, ax_w, xsc), &
-                         map_y(hi, ymin, ymax, ax_b, ax_h, ysc), &
-                         trim(s%color), 1.5_dp, LINE_SOLID, 1.0_dp)
-        do i = 1, 2
-            u = merge(lo, hi, i == 1)
-            call append_line(b, map_x(s%pos - cw, xmin, xmax, ax_l, ax_w, xsc), &
-                             map_y(u, ymin, ymax, ax_b, ax_h, ysc), &
-                             map_x(s%pos + cw, xmin, xmax, ax_l, ax_w, xsc), &
-                             map_y(u, ymin, ymax, ax_b, ax_h, ysc), &
-                             trim(s%color), 1.5_dp, LINE_SOLID, 1.0_dp)
-        end do
+        c_lo = pos_coord(s, s%pos - cw, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        c_hi = pos_coord(s, s%pos + cw, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        ctr = pos_coord(s, s%pos, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+
+        ! box_fill stands for "the extrema were turned off" on a violin.
+        if (.not. s%box_fill) then
+            call violin_bar(b, s, ctr, lo, ctr, hi, xmin, xmax, ymin, ymax, &
+                            ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call violin_bar(b, s, c_lo, lo, c_hi, lo, xmin, xmax, ymin, ymax, &
+                            ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call violin_bar(b, s, c_lo, hi, c_hi, hi, xmin, xmax, ymin, ymax, &
+                            ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        end if
+        if (s%box_mean) &
+            call violin_bar(b, s, c_lo, mu, c_hi, mu, xmin, xmax, ymin, ymax, &
+                            ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        ! box_notch stands for "show the median" on a violin.
+        if (s%box_notch) then
+            med = quantile(s%y(1:s%n), 0.5_dp)
+            call violin_bar(b, s, c_lo, med, c_hi, med, xmin, xmax, ymin, ymax, &
+                            ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        end if
     end subroutine append_violin
+
+    ! One bar of violin furniture, in the violin's own colour and weight.
+    subroutine violin_bar(b, s, c0, v0, c1, v1, xmin, xmax, ymin, ymax, &
+                          ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: c0, v0, c1, v1
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp) :: bx(2), by(2)
+
+        call box_pt(s, c0, v0, bx, by, 1, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        call box_pt(s, c1, v1, bx, by, 2, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        call append_line(b, bx(1), by(1), bx(2), by(2), trim(s%color), 1.5_dp, LINE_SOLID, 1.0_dp)
+    end subroutine violin_bar
 
     ! One <path> per wedge: a radius out, the arc, and back to the centre.
     subroutine append_pie(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h)
