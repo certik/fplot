@@ -33,7 +33,7 @@ module fplot
     public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
     public :: axis, set_aspect, tick_params, spines
-    public :: text, annotate
+    public :: text, annotate, figtext
     public :: xticks, yticks, minorticks_on
     public :: ticklabel_format, tick_format, tick_locator
     public :: imshow, colorbar, contour, contourf, clabel
@@ -241,8 +241,19 @@ module fplot
         real(dp) :: fontsize = 10.0_dp
         character(len=7) :: color = "#000000"
         character(len=8) :: ha = "left"
+        ! Empty means the older placement, which is neither matplotlib's
+        ! "baseline" nor any of the others but is what every plot drawn so
+        ! far expects.
+        character(len=8) :: va = ""
+        real(dp) :: rot = 0.0_dp
         integer :: weight = WEIGHT_NORMAL, slant = SLANT_ROMAN
-        character(len=128) :: s = ""
+        ! An optional box behind the text.
+        logical :: has_box = .false.
+        character(len=7) :: box_fc = "#ffffff", box_ec = ""
+        real(dp) :: box_alpha = 1.0_dp, box_pad = 0.3_dp
+        ! figtext places in figure coordinates rather than data ones.
+        logical :: in_fig = .false.
+        character(len=256) :: s = ""
     end type text_t
 
     type :: axes_t
@@ -5057,22 +5068,45 @@ contains
     end function linestyle_from_str
 
     ! Text at a point in data coordinates.
-    subroutine text(x, y, s, color, fontsize, ha, fontweight, fontstyle)
+    subroutine text(x, y, s, color, fontsize, ha, fontweight, fontstyle, &
+                    va, rotation, bbox_facecolor, bbox_edgecolor, bbox_alpha, &
+                    bbox_pad)
         real(dp), intent(in) :: x, y
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
-        real(dp), intent(in), optional :: fontsize
+        character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
+        real(dp), intent(in), optional :: fontsize, rotation, bbox_alpha, bbox_pad
         call add_text(x, y, s, color, fontsize, ha, .false., 0.0_dp, 0.0_dp, &
-                      fontweight, fontstyle)
+                      fontweight, fontstyle, va, rotation, bbox_facecolor, &
+                      bbox_edgecolor, bbox_alpha, bbox_pad)
     end subroutine text
+
+    ! The same, but placed in figure coordinates, so that a note can sit
+    ! anywhere on the canvas rather than inside one axes.
+    subroutine figtext(x, y, s, color, fontsize, ha, fontweight, fontstyle, &
+                       va, rotation)
+        real(dp), intent(in) :: x, y
+        character(len=*), intent(in) :: s
+        character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
+        character(len=*), intent(in), optional :: va
+        real(dp), intent(in), optional :: fontsize, rotation
+        integer :: it
+        call add_text(x, y, s, color, fontsize, ha, .false., 0.0_dp, 0.0_dp, &
+                      fontweight, fontstyle, va, rotation)
+        it = ax(cur_i)%n_texts
+        ax(cur_i)%texts(it)%in_fig = .true.
+    end subroutine figtext
 
     ! Text at (xtext, ytext) with an arrow pointing at (x, y).
     subroutine annotate(s, x, y, xtext, ytext, color, fontsize, ha, &
-                        fontweight, fontstyle)
+                        fontweight, fontstyle, va, rotation, bbox_facecolor, &
+                        bbox_edgecolor, bbox_alpha, bbox_pad)
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: x, y
         real(dp), intent(in), optional :: xtext, ytext, fontsize
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
+        character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
+        real(dp), intent(in), optional :: rotation, bbox_alpha, bbox_pad
         real(dp) :: xt, yt
         logical :: arrow
 
@@ -5083,15 +5117,18 @@ contains
         if (present(ytext)) yt = ytext
         ! The label sits at the text position; the arrow runs back to (x, y).
         call add_text(xt, yt, s, color, fontsize, ha, arrow, x, y, &
-                      fontweight, fontstyle)
+                      fontweight, fontstyle, va, rotation, bbox_facecolor, &
+                      bbox_edgecolor, bbox_alpha, bbox_pad)
     end subroutine annotate
 
     subroutine add_text(x, y, s, color, fontsize, ha, arrow, xarr, yarr, &
-                        fontweight, fontstyle)
+                        fontweight, fontstyle, va, rotation, bbox_facecolor, &
+                        bbox_edgecolor, bbox_alpha, bbox_pad)
         real(dp), intent(in) :: x, y, xarr, yarr
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
-        real(dp), intent(in), optional :: fontsize
+        character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
+        real(dp), intent(in), optional :: fontsize, rotation, bbox_alpha, bbox_pad
         logical, intent(in) :: arrow
         integer :: it
         character(len=7) :: col
@@ -5113,6 +5150,18 @@ contains
         ax(cur_i)%texts(it)%color = rc_text_color
         if (present(fontsize)) ax(cur_i)%texts(it)%fontsize = fontsize
         if (present(ha)) ax(cur_i)%texts(it)%ha = ha
+        if (present(va)) ax(cur_i)%texts(it)%va = va
+        if (present(rotation)) ax(cur_i)%texts(it)%rot = rotation
+        if (present(bbox_facecolor)) then
+            ax(cur_i)%texts(it)%has_box = .true.
+            ax(cur_i)%texts(it)%box_fc = resolve_color(bbox_facecolor)
+        end if
+        if (present(bbox_edgecolor)) then
+            ax(cur_i)%texts(it)%has_box = .true.
+            ax(cur_i)%texts(it)%box_ec = resolve_color(bbox_edgecolor)
+        end if
+        if (present(bbox_alpha)) ax(cur_i)%texts(it)%box_alpha = bbox_alpha
+        if (present(bbox_pad)) ax(cur_i)%texts(it)%box_pad = bbox_pad
         col = resolve_color(color)
         if (len_trim(col) > 0) ax(cur_i)%texts(it)%color = col
     end subroutine add_text
@@ -5900,14 +5949,15 @@ contains
     ! Text element. anchor is a matplotlib horizontal alignment
     ! (left/center/right) or an SVG anchor (start/middle/end). rot is a
     ! matplotlib rotation, counterclockwise in degrees.
-    subroutine append_text(b, x, y, s, anchor, fontsize, color, rot, weight, slant)
+    subroutine append_text(b, x, y, s, anchor, fontsize, color, rot, weight, &
+                           slant, baseline)
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x, y, fontsize
         character(len=*), intent(in) :: s, anchor, color
         real(dp), intent(in), optional :: rot
-        integer, intent(in), optional :: weight, slant
+        integer, intent(in), optional :: weight, slant, baseline
         type(font_t) :: f
-        integer :: an
+        integer :: an, bl
         real(dp) :: ang
 
         select case (anchor)
@@ -5918,13 +5968,15 @@ contains
         f%size = fontsize
         if (present(weight)) f%weight = weight
         if (present(slant)) f%slant = slant
+        bl = BASE_ALPHABETIC
+        if (present(baseline)) bl = baseline
         ang = 0.0_dp
         ! The API turns angles clockwise, matplotlib counterclockwise.
         if (present(rot)) ang = -rot
         if (math_is(s)) then
             call append_math(b, x, y, s, f, brush(color), an, ang)
         else
-            call b%draw_text(x, y, s, f, brush(color), an, BASE_ALPHABETIC, ang)
+            call b%draw_text(x, y, s, f, brush(color), an, bl, ang)
         end if
     end subroutine append_text
 
@@ -5964,6 +6016,103 @@ contains
                              BASE_ALPHABETIC, ang)
         end do
     end subroutine append_math
+
+    ! How many lines the string has, and where the k-th one lies in it.
+    pure integer function line_count(s)
+        character(len=*), intent(in) :: s
+        integer :: i
+        line_count = 1
+        do i = 1, len_trim(s)
+            if (s(i:i) == achar(10)) line_count = line_count + 1
+        end do
+    end function line_count
+
+    pure subroutine line_bounds(s, k, i0, i1)
+        character(len=*), intent(in) :: s
+        integer, intent(in) :: k
+        integer, intent(out) :: i0, i1
+        integer :: i, n, seen
+
+        n = len_trim(s)
+        seen = 1
+        i0 = 1
+        i1 = n
+        do i = 1, n
+            if (s(i:i) /= achar(10)) cycle
+            if (seen == k) then
+                i1 = i - 1
+                return
+            end if
+            seen = seen + 1
+            i0 = i + 1
+        end do
+    end subroutine line_bounds
+
+    ! One annotation: its box, then its lines. A string is broken at every
+    ! newline and the lines are stacked at matplotlib's spacing of 1.2 times
+    ! the font size.
+    subroutine append_annotation(b, t, px, py)
+        class(renderer_t), intent(inout) :: b
+        type(text_t), intent(in) :: t
+        real(dp), intent(in) :: px, py
+        integer :: nl, k, i0, i1, base
+        real(dp) :: lh, dy, wmax, x0, y0, pad, hgt
+
+        lh = 1.2_dp*t%fontsize
+        nl = line_count(t%s)
+
+        ! The vertical anchor is the backend's, except that the older
+        ! placement has no name in matplotlib and so has none here either.
+        select case (trim(t%va))
+        case ("center"); base = BASE_MIDDLE
+        case ("top"); base = BASE_TOP
+        case ("bottom"); base = BASE_BOTTOM
+        case default; base = BASE_ALPHABETIC
+        end select
+        dy = 0.0_dp
+        if (len_trim(t%va) == 0) dy = 3.5_dp
+        ! Extra lines hang below the first, so a block that is centred or
+        ! bottom-aligned has to be lifted by the rest of its height.
+        select case (trim(t%va))
+        case ("center"); dy = dy - 0.5_dp*(nl - 1)*lh
+        case ("bottom", "baseline"); dy = dy - (nl - 1)*lh
+        end select
+
+        if (t%has_box) then
+            wmax = 0.0_dp
+            do k = 1, nl
+                call line_bounds(t%s, k, i0, i1)
+                if (i1 >= i0) wmax = max(wmax, math_width(t%s(i0:i1), t%fontsize))
+            end do
+            pad = t%box_pad*t%fontsize
+            hgt = (nl - 1)*lh + t%fontsize
+            select case (trim(t%ha))
+            case ("center"); x0 = px - 0.5_dp*wmax
+            case ("right", "end"); x0 = px - wmax
+            case default; x0 = px
+            end select
+            y0 = py + dy - 0.76_dp*t%fontsize
+            if (base == BASE_MIDDLE) y0 = py + dy - 0.5_dp*t%fontsize
+            if (base == BASE_TOP) y0 = py + dy
+            if (base == BASE_BOTTOM) y0 = py + dy - hgt
+            if (len_trim(t%box_ec) > 0) then
+                call append_rect(b, x0 - pad, y0 - pad, wmax + 2.0_dp*pad, &
+                                 hgt + 2.0_dp*pad, trim(t%box_fc), t%box_alpha, &
+                                 trim(t%box_ec), 1.0_dp)
+            else
+                call append_rect(b, x0 - pad, y0 - pad, wmax + 2.0_dp*pad, &
+                                 hgt + 2.0_dp*pad, trim(t%box_fc), t%box_alpha)
+            end if
+        end if
+
+        do k = 1, nl
+            call line_bounds(t%s, k, i0, i1)
+            if (i1 < i0) cycle
+            call append_text(b, px, py + dy + (k - 1)*lh, t%s(i0:i1), &
+                             trim(t%ha), t%fontsize, trim(t%color), rot=t%rot, &
+                             weight=t%weight, slant=t%slant, baseline=base)
+        end do
+    end subroutine append_annotation
 
     ! Straight line segment in pixel coordinates.
     subroutine append_line(b, x1, y1, x2, y2, color, lw, ls, alpha)
@@ -8526,6 +8675,9 @@ contains
                              ymin, ymax, ax_l, ax_r, ax_t, ax_b, ax_w, ax_h, xsc, ysc)
         ! annotations, in data coordinates
         do i = 1, a%n_texts
+            ! figtext is placed on the canvas, so it waits until the clip
+            ! is dropped below.
+            if (a%texts(i)%in_fig) cycle
             px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xsc)
             py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ysc)
             if (a%texts(i)%has_arrow) then
@@ -8534,13 +8686,16 @@ contains
                                  map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ysc), &
                                  trim(a%texts(i)%color), 1.0_dp, LINE_SOLID, 1.0_dp)
             end if
-            call append_text(b, px, py + 3.5_dp, trim(a%texts(i)%s), &
-                             trim(a%texts(i)%ha), a%texts(i)%fontsize, &
-                             trim(a%texts(i)%color), &
-                             weight=a%texts(i)%weight, slant=a%texts(i)%slant)
+            call append_annotation(b, a%texts(i), px, py)
         end do
 
         call clear_clip()
+
+        do i = 1, a%n_texts
+            if (.not. a%texts(i)%in_fig) cycle
+            call append_annotation(b, a%texts(i), a%texts(i)%x*W, &
+                                   (1.0_dp - a%texts(i)%y)*H)
+        end do
 
         ! spines. All four still go out as one <rect>, so a plot that leaves
         ! them alone renders exactly as it did before they could be hidden.

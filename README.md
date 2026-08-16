@@ -35,7 +35,9 @@ call suptitle("figure title")
   scalar-or-array the way matplotlib's `s=` and `c=` do)
 - `step`, `stem`, `barh`, `pie`, `boxplot`, `violinplot`
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`
-- `text` and `annotate` (with a leader line to the annotated point)
+- `text` and `annotate` (with a leader line to the annotated point), with
+  `rotation=`, `va=`, a `bbox_facecolor=` box behind them and lines broken
+  at `achar(10)`; `figtext` places on the canvas instead of in the axes
 - `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
   `aspect`, plus `colorbar`
 - `contour` and `contourf` with automatic or explicit `levels`

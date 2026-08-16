@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "text_options",
     "font_faces",
     "grid_options",
     "axes_handles2",
@@ -858,6 +859,18 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 88 text options: rotation, vertical alignment, a box and two lines
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.text(1.0, 0.6, "rotated", rotation=30.0)
+    ax.text(4.0, 0.6, "top", va="top", ha="center")
+    ax.text(4.0, -0.6, "boxed", ha="center", va="center",
+            bbox=dict(boxstyle="square,pad=0.3", facecolor="yellow",
+                      edgecolor="black"))
+    ax.text(1.0, -0.4, "two\nlines", va="top")
+    fig.text(0.02, 0.02, "figure corner", fontsize=8.0)
+    save(fig, "text_options")
 
     # 87 bold and italic
     fig, ax = setup_fig()

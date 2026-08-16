@@ -847,6 +847,17 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 88) text options: rotation, vertical alignment, a box and two lines
+    call clf()
+    call plot(x, y)
+    call text(1.0_dp, 0.6_dp, "rotated", rotation=30.0_dp)
+    call text(4.0_dp, 0.6_dp, "top", va="top", ha="center")
+    call text(4.0_dp, -0.6_dp, "boxed", ha="center", va="center", &
+              bbox_facecolor="yellow", bbox_edgecolor="black")
+    call text(1.0_dp, -0.4_dp, "two"//achar(10)//"lines", va="top")
+    call figtext(0.02_dp, 0.02_dp, "figure corner", fontsize=8.0_dp)
+    call save_all("text_options")
+
 ! 87) bold and italic
     call clf()
     call plot(x, y)
