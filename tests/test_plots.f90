@@ -847,6 +847,14 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 89) marker and line detail
+    call clf()
+    call plot(x, y, marker="o", markevery=8, markerfacecolor="white", &
+              markeredgecolor="tab:red", markersize=7.0_dp)
+    call plot(x, y - 1.0_dp, color="tab:green", dashes=[8.0_dp, 2.0_dp, 2.0_dp, 2.0_dp])
+    call plot(x(1:8), y(1:8) + 1.0_dp, color="tab:purple", drawstyle="steps-post")
+    call save_all("marker_detail")
+
 ! 88) text options: rotation, vertical alignment, a box and two lines
     call clf()
     call plot(x, y)

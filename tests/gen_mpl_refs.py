@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "marker_detail",
     "text_options",
     "font_faces",
     "grid_options",
@@ -859,6 +860,14 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 89 marker and line detail
+    fig, ax = setup_fig()
+    ax.plot(x, y, marker="o", markevery=8, markerfacecolor="white",
+            markeredgecolor="tab:red", markersize=7.0)
+    ax.plot(x, y - 1.0, color="tab:green", dashes=[8.0, 2.0, 2.0, 2.0])
+    ax.plot(x[:8], y[:8] + 1.0, color="tab:purple", drawstyle="steps-post")
+    save(fig, "marker_detail")
 
     # 88 text options: rotation, vertical alignment, a box and two lines
     fig, ax = setup_fig()

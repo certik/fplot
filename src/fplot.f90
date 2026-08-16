@@ -211,6 +211,15 @@ module fplot
         integer :: linestyle = LINE_SOLID
         real(dp) :: linewidth = 1.5_dp
         real(dp) :: markersize = 6.0_dp
+        ! Marker colours, empty meaning "the colour of the line", and a
+        ! stride so that only every n-th point carries a marker.
+        character(len=7) :: mfc = "", mec = ""
+        real(dp) :: mew = -1.0_dp
+        integer :: markevery = 1
+        ! A dash pattern of the caller's own, in points, which overrides
+        ! the one the line style would give.
+        integer :: n_dash = 0
+        real(dp) :: dashes(4) = 0.0_dp
         ! Per-point overrides used by scatter; unallocated means uniform.
         real(dp), allocatable :: psize(:)
         character(len=7), allocatable :: pcolor(:)
@@ -1638,13 +1647,21 @@ contains
         if (self%idx >= 1 .and. self%idx <= n_ax) cur_i = self%idx
     end subroutine ax_sca
 
-    subroutine ax_plot(self, x, y, fmt, label, lw, color, marker, linestyle, alpha)
+    subroutine ax_plot(self, x, y, fmt, label, lw, color, marker, linestyle, &
+                       alpha, markersize, markerfacecolor, markeredgecolor, &
+                       markeredgewidth, markevery, drawstyle, dashes)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
-        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: markerfacecolor, markeredgecolor
+        character(len=*), intent(in), optional :: drawstyle
+        real(dp), intent(in), optional :: lw, alpha, markersize, markeredgewidth
+        real(dp), intent(in), optional :: dashes(:)
+        integer, intent(in), optional :: markevery
         call ax_sca(self)
-        call plot(x, y, fmt, label, lw, color, marker, linestyle, alpha)
+        call plot(x, y, fmt, label, lw, color, marker, linestyle, alpha, &
+                  markersize, markerfacecolor, markeredgecolor, &
+                  markeredgewidth, markevery, drawstyle, dashes)
     end subroutine ax_plot
 
     subroutine ax_plot_cat(self, cats, y, fmt, label, lw, color, marker, &
@@ -2694,12 +2711,44 @@ contains
         ax(cur_i)%series(ax(cur_i)%n_series)%zorder = z
     end subroutine set_zorder
 
-    subroutine plot_num(x, y, fmt, label, lw, color, marker, linestyle, alpha)
+    subroutine plot_num(x, y, fmt, label, lw, color, marker, linestyle, alpha, &
+                        markersize, markerfacecolor, markeredgecolor, &
+                        markeredgewidth, markevery, drawstyle, dashes)
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
-        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: markerfacecolor, markeredgecolor
+        character(len=*), intent(in), optional :: drawstyle
+        real(dp), intent(in), optional :: lw, alpha, markersize, markeredgewidth
+        real(dp), intent(in), optional :: dashes(:)
+        integer, intent(in), optional :: markevery
+        integer :: is
+        real(dp), allocatable :: sx(:), sy(:)
+
         call ensure_fig()
-        call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle, alpha)
+        if (present(drawstyle)) then
+            ! A drawstyle is a step under another name, so it is drawn by
+            ! the same code rather than a second copy of it.
+            call stair_points(x, y, step_where(drawstyle), sx, sy)
+            call add_series(cur_i, sx, sy, fmt, label, lw, color, marker, &
+                            linestyle, alpha)
+        else
+            call add_series(cur_i, x, y, fmt, label, lw, color, marker, &
+                            linestyle, alpha)
+        end if
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        if (present(markersize)) ax(cur_i)%series(is)%markersize = markersize
+        if (present(markerfacecolor)) &
+            ax(cur_i)%series(is)%mfc = resolve_color(markerfacecolor)
+        if (present(markeredgecolor)) &
+            ax(cur_i)%series(is)%mec = resolve_color(markeredgecolor)
+        if (present(markeredgewidth)) ax(cur_i)%series(is)%mew = markeredgewidth
+        if (present(markevery)) ax(cur_i)%series(is)%markevery = max(1, markevery)
+        if (present(dashes)) then
+            ax(cur_i)%series(is)%n_dash = min(size(dashes), 4)
+            ax(cur_i)%series(is)%dashes(1:ax(cur_i)%series(is)%n_dash) = &
+                dashes(1:ax(cur_i)%series(is)%n_dash)
+        end if
     end subroutine plot_num
 
     subroutine plot_cat(cats, y, fmt, label, lw, color, marker, linestyle, alpha)
@@ -4002,34 +4051,59 @@ contains
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: where, label, color, linestyle
         real(dp), intent(in), optional :: lw, alpha
-        integer :: n, i, k
         character(len=8) :: w
         real(dp), allocatable :: sx(:), sy(:)
 
-        n = min(size(x), size(y))
-        if (n <= 0) return
         w = "pre"
         if (present(where)) w = where
+        call stair_points(x, y, w, sx, sy)
+        if (size(sx) == 0) return
+        call plot(sx, sy, label=label, color=color, lw=lw, &
+                  linestyle=linestyle, alpha=alpha)
+    end subroutine step
 
-        ! Each sample contributes two points: the tread of its step and the
-        ! riser to the next one. Where the riser sits is what `where` selects.
-        allocate (sx(2 * n), sy(2 * n))
+    ! matplotlib spells the same three shapes two ways: where= for step and
+    ! drawstyle= for plot.
+    pure function step_where(drawstyle) result(w)
+        character(len=*), intent(in) :: drawstyle
+        character(len=8) :: w
+        select case (drawstyle)
+        case ("steps-post", "steps"); w = "post"
+        case ("steps-mid"); w = "mid"
+        case default; w = "pre"
+        end select
+    end function step_where
+
+    ! Each sample contributes two points: the tread of its step and the
+    ! riser to the next one. Where the riser sits is what `where` selects.
+    pure subroutine stair_points(x, y, where, sx, sy)
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in) :: where
+        real(dp), allocatable, intent(out) :: sx(:), sy(:)
+        integer :: n, i, k
+
+        n = min(size(x), size(y))
+        if (n <= 0) then
+            allocate (sx(0), sy(0))
+            return
+        end if
+        allocate (sx(2*n), sy(2*n))
         k = 0
         do i = 1, n
-            if (trim(w) == "mid") then
+            if (trim(where) == "mid") then
                 if (i == 1) then
                     sx(k + 1) = x(1)
                 else
-                    sx(k + 1) = 0.5_dp * (x(i - 1) + x(i))
+                    sx(k + 1) = 0.5_dp*(x(i - 1) + x(i))
                 end if
                 if (i == n) then
                     sx(k + 2) = x(n)
                 else
-                    sx(k + 2) = 0.5_dp * (x(i) + x(i + 1))
+                    sx(k + 2) = 0.5_dp*(x(i) + x(i + 1))
                 end if
                 sy(k + 1) = y(i)
                 sy(k + 2) = y(i)
-            else if (trim(w) == "post") then
+            else if (trim(where) == "post") then
                 sx(k + 1) = x(i)
                 sy(k + 1) = y(i)
                 if (i == n) then
@@ -4050,10 +4124,7 @@ contains
             end if
             k = k + 2
         end do
-
-        call plot(sx(1:k), sy(1:k), label=label, color=color, lw=lw, &
-                  linestyle=linestyle, alpha=alpha)
-    end subroutine step
+    end subroutine stair_points
 
     ! Horizontal bars: y locates each bar and width is its length.
     subroutine barh_num(y, width, height, color, label, alpha, left, colors, &
@@ -5910,11 +5981,15 @@ contains
     end subroutine marker_shape
 
     ! Draw the same marker at every point of x/y.
-    subroutine append_markers(b, mk, x, y, n, ms, color, alpha)
+    subroutine append_markers(b, mk, x, y, n, ms, color, alpha, face, edge, ewidth)
         class(renderer_t), intent(inout) :: b
         integer, intent(in) :: mk, n
         real(dp), intent(in) :: x(:), y(:), ms, alpha
         character(len=*), intent(in) :: color
+        ! Empty face or edge means the colour of the line, which is what a
+        ! marker takes when nothing else is said.
+        character(len=*), intent(in), optional :: face, edge
+        real(dp), intent(in), optional :: ewidth
         real(dp) :: mx(16), my(16), lw
         integer :: mv(16), nv, np
         logical :: do_fill, do_stroke
@@ -5928,6 +6003,25 @@ contains
         p%stroked = do_stroke
         p%fill_rgb = hex_rgb(color)
         p%stroke_rgb = p%fill_rgb
+        if (present(face)) then
+            if (len_trim(face) > 0) then
+                p%filled = .true.
+                p%fill_rgb = hex_rgb(face)
+            end if
+        end if
+        if (present(edge)) then
+            if (len_trim(edge) > 0) then
+                p%stroked = .true.
+                p%stroke_rgb = hex_rgb(edge)
+                if (lw <= 0.0_dp) lw = 1.0_dp
+            end if
+        end if
+        if (present(ewidth)) then
+            if (ewidth >= 0.0_dp) then
+                p%stroked = p%stroked .or. ewidth > 0.0_dp
+                lw = ewidth
+            end if
+        end if
         p%fill_alpha = alpha
         p%stroke_alpha = alpha
         p%line_width = lw
@@ -8378,10 +8472,11 @@ contains
         type(scale_t) :: xsc, ysc
         integer :: n_leg, k, max_lbl, n_col, n_row, lc, lr
         real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h, col_w, ttl_h, leg_x0
-        real(dp), allocatable :: lx(:), ly(:)
+        real(dp), allocatable :: lx(:), ly(:), mkx(:), mky(:)
         logical, allocatable :: lstart(:)
         integer, allocatable :: ord(:)
         logical :: brk, grid_done
+        integer :: nm
         integer :: k0, k1, ii
         type(paint_t) :: pnt
 
@@ -8506,7 +8601,9 @@ contains
             if (allocated(lstart)) deallocate (lstart)
             if (allocated(lx)) deallocate (lx)
             if (allocated(ly)) deallocate (ly)
-            allocate (lx(n), ly(n), lstart(n))
+            if (allocated(mkx)) deallocate (mkx)
+            if (allocated(mky)) deallocate (mky)
+            allocate (lx(n), ly(n), lstart(n), mkx(n), mky(n))
 
             select case (a%series(i)%kind)
             case (SERIES_BOX)
@@ -8635,6 +8732,11 @@ contains
             if (a%series(i)%linestyle /= LINE_NONE .and. nl >= 2) then
                 pnt = pen(trim(a%series(i)%color), a%series(i)%linewidth, &
                           a%series(i)%alpha, a%series(i)%linestyle)
+                if (a%series(i)%n_dash > 0) then
+                    pnt%n_dash = a%series(i)%n_dash
+                    pnt%dash(1:pnt%n_dash) = &
+                        a%series(i)%dashes(1:a%series(i)%n_dash)
+                end if
                 pnt%join = JOIN_ROUND
                 pnt%cap = CAP_BUTT
                 k0 = 1
@@ -8663,9 +8765,19 @@ contains
                                            a%series(i)%alpha)
                     end do
                 else
-                    call append_markers(b, a%series(i)%marker, lx, ly, nl, &
+                    ! markevery thins the points; the line keeps all of them.
+                    nm = 0
+                    do j = 1, nl, a%series(i)%markevery
+                        nm = nm + 1
+                        mkx(nm) = lx(j)
+                        mky(nm) = ly(j)
+                    end do
+                    call append_markers(b, a%series(i)%marker, mkx, mky, nm, &
                                         a%series(i)%markersize, &
-                                        trim(a%series(i)%color), a%series(i)%alpha)
+                                        trim(a%series(i)%color), a%series(i)%alpha, &
+                                        face=trim(a%series(i)%mfc), &
+                                        edge=trim(a%series(i)%mec), &
+                                        ewidth=a%series(i)%mew)
                 end if
             end if
         end do
