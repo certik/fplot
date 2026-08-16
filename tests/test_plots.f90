@@ -854,6 +854,14 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 110) a pie with a slice pulled out and its shares written in
+    call clf()
+    call pie(hb, labels=["a", "b", "c", "d", "e", "f"], &
+             explode=[0.0_dp, 0.1_dp, 0.0_dp, 0.0_dp, 0.0_dp, 0.0_dp], &
+             startangle=90.0_dp, counterclock=.false., autopct="%.1f%%")
+    call title("pie options")
+    call save_all("pie_opts")
+
 ! 109) marker edges and a band carried to the crossing
     call clf()
     call subplot(1, 2, 1)

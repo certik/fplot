@@ -39,6 +39,8 @@ call suptitle("figure title")
   (separate keywords because Fortran cannot overload one dummy as
   scalar-or-array the way matplotlib's `s=` and `c=` do)
 - `step`, `stem`, `barh`, `pie`, `boxplot`, `violinplot`
+- `pie(explode=, startangle=, counterclock=, autopct=, pctdistance=,
+  labeldistance=, radius=, colors=, edgecolor=, linewidth=)`
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`
 - `fill_betweenx` for a band along y, `stackplot` for layers summed on top
   of each other, and `axline` for an endless line through two points or

@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "pie_opts",
     "scatter_edge",
     "figlegend",
     "tick_locator",
@@ -880,6 +881,15 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 110 a pie with a slice pulled out and its shares written in
+    fig, ax = plt.subplots(figsize=(6.4, 4.8))
+    pievals = np.array([3.0, 5.0, 2.0, 7.0, 4.0, 6.0])
+    ax.pie(pievals, labels=["a", "b", "c", "d", "e", "f"],
+           explode=[0.0, 0.1, 0.0, 0.0, 0.0, 0.0],
+           startangle=90.0, counterclock=False, autopct="%.1f%%")
+    ax.set_title("pie options")
+    save(fig, "pie_opts")
 
     # 109 marker edges and a band carried to the crossing
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))

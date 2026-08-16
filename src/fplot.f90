@@ -226,6 +226,12 @@ module fplot
         real(dp) :: qwidth = -1.0_dp
         ! BOX/VIOLIN: the position on the category axis.
         real(dp) :: pos = 1.0_dp
+        ! PIE: how far each wedge is pushed out along its own mid angle,
+        ! where the first wedge starts, and which way the wedges run.
+        real(dp), allocatable :: pexp(:)
+        real(dp) :: pie_start = 0.0_dp
+        real(dp) :: pie_radius = 1.0_dp
+        logical :: pie_ccw = .true.
         character(len=7) :: color = "#1f77b4"
         integer :: marker = MARKER_NONE
         integer :: linestyle = LINE_SOLID
@@ -4890,10 +4896,17 @@ contains
 
     ! Pie chart. matplotlib turns the axes into a unit square centred on the
     ! origin and hides the frame, so the wedges are plain data-space geometry.
-    subroutine pie(values, labels, cmap)
+    subroutine pie(values, labels, cmap, explode, startangle, counterclock, &
+                   autopct, pctdistance, labeldistance, radius, colors, &
+                   edgecolor, linewidth)
         real(dp), intent(in) :: values(:)
-        character(len=*), intent(in), optional :: labels(:), cmap
+        character(len=*), intent(in), optional :: labels(:), cmap, autopct
+        character(len=*), intent(in), optional :: colors(:), edgecolor
+        real(dp), intent(in), optional :: explode(:), startangle, linewidth
+        real(dp), intent(in), optional :: pctdistance, labeldistance, radius
+        logical, intent(in), optional :: counterclock
         integer :: is, i, n
+        real(dp) :: rad, pd, ld, off
 
         call ensure_fig()
         n = size(values)
@@ -4904,18 +4917,52 @@ contains
         if (is < 1) return
         allocate (ax(cur_i)%series(is)%pcolor(n))
         do i = 1, n
-            if (present(cmap)) then
+            if (present(colors)) then
+                ax(cur_i)%series(is)%pcolor(i) = &
+                    resolve_color(colors(mod(i - 1, size(colors)) + 1))
+            else if (present(cmap)) then
                 ax(cur_i)%series(is)%pcolor(i) = &
                     cmap_color(cmap_from_str(cmap), real(i - 1, dp) / real(max(n - 1, 1), dp))
             else
                 ax(cur_i)%series(is)%pcolor(i) = cycle_color(i - 1)
             end if
         end do
-        if (present(labels)) then
-            do i = 1, min(n, size(labels))
-                call add_pie_label(values, i, labels(i))
+
+        if (present(edgecolor)) &
+            ax(cur_i)%series(is)%hcolor = resolve_color(edgecolor)
+        if (present(linewidth)) ax(cur_i)%series(is)%linewidth = linewidth
+        rad = 1.0_dp
+        if (present(radius)) rad = radius
+        ax(cur_i)%series(is)%pie_radius = rad
+        if (present(startangle)) &
+            ax(cur_i)%series(is)%pie_start = startangle*PI/180.0_dp
+        if (present(counterclock)) ax(cur_i)%series(is)%pie_ccw = counterclock
+        allocate (ax(cur_i)%series(is)%pexp(n))
+        ax(cur_i)%series(is)%pexp = 0.0_dp
+        if (present(explode)) then
+            do i = 1, min(n, size(explode))
+                ax(cur_i)%series(is)%pexp(i) = explode(i)
             end do
         end if
+
+        ! matplotlib measures both distances in radii from the centre of
+        ! the wedge, which is itself pushed out by explode.
+        ld = 1.1_dp
+        pd = 0.6_dp
+        if (present(labeldistance)) ld = labeldistance
+        if (present(pctdistance)) pd = pctdistance
+        do i = 1, n
+            off = ax(cur_i)%series(is)%pexp(i)
+            if (present(labels)) then
+                if (i <= size(labels)) &
+                    call add_pie_text(ax(cur_i)%series(is), values, i, labels(i), &
+                                      ld*rad, off*rad)
+            end if
+            if (present(autopct)) &
+                call add_pie_text(ax(cur_i)%series(is), values, i, &
+                                  pct_text(autopct, 100.0_dp*values(i)/sum(values)), &
+                                  pd*rad, off*rad)
+        end do
 
         call xlim(-1.25_dp, 1.25_dp)
         call ylim(-1.25_dp, 1.25_dp)
@@ -4923,24 +4970,93 @@ contains
         ax(cur_i)%frame_off = .true.
     end subroutine pie
 
-    ! Place one wedge label just outside the arc, at the wedge mid angle.
-    subroutine add_pie_label(values, i, lab)
+    ! The mid angle of wedge i, honouring where the pie starts and which
+    ! way round it runs. Both the wedges and their labels are placed from
+    ! here, so the two cannot drift apart.
+    pure function pie_mid(s, values, i) result(mid)
+        type(series_t), intent(in) :: s
         real(dp), intent(in) :: values(:)
         integer, intent(in) :: i
-        character(len=*), intent(in) :: lab
-        real(dp) :: a0, a1, mid, tot
-        integer :: it
+        real(dp) :: mid, tot, dir
 
         tot = sum(values)
-        a0 = 2.0_dp * PI * sum(values(1:i - 1)) / tot
-        a1 = 2.0_dp * PI * sum(values(1:i)) / tot
-        mid = 0.5_dp * (a0 + a1)
+        dir = 1.0_dp
+        if (.not. s%pie_ccw) dir = -1.0_dp
+        mid = s%pie_start + dir*PI*(sum(values(1:i - 1)) + sum(values(1:i)))/tot
+    end function pie_mid
+
+    ! Place one wedge's text at the given distance out along its mid angle,
+    ! measured from the centre the wedge itself sits on.
+    subroutine add_pie_text(s, values, i, lab, dist, off)
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: values(:), dist, off
+        integer, intent(in) :: i
+        character(len=*), intent(in) :: lab
+        real(dp) :: mid
+        integer :: it
+
+        mid = pie_mid(s, values, i)
         call push_text(ax(cur_i), it)
-        ax(cur_i)%texts(it)%x = 1.1_dp * cos(mid)
-        ax(cur_i)%texts(it)%y = 1.1_dp * sin(mid)
+        ax(cur_i)%texts(it)%x = (dist + off)*cos(mid)
+        ax(cur_i)%texts(it)%y = (dist + off)*sin(mid)
         ax(cur_i)%texts(it)%s = lab
         ax(cur_i)%texts(it)%ha = "center"
-    end subroutine add_pie_label
+        ax(cur_i)%texts(it)%va = "center"
+    end subroutine add_pie_text
+
+    ! matplotlib's autopct format string, for the printf forms a pie chart
+    ! actually uses: %f with an optional width and precision, and %% for a
+    ! literal per cent sign. Anything else is copied out as it stands.
+    function pct_text(fmt, v) result(out)
+        character(len=*), intent(in) :: fmt
+        real(dp), intent(in) :: v
+        character(len=64) :: out
+        character(len=32) :: num, spec
+        integer :: i, j, dec, ios
+
+        out = ""
+        j = 0
+        i = 1
+        do while (i <= len_trim(fmt))
+            if (fmt(i:i) /= "%") then
+                j = j + 1
+                out(j:j) = fmt(i:i)
+                i = i + 1
+                cycle
+            end if
+            if (i < len_trim(fmt)) then
+                if (fmt(i + 1:i + 1) == "%") then
+                    j = j + 1
+                    out(j:j) = "%"
+                    i = i + 2
+                    cycle
+                end if
+            end if
+            ! A conversion: read up to the terminating letter, then take
+            ! the precision out of it.
+            spec = ""
+            i = i + 1
+            do while (i <= len_trim(fmt))
+                spec = trim(spec)//fmt(i:i)
+                if (index("fFeEgG", fmt(i:i)) > 0) exit
+                i = i + 1
+            end do
+            i = i + 1
+            dec = 6
+            if (index(spec, ".") > 0) then
+                read (spec(index(spec, ".") + 1:len_trim(spec) - 1), *, iostat=ios) dec
+                if (ios /= 0) dec = 1
+            else
+                dec = 0
+            end if
+            write (spec, "(I0)") max(0, dec)
+            write (num, "(f0."//trim(spec)//")") v
+            ! A value below one writes as ".5" without the leading zero.
+            if (num(1:1) == ".") num = "0"//trim(num)
+            out(j + 1:) = trim(num)
+            j = j + len_trim(num)
+        end do
+    end function pct_text
 
     ! matplotlib's tick_params, for the settings that change what is drawn:
     ! which axis, the tick direction, its length, and the size and rotation
@@ -8173,19 +8289,31 @@ contains
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         integer :: i
-        real(dp) :: tot, a0, a1, cx, cy
+        real(dp) :: tot, a0, a1, cx, cy, rx, ry, dir, off, mid
 
         tot = sum(s%y(1:s%n))
         if (tot <= 0.0_dp) return
         cx = map_x(0.0_dp, xmin, xmax, ax_l, ax_w, linear_scale)
         cy = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, linear_scale)
 
-        a1 = 0.0_dp
+        rx = s%pie_radius*ax_w/(xmax - xmin)
+        ry = s%pie_radius*ax_h/(ymax - ymin)
+        dir = 1.0_dp
+        if (.not. s%pie_ccw) dir = -1.0_dp
+
+        a1 = s%pie_start
         do i = 1, s%n
             a0 = a1
-            a1 = a0 + 2.0_dp * PI * s%y(i) / tot
-            call append_wedge(b, cx, cy, ax_w/(xmax - xmin), ax_h/(ymax - ymin), &
-                              a0, a1, trim(s%pcolor(i)), s%alpha)
+            a1 = a0 + dir*2.0_dp*PI*s%y(i)/tot
+            ! An exploded wedge is the same wedge about a centre pushed
+            ! out along its own mid angle.
+            off = 0.0_dp
+            if (allocated(s%pexp)) off = s%pexp(i)*s%pie_radius
+            mid = 0.5_dp*(a0 + a1)
+            call append_wedge(b, cx + off*ax_w/(xmax - xmin)*cos(mid), &
+                              cy - off*ax_h/(ymax - ymin)*sin(mid), rx, ry, &
+                              a0, a1, trim(s%pcolor(i)), s%alpha, &
+                              edge=trim(s%hcolor), ewidth=s%linewidth)
         end do
     end subroutine append_pie
 
@@ -8195,10 +8323,13 @@ contains
     ! arc primitive, so flattening here is what lets the same wedge reach a
     ! PDF or a rasterizer unchanged. Splitting at 90 degrees keeps the error
     ! of the standard cubic approximation far below a pixel.
-    subroutine append_wedge(b, cx, cy, rx, ry, a0, a1, color, alpha)
+    subroutine append_wedge(b, cx, cy, rx, ry, a0, a1, color, alpha, edge, ewidth)
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: cx, cy, rx, ry, a0, a1, alpha
         character(len=*), intent(in) :: color
+        ! matplotlib leaves a wedge edgeless unless wedgeprops asks for one.
+        character(len=*), intent(in), optional :: edge
+        real(dp), intent(in), optional :: ewidth
         integer, parameter :: MAXSEG = 8
         real(dp) :: px(2 + 3*MAXSEG), py(2 + 3*MAXSEG)
         integer :: verbs(3 + MAXSEG), np, nv, nseg, i
@@ -8236,9 +8367,15 @@ contains
         verbs(nv) = VERB_CLOSE
 
         p = brush(color, alpha)
-        p%stroked = .true.
-        p%stroke_rgb = hex_rgb("#ffffff")
-        p%line_width = 1.0_dp
+        if (present(edge)) then
+            if (len_trim(edge) > 0) then
+                p%stroked = .true.
+                p%stroke_rgb = hex_rgb(edge)
+                p%stroke_alpha = alpha
+                p%line_width = 1.0_dp
+                if (present(ewidth)) p%line_width = ewidth
+            end if
+        end if
         call b%draw_path(px(1:np), py(1:np), verbs(1:nv), nv, p)
     end subroutine append_wedge
 
