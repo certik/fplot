@@ -16,6 +16,7 @@ program test_plots
     integer, parameter :: ne = 8
     real(dp) :: x(n), y(n), y2(n), y3(n)
     real(dp) :: lo, hi
+    real(dp) :: rgbim(8, 12, 3)
     character(len=64) :: buf
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
@@ -851,6 +852,19 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 104) an image whose colours are given outright
+    call clf()
+    do i = 1, 8
+        do j = 1, 12
+            rgbim(i, j, 1) = real(j - 1, dp)/11.0_dp
+            rgbim(i, j, 2) = real(i - 1, dp)/7.0_dp
+            rgbim(i, j, 3) = 0.5_dp
+        end do
+    end do
+    call imshow(rgbim)
+    call title("imshow of an RGB array")
+    call save_all("imshow_rgb")
 
 ! 103) a histogram on its side, one on a log axis, and one with gaps
     call clf()

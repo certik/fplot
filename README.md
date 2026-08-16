@@ -48,6 +48,8 @@ call suptitle("figure title")
   `rotation=`, `va=`, a `bbox_facecolor=` box behind them and lines broken
   at `achar(10)`; `figtext` places on the canvas instead of in the axes, and
   `transform="axes"` places in fractions of the axes box
+- `imshow` of an (row, column, channel) array paints the colours given,
+  three channels for RGB or four for RGBA
 - `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
   `aspect`, plus `colorbar(label=, orientation=, fraction=, pad=, shrink=,
   aspect=)`, upright or lying on its side

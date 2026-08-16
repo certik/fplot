@@ -351,6 +351,10 @@ module fplot
         real(dp), allocatable :: img_bounds(:)
         real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: img_origin_upper = .true.
+        ! An image whose colours are given outright rather than through a
+        ! colormap: (row, column, channel) with three or four channels.
+        real(dp), allocatable :: img_rgb(:, :, :)
+        logical :: has_rgb = .false.
         ! pcolormesh keeps the same samples in img, but with its own cell
         ! edges instead of an evenly divided extent.
         ! Where the axes sits in the figure's grid, zero based, and how
@@ -513,7 +517,8 @@ module fplot
         procedure :: add_circle => ax_add_circle
         procedure :: add_ellipse => ax_add_ellipse
         procedure :: add_polygon => ax_add_polygon
-        procedure :: imshow => ax_imshow
+        procedure, private :: ax_imshow, ax_imshow_rgb
+        generic :: imshow => ax_imshow, ax_imshow_rgb
         procedure :: xaxis_date => ax_xaxis_date
         procedure :: yaxis_date => ax_yaxis_date
         procedure :: pcolormesh => ax_pcolormesh
@@ -601,6 +606,10 @@ module fplot
     interface plot
         module procedure plot_num, plot_cat, plot_y
     end interface plot
+
+    interface imshow
+        module procedure imshow_z, imshow_rgb
+    end interface imshow
 
     interface subplots
         module procedure subplots_grid, subplots_row, subplots_one
@@ -2235,6 +2244,15 @@ contains
                     interpolation, boundaries)
     end subroutine ax_imshow
 
+    subroutine ax_imshow_rgb(self, z, extent, origin, aspect)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z(:, :, :)
+        character(len=*), intent(in), optional :: origin, aspect
+        real(dp), intent(in), optional :: extent(4)
+        call ax_sca(self)
+        call imshow(z, extent, origin, aspect)
+    end subroutine ax_imshow_rgb
+
     subroutine ax_xaxis_date(self)
         class(axes), intent(in) :: self
         call ax_sca(self)
@@ -3301,8 +3319,8 @@ contains
     ! Draw z as an image. z is indexed (row, column) and, with the default
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
     ! a descending y axis exactly as matplotlib does.
-    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
-                      interpolation, boundaries)
+    subroutine imshow_z(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
+                        interpolation, boundaries)
         real(dp), intent(in) :: z(:, :)
         character(len=*), intent(in), optional :: cmap, origin, aspect, norm, interpolation
         real(dp), intent(in), optional :: vmin, vmax, extent(4), boundaries(:)
@@ -3375,7 +3393,84 @@ contains
         if (present(aspect)) then
             if (trim(aspect) == "auto") ax(cur_i)%aspect = 0.0_dp
         end if
-    end subroutine imshow
+    end subroutine imshow_z
+
+    ! An image whose colours are given directly: z is (row, column, channel)
+    ! with three channels for RGB or four for RGBA, each in 0..1 as
+    ! matplotlib reads a float array. There is nothing here for a colorbar
+    ! to describe, so none is offered.
+    subroutine imshow_rgb(z, extent, origin, aspect)
+        real(dp), intent(in) :: z(:, :, :)
+        character(len=*), intent(in), optional :: origin, aspect
+        real(dp), intent(in), optional :: extent(4)
+        integer :: nr, nc, nch
+
+        call ensure_fig()
+        nr = size(z, 1)
+        nc = size(z, 2)
+        nch = size(z, 3)
+        if (nr < 1 .or. nc < 1 .or. nch < 3) return
+
+        if (allocated(ax(cur_i)%img)) deallocate (ax(cur_i)%img)
+        allocate (ax(cur_i)%img(nr, nc))
+        ax(cur_i)%img = 0.0_dp
+        if (allocated(ax(cur_i)%img_rgb)) deallocate (ax(cur_i)%img_rgb)
+        allocate (ax(cur_i)%img_rgb(nr, nc, nch))
+        ax(cur_i)%img_rgb = min(1.0_dp, max(0.0_dp, z))
+        ax(cur_i)%has_img = .true.
+        ax(cur_i)%has_rgb = .true.
+        ax(cur_i)%has_cmap_src = .false.
+        ax(cur_i)%has_mesh = .false.
+        ax(cur_i)%img_bilinear = .false.
+        ax(cur_i)%img_log_norm = .false.
+
+        ax(cur_i)%img_origin_upper = .true.
+        if (present(origin)) ax(cur_i)%img_origin_upper = trim(origin) /= "lower"
+        if (present(extent)) then
+            ax(cur_i)%img_ext = extent
+        else
+            ax(cur_i)%img_ext = [-0.5_dp, real(nc, dp) - 0.5_dp, &
+                                 -0.5_dp, real(nr, dp) - 0.5_dp]
+        end if
+        ax(cur_i)%aspect = 1.0_dp
+        if (present(aspect)) then
+            if (trim(aspect) == "auto") ax(cur_i)%aspect = 0.0_dp
+        end if
+    end subroutine imshow_rgb
+
+    ! The colour of one image sample as a hex string, for the paths that
+    ! draw the image as rectangles rather than as a raster.
+    pure function img_hex(a, i, j) result(hex)
+        type(axes_t), intent(in) :: a
+        integer, intent(in) :: i, j
+        character(len=7) :: hex
+        character(len=16), parameter :: D = "0123456789abcdef"
+        integer :: c(4), k
+        if (.not. a%has_rgb) then
+            hex = cmap_color(a%img_cmap, cmap_t(a, a%img(i, j)))
+            return
+        end if
+        call img_rgba(a, i, j, c)
+        hex = "#000000"
+        do k = 1, 3
+            hex(2*k:2*k) = D(c(k)/16 + 1:c(k)/16 + 1)
+            hex(2*k + 1:2*k + 1) = D(mod(c(k), 16) + 1:mod(c(k), 16) + 1)
+        end do
+    end function img_hex
+
+    ! The colour of one image sample, ready for the raster.
+    pure subroutine img_rgba(a, i, j, c)
+        type(axes_t), intent(in) :: a
+        integer, intent(in) :: i, j
+        integer, intent(out) :: c(4)
+        c(4) = 255
+        if (a%has_rgb) then
+            c(1:3) = nint(255.0_dp*a%img_rgb(i, j, 1:3))
+            if (size(a%img_rgb, 3) >= 4) c(4) = nint(255.0_dp*a%img_rgb(i, j, 4))
+        else
+            c(1:3) = hex_rgb(cmap_color(a%img_cmap, cmap_t(a, a%img(i, j))))
+        end if
+    end subroutine img_rgba
 
     ! matshow: an image of a matrix. The first row is at the top, the
     ! cells are square and the column numbers run along the top, which is
@@ -8207,9 +8302,9 @@ contains
         type(axes_t), intent(in) :: a
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
-        integer :: nr, nc, i, j, si, sj, fx, fy
+        integer :: nr, nc, i, j, si, sj, fx, fy, c(4)
         integer, allocatable :: rgba(:, :, :)
-        real(dp) :: px0, px1, py0, py1, t
+        real(dp) :: px0, px1, py0, py1
         type(paint_t) :: p
         logical :: flip_x, flip_y
 
@@ -8255,9 +8350,8 @@ contains
             do j = 1, nc*fx
                 sj = (j - 1)/fx + 1
                 if (flip_x) sj = nc - sj + 1
-                t = cmap_t(a, a%img(si, sj))
-                rgba(1:3, j, i) = hex_rgb(cmap_color(a%img_cmap, t))
-                rgba(4, j, i) = 255
+                call img_rgba(a, si, sj, c)
+                rgba(1:4, j, i) = c
             end do
         end do
 
@@ -8366,16 +8460,14 @@ contains
                 end if
                 px0 = map_x(xe0, xmin, xmax, ax_l, ax_w, xsc)
                 px1 = map_x(xe1, xmin, xmax, ax_l, ax_w, xsc)
-                t = cmap_t(a, a%img(i, j))
                 call append_cell(b, min(px0, px1), min(py0, py1), &
                                  abs(px1 - px0), abs(py1 - py0), &
-                                 cmap_color(a%img_cmap, t))
+                                 img_hex(a, i, j))
             end do
         end do
     end subroutine append_image_cells
 
     ! Cells are grown by a hairline so that neighbours overlap; without it the
-    ! renderer leaves visible seams between abutting rectangles.
     ! renderer leaves visible seams between abutting rectangles.
     subroutine append_cell(b, x, y, w, h, color)
         class(renderer_t), intent(inout) :: b

@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "imshow_rgb",
     "hist_orient",
     "title_loc",
     "bar_err",
@@ -874,6 +875,18 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 104 an image whose colours are given outright
+    rgbim = np.zeros((8, 12, 3))
+    for i in range(8):
+        for j in range(12):
+            rgbim[i, j, 0] = j / 11.0
+            rgbim[i, j, 1] = i / 7.0
+            rgbim[i, j, 2] = 0.5
+    fig, ax = setup_fig()
+    ax.imshow(rgbim)
+    ax.set_title("imshow of an RGB array")
+    save(fig, "imshow_rgb")
 
     # 103 a histogram on its side, one on a log axis, and one with gaps
     fig, axs = plt.subplots(1, 3, figsize=(6.4, 4.8))
