@@ -5,6 +5,7 @@ module fplot
     use fplot_scale
     use fplot_cmap
     use fplot_contour
+    use fplot_tri, only: delaunay
     use fplot_ticks
     use fplot_svg
     use fplot_render
@@ -39,6 +40,7 @@ module fplot
     public :: xticks, yticks, minorticks_on, locator_params
     public :: ticklabel_format, tick_format, tick_locator
     public :: imshow, colorbar, contour, contourf, clabel
+    public :: triplot, tripcolor
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: get_xlim, get_ylim, invert_xaxis, invert_yaxis
@@ -213,6 +215,8 @@ module fplot
         ! Most patches never ask for room of their own; the ones a plotting
         ! call makes for itself, such as broken_barh, do.
         logical :: patch_scales = .false.
+        ! A cell of a mesh, whose seam with its neighbour must not show.
+        logical :: patch_seal = .false.
         ! FILL: set by fill_betweenx, where x holds the independent
         ! coordinate and y, y2 the two edges, all with the axes swapped.
         logical :: horiz = .false.
@@ -4608,6 +4612,97 @@ contains
         if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
     end subroutine plot_wireframe
 
+    ! ----------------------------------------------------------------------
+    ! Scattered points, triangulated. matplotlib triangulates with Qhull
+    ! and draws the result with the ordinary artists; so does this, which
+    ! is why these are so short.
+    ! ----------------------------------------------------------------------
+
+    ! The edges of the triangulation, as one line broken at every jump,
+    ! which is how matplotlib draws it too.
+    subroutine triplot(x, y, color, lw, linestyle, marker, label)
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: color, linestyle, marker, label
+        real(dp), intent(in), optional :: lw
+        integer, allocatable :: tri(:, :)
+        real(dp), allocatable :: ex(:), ey(:)
+        integer :: nt, i, k
+        real(dp) :: nan, zero
+
+        call ensure_fig()
+        call delaunay(x, y, tri, nt)
+        if (nt < 1) return
+        ! The break between one triangle and the next, which plot draws as
+        ! a gap just as matplotlib does.
+        zero = 0.0_dp
+        nan = zero/zero
+        ! Four points and a break for each triangle: round it and back to
+        ! the start.
+        allocate (ex(5*nt), ey(5*nt))
+        k = 0
+        do i = 1, nt
+            ex(k + 1:k + 3) = x(tri(:, i))
+            ey(k + 1:k + 3) = y(tri(:, i))
+            ex(k + 4) = x(tri(1, i))
+            ey(k + 4) = y(tri(1, i))
+            ex(k + 5) = nan
+            ey(k + 5) = nan
+            k = k + 5
+        end do
+        call plot(ex, ey, color=color, lw=lw, linestyle=linestyle, label=label)
+        ! matplotlib draws the points as a second artist, which is why
+        ! they come out in the next colour of the cycle.
+        if (present(marker)) &
+            call plot(x, y, color=color, marker=marker, linestyle="none")
+    end subroutine triplot
+
+    ! A flat-shaded triangle per triangle, coloured by the mean of its
+    ! three values, which is matplotlib's default shading.
+    subroutine tripcolor(x, y, z, cmap, vmin, vmax, edgecolor, alpha)
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        character(len=*), intent(in), optional :: cmap, edgecolor
+        real(dp), intent(in), optional :: vmin, vmax, alpha
+        integer, allocatable :: tri(:, :)
+        integer :: nt, i, cm
+        real(dp) :: lo, hi, v, tx(3), ty(3)
+        real(dp), allocatable :: fv(:)
+
+        call ensure_fig()
+        call delaunay(x, y, tri, nt)
+        if (nt < 1) return
+        cm = CMAP_VIRIDIS
+        if (present(cmap)) cm = cmap_from_str(cmap)
+        ! Flat shading colours a triangle by the mean of its corners, and
+        ! it is those means, not the values themselves, that the colours
+        ! and the colorbar are scaled to.
+        allocate (fv(nt))
+        do i = 1, nt
+            fv(i) = sum(z(tri(:, i)))/3.0_dp
+        end do
+        lo = minval(fv)
+        hi = maxval(fv)
+        if (present(vmin)) lo = vmin
+        if (present(vmax)) hi = vmax
+        if (hi <= lo) hi = lo + 1.0_dp
+        do i = 1, nt
+            tx = x(tri(:, i))
+            ty = y(tri(:, i))
+            v = fv(i)
+            call add_polygon(tx, ty, &
+                             facecolor=cmap_color(cm, (v - lo)/(hi - lo)), &
+                             edgecolor=edgecolor, alpha=alpha)
+            ! Unlike a lone patch, a mesh cell is data and sets the limits,
+            ! and its seam with the next cell must not show.
+            ax(cur_i)%series(ax(cur_i)%n_series)%patch_scales = .true.
+            ax(cur_i)%series(ax(cur_i)%n_series)%patch_seal = .true.
+        end do
+        ! What the colorbar reads.
+        ax(cur_i)%has_cmap_src = .true.
+        ax(cur_i)%img_cmap = cm
+        ax(cur_i)%img_vmin = lo
+        ax(cur_i)%img_vmax = hi
+    end subroutine tripcolor
+
     subroutine contour(z, levels, cmap, extent)
         real(dp), intent(in) :: z(:, :)
         real(dp), intent(in), optional :: levels(:), extent(4)
@@ -8034,7 +8129,8 @@ contains
         end do
         px(s%n + 1) = px(1)
         py(s%n + 1) = py(1)
-        if (s%patch_fill) call append_polygon(b, px, py, s%n, trim(s%color), s%alpha)
+        if (s%patch_fill) call append_polygon(b, px, py, s%n, trim(s%color), &
+                                              s%alpha, seal=s%patch_seal)
         if (len_trim(s%hatch) > 0) &
             call append_hatch(b, px, py, s%n, trim(s%hatch), trim(s%hcolor), s%alpha)
         if (len_trim(s%edgecolor) > 0) &

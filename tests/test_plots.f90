@@ -22,6 +22,8 @@ program test_plots
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
     real(dp) :: xs(ns), ys(ns)
+    integer, parameter :: ntp = 24
+    real(dp) :: tx(ntp), ty(ntp), tz(ntp)
     integer, parameter :: nlg = 60
     real(dp) :: lgx(nlg), lgy(nlg)
     integer, parameter :: nd = 40
@@ -857,6 +859,30 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! Points on a jittered grid, the same ones matplotlib is given.
+    k = 0
+    do i = 1, 6
+        do j = 1, 4
+            k = k + 1
+            tx(k) = real(i - 1, dp) + 0.35_dp*sin(real(3*k, dp))
+            ty(k) = real(j - 1, dp) + 0.35_dp*cos(real(5*k, dp))
+            tz(k) = tx(k)*ty(k)
+        end do
+    end do
+
+    ! 119) the same triangles, filled by value
+    call clf()
+    call tripcolor(tx, ty, tz)
+    call colorbar()
+    call title("tripcolor")
+    call save_all("tripcolor")
+
+! 118) scattered points, triangulated
+    call clf()
+    call triplot(tx, ty, marker="o")
+    call title("triplot")
+    call save_all("triplot")
 
 ! 117) a log axis too short to label by decades alone
     call clf()

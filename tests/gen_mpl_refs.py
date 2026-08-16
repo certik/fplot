@@ -23,6 +23,8 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "tripcolor",
+    "triplot",
     "log_minor_labels",
     "annotate_curve",
     "constrained",
@@ -888,6 +890,29 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    tpx, tpy, tpz = [], [], []
+    k = 0
+    for i in range(6):
+        for j in range(4):
+            k += 1
+            tpx.append(i + 0.35 * np.sin(3.0 * k))
+            tpy.append(j + 0.35 * np.cos(5.0 * k))
+            tpz.append(tpx[-1] * tpy[-1])
+    tx, ty, tz = np.array(tpx), np.array(tpy), np.array(tpz)
+
+    # 119 the same triangles, filled by value
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    tpc = a.tripcolor(tx, ty, tz)
+    fig.colorbar(tpc, ax=a)
+    a.set_title("tripcolor")
+    save(fig, "tripcolor")
+
+    # 118 scattered points, triangulated
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    a.triplot(tx, ty, "o-")
+    a.set_title("triplot")
+    save(fig, "triplot")
 
     # 117 a log axis too short to label by decades alone
     fig, a = plt.subplots(figsize=(6.4, 4.8))

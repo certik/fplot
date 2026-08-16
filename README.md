@@ -154,6 +154,9 @@ call suptitle("figure title")
   size, for a wide panel beside a narrow one
 - `pcolormesh` and `pcolor`: a grid of cells with edges of your own
   choosing, which is what an unevenly sampled field needs
+- `triplot` and `tripcolor`: scattered points joined into triangles by
+  the same Delaunay triangulation matplotlib gets from Qhull, drawn as
+  edges or filled by value
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
   same number of ticks for the space available, and one decimal count
   shared by the whole axis. A log axis writes its decades as powers, and
