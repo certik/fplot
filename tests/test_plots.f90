@@ -36,6 +36,7 @@ program test_plots
     character(len=1), parameter :: mark_codes(n_marks) = &
         ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
     integer :: i, j, k
+    real(dp) :: xgap(40), ygap(40), yband(40), qnan, zero
     integer, parameter :: n3 = 31, nl3 = 100
     real(dp), parameter :: PI_T = 3.14159265358979323846_dp
     real(dp) :: s3x(n3), s3y(n3), s3z(n3, n3)
@@ -845,6 +846,25 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 83) missing data: the line breaks at it and the axes do not stretch
+    call clf()
+    ! A quiet NaN without leaning on ieee_arithmetic, which not every
+    ! compiler this has to build with provides.
+    zero = 0.0_dp
+    qnan = zero / zero
+    do i = 1, 40
+        xgap(i) = real(i, dp)
+        ygap(i) = sin(0.2_dp * real(i, dp))
+        yband(i) = ygap(i) - 0.4_dp
+    end do
+    ygap(12:15) = qnan
+    yband(30:32) = qnan
+    call fill_between(xgap, ygap, yband, color="tab:orange", alpha=0.5_dp)
+    call plot(xgap, ygap, "b-o", label="with a gap")
+    call legend(loc="upper right")
+    call title("missing data")
+    call save_all("nan_gap")
 
 ! 82) an arrow patch and a path of cubic curves
     call clf()

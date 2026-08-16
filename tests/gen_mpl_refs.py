@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "nan_gap",
     "patches_path",
     "cmap_discrete",
     "hist_stacked",
@@ -853,6 +854,19 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 83 missing data: the line breaks at it and the axes do not stretch
+    fig, ax = setup_fig()
+    xgap = np.arange(1, 41, dtype=float)
+    ygap = np.sin(0.2 * xgap)
+    yband = ygap - 0.4
+    ygap[11:15] = np.nan
+    yband[29:32] = np.nan
+    ax.fill_between(xgap, ygap, yband, color="tab:orange", alpha=0.5)
+    ax.plot(xgap, ygap, "b-o", label="with a gap")
+    ax.legend(loc="upper right")
+    ax.set_title("missing data")
+    save(fig, "nan_gap")
 
     # 82 an arrow patch and a path of cubic curves
     fig, ax = setup_fig()

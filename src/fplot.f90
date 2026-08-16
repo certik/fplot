@@ -4963,6 +4963,19 @@ contains
             end if
 
             do j = 1, a%series(i)%n
+                ! Missing data does not stretch the axes to infinity.
+                if (a%series(i)%kind /= SERIES_HLINE) then
+                    if (.not. finite(a%series(i)%x(j))) cycle
+                end if
+                if (a%series(i)%kind /= SERIES_VLINE) then
+                    if (.not. finite(a%series(i)%y(j))) cycle
+                end if
+                ! A band whose other edge is missing is missing here too,
+                ! and a NaN left in the comparisons below would poison the
+                ! limits for every other point as well.
+                if (a%series(i)%kind == SERIES_FILL) then
+                    if (.not. finite(a%series(i)%y2(j))) cycle
+                end if
                 if (a%series(i)%kind /= SERIES_HLINE) then
                     if (a%series(i)%kind == SERIES_BAR) hw = bar_hw(a%series(i), j)
                     xv = a%series(i)%x(j)
@@ -5156,6 +5169,15 @@ contains
             end if
         end do
     end subroutine union_limits
+
+    ! Whether a value can be drawn at all. matplotlib treats NaN and
+    ! infinity as missing data: the point is skipped, the line is broken
+    ! there, and neither takes part in setting the limits.
+    pure function finite(v) result(ok)
+        real(dp), intent(in) :: v
+        logical :: ok
+        ok = (v == v) .and. abs(v) <= huge(1.0_dp)
+    end function finite
 
     pure subroutine grow_about_centre(lo, hi, f)
         real(dp), intent(inout) :: lo, hi
@@ -5966,21 +5988,41 @@ contains
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
-        integer :: j, np
+        integer :: j, np, j0, j1
         real(dp), allocatable :: px(:), py(:)
+        logical, allocatable :: ok(:)
 
-        np = 2 * s%n
-        allocate (px(np), py(np))
+        ! Missing data cuts the band in two, as it does in matplotlib: each
+        ! unbroken run of points becomes a polygon of its own.
+        allocate (ok(s%n), px(2 * s%n), py(2 * s%n))
         do j = 1, s%n
-            px(j) = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
-            py(j) = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            ok(j) = finite(s%x(j)) .and. finite(s%y(j)) .and. finite(s%y2(j))
         end do
-        ! Return along the lower edge to close the band.
-        do j = 1, s%n
-            px(s%n + j) = map_x(s%x(s%n - j + 1), xmin, xmax, ax_l, ax_w, xsc)
-            py(s%n + j) = map_y(s%y2(s%n - j + 1), ymin, ymax, ax_b, ax_h, ysc)
+
+        j0 = 1
+        do while (j0 <= s%n)
+            if (.not. ok(j0)) then
+                j0 = j0 + 1
+                cycle
+            end if
+            j1 = j0
+            do while (j1 < s%n)
+                if (.not. ok(j1 + 1)) exit
+                j1 = j1 + 1
+            end do
+            np = j1 - j0 + 1
+            if (np >= 2) then
+                do j = 1, np
+                    px(j) = map_x(s%x(j0 + j - 1), xmin, xmax, ax_l, ax_w, xsc)
+                    py(j) = map_y(s%y(j0 + j - 1), ymin, ymax, ax_b, ax_h, ysc)
+                    ! Return along the lower edge to close the band.
+                    px(2*np - j + 1) = px(j)
+                    py(2*np - j + 1) = map_y(s%y2(j0 + j - 1), ymin, ymax, ax_b, ax_h, ysc)
+                end do
+                call append_polygon(b, px, py, 2 * np, trim(s%color), s%alpha)
+            end if
+            j0 = j1 + 1
         end do
-        call append_polygon(b, px, py, np, trim(s%color), s%alpha)
     end subroutine append_fill
 
     ! Vertical error bar with caps for point j.
@@ -7745,6 +7787,9 @@ contains
         integer :: n_leg, k, max_lbl, n_col, n_row, lc, lr
         real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h, col_w, ttl_h, leg_x0
         real(dp), allocatable :: lx(:), ly(:)
+        logical, allocatable :: lstart(:)
+        logical :: brk
+        integer :: k0, k1
         type(paint_t) :: pnt
 
         ax_l = a%left * W
@@ -7852,9 +7897,10 @@ contains
         do i = 1, a%n_series
             n = a%series(i)%n
             if (n <= 0) cycle
+            if (allocated(lstart)) deallocate (lstart)
             if (allocated(lx)) deallocate (lx)
             if (allocated(ly)) deallocate (ly)
-            allocate (lx(n), ly(n))
+            allocate (lx(n), ly(n), lstart(n))
 
             select case (a%series(i)%kind)
             case (SERIES_BOX)
@@ -7958,15 +8004,26 @@ contains
                 end do
             end select
 
-            ! Points that fall off a log axis are dropped once, and both the
-            ! line and its markers then work from the same list.
+            ! Points that cannot be drawn are dropped once, and both the line
+            ! and its markers then work from the same list. A point is
+            ! missing if it is NaN or infinite, or if a log axis cannot
+            ! place it; lstart then remembers where the line has to restart,
+            ! because matplotlib leaves a gap rather than drawing across it.
             nl = 0
+            brk = .true.
             do j = 1, n
-                if (a%xsc%kind == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) cycle
-                if (a%ysc%kind == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp) cycle
+                if (.not. finite(a%series(i)%x(j)) .or. &
+                    .not. finite(a%series(i)%y(j)) .or. &
+                    (a%xsc%kind == SCALE_LOG .and. a%series(i)%x(j) <= 0.0_dp) .or. &
+                    (a%ysc%kind == SCALE_LOG .and. a%series(i)%y(j) <= 0.0_dp)) then
+                    brk = .true.
+                    cycle
+                end if
                 nl = nl + 1
                 lx(nl) = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
                 ly(nl) = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc)
+                lstart(nl) = brk
+                brk = .false.
             end do
 
             if (a%series(i)%linestyle /= LINE_NONE .and. nl >= 2) then
@@ -7974,7 +8031,18 @@ contains
                           a%series(i)%alpha, a%series(i)%linestyle)
                 pnt%join = JOIN_ROUND
                 pnt%cap = CAP_BUTT
-                call b%draw_path(lx(1:nl), ly(1:nl), line_verbs(nl), nl, pnt)
+                k0 = 1
+                do while (k0 <= nl)
+                    k1 = k0 + 1
+                    do while (k1 <= nl)
+                        if (lstart(k1)) exit
+                        k1 = k1 + 1
+                    end do
+                    if (k1 - k0 >= 2) &
+                        call b%draw_path(lx(k0:k1 - 1), ly(k0:k1 - 1), &
+                                         line_verbs(k1 - k0), k1 - k0, pnt)
+                    k0 = k1
+                end do
             end if
 
             if (a%series(i)%marker /= MARKER_NONE .and. nl > 0) then
