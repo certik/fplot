@@ -40,6 +40,7 @@ program test_plots
     real(dp), parameter :: PI_T = 3.14159265358979323846_dp
     real(dp) :: s3x(n3), s3y(n3), s3z(n3, n3)
     real(dp) :: t3(nl3), l3x(nl3), l3y(nl3), l3z(nl3)
+    real(dp) :: big(n), bigy(n)
     character(len=8), parameter :: fruit(4) = &
         ["apple ", "banana", "cherry", "date  "]
     real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
@@ -842,6 +843,17 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 77) a large y axis and an offset x axis: what the tick labels leave out
+!     is written once at the end of each axis
+    call clf()
+    do i = 1, n
+        big(i) = 1.0e5_dp + real(i - 1, dp)*3.0_dp/real(n - 1, dp)
+        bigy(i) = 2.0e6_dp*y(i)
+    end do
+    call plot(big, bigy)
+    call title("offset text")
+    call save_all("offset_text")
 
 ! 75) a 3D surface
     call clf()

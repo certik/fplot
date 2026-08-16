@@ -74,6 +74,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "offset_text",
     "surface3d",
     "line3d",
     "scatter_cmap",
@@ -843,6 +844,12 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 77 a large y axis and an offset x axis
+    fig, ax = setup_fig()
+    ax.plot(1e5 + np.linspace(0, 3, len(x)), 2e6 * y)
+    ax.set_title("offset text")
+    save(fig, "offset_text")
 
     # 75 a 3D surface
     fig = plt.figure(figsize=(6.4, 4.8))

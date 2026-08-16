@@ -48,6 +48,15 @@ module fplot
     public :: axes, subplots, sca
     public :: style_use, rc
 
+    ! What one axis agreed to write on its ticks: how many decimals, and
+    ! the offset and power of ten factored out of every label and written
+    ! once at the end of the axis instead.
+    type :: tickfmt_t
+        integer :: dec = 0
+        real(dp) :: off = 0.0_dp
+        integer :: oom = 0
+    end type tickfmt_t
+
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
     integer, parameter :: INIT_SLOTS = 8
@@ -1181,7 +1190,8 @@ contains
                         a%ysc, 9, a%y_date, t, nt, du)
         do i = 1, nt
             call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, &
-                            axis_decimals(t, nt, a%ysc), du, lbl, ln)
+                            axis_fmt(t, nt, a%ysc, min(ymin, ymax), max(ymin, ymax)), &
+                            du, lbl, ln)
             if (math_is(lbl(1:ln))) then
                 v = max(v, math_width(lbl(1:ln), a%ytick_size))
             else
@@ -6657,15 +6667,16 @@ contains
         call append_text(b, x, y, s, anchor, fontsize, rc_text_color, rot)
     end subroutine append_tick_text
 
-    ! dec is the decimal count the whole axis agreed on, or -1 when the
-    ! scale writes its own labels.
-    subroutine tick_label(labeled, lab, i, v, sc, dec, date_unit, out, n)
+    ! f carries what the whole axis agreed on: the decimal count, or -1
+    ! when the scale writes its own labels, and anything factored out.
+    subroutine tick_label(labeled, lab, i, v, sc, f, date_unit, out, n)
         logical, intent(in) :: labeled
         character(len=24), intent(in) :: lab(MAX_TICKS)
         integer, intent(in) :: i
         real(dp), intent(in) :: v
         type(scale_t), intent(in) :: sc
-        integer, intent(in) :: dec, date_unit
+        type(tickfmt_t), intent(in) :: f
+        integer, intent(in) :: date_unit
         character(len=*), intent(out) :: out
         integer, intent(out) :: n
         if (labeled) then
@@ -6676,7 +6687,7 @@ contains
         else if (sc%kind == SCALE_LOG) then
             call format_tick_to(v, .true., out, n)
         else
-            call format_tick_fixed(v, dec, out, n)
+            call format_tick_fixed((v - f%off)/10.0_dp**f%oom, f%dec, out, n)
         end if
     end subroutine tick_label
 
@@ -6693,6 +6704,22 @@ contains
             d = tick_decimals(t, nt)
         end if
     end function axis_decimals
+
+    ! The same for an axis that may factor an offset or a power of ten out
+    ! of its labels. Only a linear axis does; a log or date axis writes its
+    ! own labels and has nothing to factor.
+    function axis_fmt(t, nt, sc, vmin, vmax) result(f)
+        real(dp), intent(in) :: t(MAX_TICKS), vmin, vmax
+        integer, intent(in) :: nt
+        type(scale_t), intent(in) :: sc
+        type(tickfmt_t) :: f
+        if (sc%kind /= SCALE_LINEAR) then
+            f%dec = -1
+            return
+        end if
+        call tick_offset(t, nt, vmin, vmax, f%off, f%oom)
+        f%dec = tick_decimals_at(t, nt, f%off, f%oom)
+    end function axis_fmt
 
     ! A polar axes. The box holds the largest circle that fits: the angle
     ! runs anticlockwise from the right and the radius from the middle out,
@@ -7260,6 +7287,7 @@ contains
         real(dp) :: x_edge, x_out, y_edge, y_out
         character(len=64) :: lbl
         character(len=64) :: tx, ty
+        type(tickfmt_t) :: xfmt, yfmt
         integer :: tn, tyn
         character(len=512) :: esc
         integer :: ln, en
@@ -7323,6 +7351,8 @@ contains
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
                         ysc, tick_space(ax_h, a%ytick_size, .false.), a%y_date, &
                         yticks, nyt, y_unit)
+        xfmt = axis_fmt(xticks, nxt, xsc, xmin, xmax)
+        yfmt = axis_fmt(yticks, nyt, ysc, min(ymin, ymax), max(ymin, ymax))
         if (a%minor_ticks) then
             call minor_positions(xticks, nxt, xmin, xmax, xsc, xminor, nxm)
             call minor_positions(yticks, nyt, ymin, ymax, ysc, yminor, nym)
@@ -7563,7 +7593,7 @@ contains
             call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, a%xtick_len)
             if (.not. a%xticklabels_off) then
                 call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, &
-                                axis_decimals(xticks, nxt, xsc), x_unit, lbl, ln)
+                                xfmt, x_unit, lbl, ln)
                 call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
                                       merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
                                       a%xtick_size, a%xtick_rot)
@@ -7589,7 +7619,7 @@ contains
             call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, a%ytick_len)
             if (.not. a%yticklabels_off) then
                 call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, &
-                                axis_decimals(yticks, nyt, ysc), y_unit, lbl, ln)
+                                yfmt, y_unit, lbl, ln)
                 call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, lbl(1:ln), &
                                       merge("left ", "right", a%y_right), &
                                       a%ytick_size, a%ytick_rot)
@@ -7600,6 +7630,24 @@ contains
             call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, &
                                 MINOR_FRAC * a%ytick_len)
         end do
+
+        ! What the labels left out, written once at the end of the axis:
+        ! matplotlib puts it past the far end of the x axis and above the
+        ! top of the y axis, three points clear of the tick labels.
+        if (nxt > 0 .and. .not. a%xticklabels_off) then
+            call format_offset_text(xfmt%off, xfmt%oom, lbl, ln)
+            if (ln > 0) &
+                call append_text(b, ax_r, ax_b + xtick_gap(a) + 0.24_dp*a%xtick_size &
+                                 + 3.0_dp + 0.76_dp*a%xtick_size, lbl(1:ln), "right", &
+                                 a%xtick_size, rc_text_color)
+        end if
+        if (nyt > 0 .and. .not. a%yticklabels_off) then
+            call format_offset_text(yfmt%off, yfmt%oom, lbl, ln)
+            if (ln > 0) &
+                call append_text(b, y_edge, ax_t - 3.0_dp, lbl(1:ln), &
+                                 merge("right", "left ", a%y_right), &
+                                 a%ytick_size, rc_text_color)
+        end if
 
         if (len_trim(a%xlabel) > 0) then
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
