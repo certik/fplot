@@ -23,6 +23,19 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "scatter_edge",
+    "figlegend",
+    "tick_locator",
+    "cmap_special",
+    "norms",
+    "imshow_rgb",
+    "hist_orient",
+    "title_loc",
+    "bar_err",
+    "invert_axes",
+    "annotate_arrow",
+    "transform_axes",
+    "plot_y",
     "basic_line",
     "multi_style",
     "markers_only",
@@ -867,6 +880,145 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 109 marker edges and a band carried to the crossing
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].scatter(x[:16], y[:16], s=120.0, c="skyblue",
+                   edgecolors="black", linewidths=1.5)
+    axs[1].plot(x, y, "b-")
+    axs[1].plot(x, y2, "r-")
+    axs[1].fill_between(x, y, y2, color="green", alpha=0.4,
+                        where=y > y2, interpolate=True)
+    save(fig, "scatter_edge")
+
+    # 108 one legend for the whole figure
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].plot(x, y, "b-", label="sin")
+    axs[1].plot(x, y2, "r--", label="cos")
+    fig.legend(loc="upper right")
+    save(fig, "figlegend")
+
+    # 107 minor ticks placed by hand, and a pruned locator
+    fig, axs = plt.subplots(2, 1, figsize=(6.4, 4.8))
+    axs[0].plot(x, y, "b-")
+    axs[0].set_xticks([0.0, 2.0, 4.0, 6.0])
+    axs[0].set_xticks([1.0, 3.0, 5.0], minor=True)
+    axs[0].set_title("minor by hand")
+    axs[1].plot(x, y, "r-")
+    axs[1].locator_params(axis="y", prune="both")
+    axs[1].set_title("prune=both")
+    save(fig, "tick_locator")
+
+    # 106 colours for what is off the scale, and a colormap of our own
+    from matplotlib.colors import LinearSegmentedColormap
+    zn2 = np.zeros((16, 16))
+    for i in range(16):
+        for j in range(16):
+            zn2[i, j] = (i + 1) + (j + 1)
+    zn2[3:6, 3:6] = np.nan
+    cm = plt.get_cmap("viridis").copy()
+    cm.set_bad("red")
+    cm.set_under("black")
+    cm.set_over("white")
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].imshow(zn2, cmap=cm, vmin=8, vmax=24)
+    axs[0].set_title("bad/under/over")
+    own = LinearSegmentedColormap.from_list("own", ["#000080", "#ffffff", "#800000"])
+    axs[1].imshow(zn2, cmap=own)
+    axs[1].set_title("own colormap")
+    save(fig, "cmap_special")
+
+    # 105 three ways of spreading values over a colormap
+    from matplotlib.colors import TwoSlopeNorm, PowerNorm, SymLogNorm
+    zn = np.zeros((16, 16))
+    for i in range(16):
+        for j in range(16):
+            zn[i, j] = (j - 7) * (i + 1) / 4.0
+    fig, axs = plt.subplots(1, 3, figsize=(6.4, 4.8))
+    axs[0].imshow(zn, cmap="coolwarm",
+                  norm=TwoSlopeNorm(vcenter=0.0, vmin=zn.min(), vmax=zn.max()))
+    axs[0].set_title("centered")
+    axs[1].imshow(np.abs(zn), cmap="viridis", norm=PowerNorm(gamma=0.5))
+    axs[1].set_title("power")
+    axs[2].imshow(zn, cmap="coolwarm",
+                  norm=SymLogNorm(linthresh=1.0, base=10,
+                                  vmin=zn.min(), vmax=zn.max()))
+    axs[2].set_title("symlog")
+    save(fig, "norms")
+
+    # 104 an image whose colours are given outright
+    rgbim = np.zeros((8, 12, 3))
+    for i in range(8):
+        for j in range(12):
+            rgbim[i, j, 0] = j / 11.0
+            rgbim[i, j, 1] = i / 7.0
+            rgbim[i, j, 2] = 0.5
+    fig, ax = setup_fig()
+    ax.imshow(rgbim)
+    ax.set_title("imshow of an RGB array")
+    save(fig, "imshow_rgb")
+
+    # 103 a histogram on its side, one on a log axis, and one with gaps
+    fig, axs = plt.subplots(1, 3, figsize=(6.4, 4.8))
+    axs[0].hist(dist1, bins=12, orientation="horizontal", color="C0")
+    axs[0].set_title("horizontal")
+    axs[1].hist(dist1, bins=12, log=True, color="C1")
+    axs[1].set_title("log")
+    axs[2].hist(dist1, bins=12, rwidth=0.7, color="C2")
+    axs[2].set_title("rwidth")
+    save(fig, "hist_orient")
+
+    # 102 a title against one end, and labels pushed further out
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-")
+    ax.set_title("left title", loc="left")
+    ax.set_xlabel("x", labelpad=12)
+    ax.set_ylabel("y", labelpad=16)
+    save(fig, "title_loc")
+
+    # 101 bars with error bars, edge alignment and their own tick labels
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].bar([0, 1, 2], [3, 5, 2], yerr=[0.4, 0.6, 0.3], capsize=4,
+               tick_label=["a", "b", "c"])
+    axs[0].set_title("yerr")
+    axs[1].bar([0, 1, 2], [3, 5, 2], align="edge", color="g")
+    axs[1].set_title("align=edge")
+    save(fig, "bar_err")
+
+    # 100 axes that count down, and limits read back out
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-")
+    ax.invert_xaxis()
+    ax.invert_yaxis()
+    lo, hi = ax.get_xlim()
+    ax.text(0.05, 0.1, "x from %6.2f to %6.2f" % (lo, hi), transform=ax.transAxes)
+    ax.set_title("inverted axes")
+    save(fig, "invert_axes")
+
+    # 99 an annotation with a real arrow head
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-")
+    ax.annotate("minimum", xy=(4.712, -1.0), xytext=(2.2, -0.55),
+                arrowprops=dict(arrowstyle="->"))
+    ax.annotate("start", xy=(0.0, 0.0), xytext=(1.0, 0.6),
+                arrowprops=dict(arrowstyle="->", color="r", linewidth=1.5))
+    ax.set_title("annotate arrows")
+    save(fig, "annotate_arrow")
+
+    # 98 text pinned to the corners of the axes, not to the data
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.text(0.05, 0.95, "top left", transform=ax.transAxes, va="top")
+    ax.text(0.95, 0.05, "bottom right", transform=ax.transAxes, ha="right")
+    ax.set_title("transform=axes")
+    save(fig, "transform_axes")
+
+    # 97 one array is enough
+    fig, ax = setup_fig()
+    ax.plot(y)
+    ax.plot(y * 0.5, "o--")
+    ax.set_title("plot(y)")
+    save(fig, "plot_y")
 
     # 96 a wireframe and a colormapped surface
     fig = plt.figure(figsize=(6.4, 4.8))

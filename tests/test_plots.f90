@@ -15,6 +15,10 @@ program test_plots
     integer, parameter :: nh = 20
     integer, parameter :: ne = 8
     real(dp) :: x(n), y(n), y2(n), y3(n)
+    real(dp) :: lo, hi
+    real(dp) :: rgbim(8, 12, 3)
+    real(dp) :: zn(16, 16)
+    character(len=64) :: buf
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
     real(dp) :: xs(ns), ys(ns)
@@ -849,6 +853,163 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 109) marker edges and a band carried to the crossing
+    call clf()
+    call subplot(1, 2, 1)
+    call scatter(x(1:16), y(1:16), s=120.0_dp, c="skyblue", &
+                 edgecolors="black", linewidths=1.5_dp)
+    call subplot(1, 2, 2)
+    call plot(x, y, "b-")
+    call plot(x, y2, "r-")
+    call fill_between(x, y, y2, color="green", alpha=0.4_dp, &
+                      where=y > y2, interpolate=.true.)
+    call save_all("scatter_edge")
+
+! 108) one legend for the whole figure
+    call clf()
+    call subplot(1, 2, 1)
+    call plot(x, y, "b-", label="sin")
+    call subplot(1, 2, 2)
+    call plot(x, y2, "r--", label="cos")
+    call figlegend(loc="upper right")
+    call save_all("figlegend")
+
+! 107) minor ticks placed by hand, and a pruned locator
+    call clf()
+    call subplot(2, 1, 1)
+    call plot(x, y, "b-")
+    call xticks([0.0_dp, 2.0_dp, 4.0_dp, 6.0_dp])
+    call xticks([1.0_dp, 3.0_dp, 5.0_dp], minor=.true.)
+    call title("minor by hand")
+    call subplot(2, 1, 2)
+    call plot(x, y, "r-")
+    call locator_params(axis="y", prune="both")
+    call title("prune=both")
+    call save_all("tick_locator")
+
+! 106) colours for what is off the scale, and a colormap of our own
+    call clf()
+    zero = 0.0_dp
+    qnan = zero/zero
+    do i = 1, 16
+        do j = 1, 16
+            zn(i, j) = real(i + j, dp)
+        end do
+    end do
+    zn(4:6, 4:6) = qnan
+    call subplot(1, 2, 1)
+    call imshow(zn, cmap="viridis", vmin=8.0_dp, vmax=24.0_dp)
+    call set_bad("red")
+    call set_under("black")
+    call set_over("white")
+    call title("bad/under/over")
+    call subplot(1, 2, 2)
+    call imshow(zn)
+    call set_cmap_colors(["#000080", "#ffffff", "#800000"])
+    call title("own colormap")
+    call save_all("cmap_special")
+
+! 105) three ways of spreading values over a colormap
+    call clf()
+    do i = 1, 16
+        do j = 1, 16
+            zn(i, j) = real(j - 8, dp)*real(i, dp)/4.0_dp
+        end do
+    end do
+    call subplot(1, 3, 1)
+    call imshow(zn, cmap="coolwarm", norm="centered", vcenter=0.0_dp)
+    call title("centered")
+    call subplot(1, 3, 2)
+    call imshow(abs(zn), cmap="viridis", norm="power", gamma=0.5_dp)
+    call title("power")
+    call subplot(1, 3, 3)
+    call imshow(zn, cmap="coolwarm", norm="symlog", linthresh=1.0_dp)
+    call title("symlog")
+    call save_all("norms")
+
+! 104) an image whose colours are given outright
+    call clf()
+    do i = 1, 8
+        do j = 1, 12
+            rgbim(i, j, 1) = real(j - 1, dp)/11.0_dp
+            rgbim(i, j, 2) = real(i - 1, dp)/7.0_dp
+            rgbim(i, j, 3) = 0.5_dp
+        end do
+    end do
+    call imshow(rgbim)
+    call title("imshow of an RGB array")
+    call save_all("imshow_rgb")
+
+! 103) a histogram on its side, one on a log axis, and one with gaps
+    call clf()
+    call subplot(1, 3, 1)
+    call hist(dist1, bins=12, orientation="horizontal", color="C0")
+    call title("horizontal")
+    call subplot(1, 3, 2)
+    call hist(dist1, bins=12, log=.true., color="C1")
+    call title("log")
+    call subplot(1, 3, 3)
+    call hist(dist1, bins=12, rwidth=0.7_dp, color="C2")
+    call title("rwidth")
+    call save_all("hist_orient")
+
+! 102) a title against one end, and labels pushed further out
+    call clf()
+    call plot(x, y, "b-")
+    call title("left title", loc="left")
+    call xlabel("x", labelpad=12.0_dp)
+    call ylabel("y", labelpad=16.0_dp)
+    call save_all("title_loc")
+
+! 101) bars with error bars, edge alignment and their own tick labels
+    call clf()
+    call subplot(1, 2, 1)
+    call bar([0.0_dp, 1.0_dp, 2.0_dp], [3.0_dp, 5.0_dp, 2.0_dp], &
+             yerr=[0.4_dp, 0.6_dp, 0.3_dp], capsize=4.0_dp, &
+             tick_label=["a", "b", "c"])
+    call title("yerr")
+    call subplot(1, 2, 2)
+    call bar([0.0_dp, 1.0_dp, 2.0_dp], [3.0_dp, 5.0_dp, 2.0_dp], &
+             align="edge", color="g")
+    call title("align=edge")
+    call save_all("bar_err")
+
+! 100) axes that count down, and limits read back out
+    call clf()
+    call plot(x, y, "b-")
+    call invert_xaxis()
+    call invert_yaxis()
+    call get_xlim(lo, hi)
+    write (buf, '(a,f6.2,a,f6.2)') "x from ", lo, " to ", hi
+    call text(0.05_dp, 0.1_dp, trim(buf), transform="axes")
+    call title("inverted axes")
+    call save_all("invert_axes")
+
+! 99) an annotation with a real arrow head
+    call clf()
+    call plot(x, y, "b-")
+    call annotate("minimum", 4.712_dp, -1.0_dp, xtext=2.2_dp, ytext=-0.55_dp, &
+                  arrowstyle="->")
+    call annotate("start", 0.0_dp, 0.0_dp, xtext=1.0_dp, ytext=0.6_dp, &
+                  arrowstyle="->", arrowcolor="r", arrowlw=1.5_dp)
+    call title("annotate arrows")
+    call save_all("annotate_arrow")
+
+! 98) text pinned to the corners of the axes, not to the data
+    call clf()
+    call plot(x, y)
+    call text(0.05_dp, 0.95_dp, "top left", transform="axes", va="top")
+    call text(0.95_dp, 0.05_dp, "bottom right", transform="axes", ha="right")
+    call title("transform=axes")
+    call save_all("transform_axes")
+
+! 97) one array is enough
+    call clf()
+    call plot(y)
+    call plot(y*0.5_dp, "o--")
+    call title("plot(y)")
+    call save_all("plot_y")
 
 ! 96) a wireframe and a colormapped surface
     call clf()

@@ -36,11 +36,14 @@ module fplot
     public :: axis, set_aspect, tick_params, spines
     public :: margins, autoscale
     public :: text, annotate, figtext, set_facecolor
-    public :: xticks, yticks, minorticks_on
+    public :: xticks, yticks, minorticks_on, locator_params
     public :: ticklabel_format, tick_format, tick_locator
     public :: imshow, colorbar, contour, contourf, clabel
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
+    public :: get_xlim, get_ylim, invert_xaxis, invert_yaxis
+    public :: set_bad, set_under, set_over, set_cmap_colors
+    public :: figlegend
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
@@ -126,6 +129,13 @@ module fplot
 
     ! What a series draws. LINE covers plot/scatter/semilog*; the rest are
     ! the shape-based plot types.
+    ! How a value is turned into a place on the colormap.
+    integer, parameter :: NORM_LINEAR = 0
+    integer, parameter :: NORM_LOG = 1
+    integer, parameter :: NORM_CENTER = 2
+    integer, parameter :: NORM_POWER = 3
+    integer, parameter :: NORM_SYMLOG = 4
+
     integer, parameter :: SERIES_LINE = 0
     integer, parameter :: SERIES_BAR = 1
     integer, parameter :: SERIES_FILL = 2
@@ -249,6 +259,10 @@ module fplot
         character(len=7) :: hcolor = ""
         character(len=7) :: edgecolor = "#ffffff"
         real(dp) :: edgewidth = 0.5_dp
+        ! Error bars carry their own colour and weight, apart from whatever
+        ! the line or the bars are drawn in.
+        character(len=7) :: ecolor = ""
+        real(dp) :: elw = 1.5_dp, ecap = 0.0_dp
         ! 3D: the third coordinate of a line or scatter, and the grid of a
         ! surface, in the row = y, column = x order the 2D grids use.
         real(dp), allocatable :: z(:)
@@ -261,6 +275,11 @@ module fplot
         ! Arrow tail; only used when has_arrow is set.
         real(dp) :: xtail = 0.0_dp, ytail = 0.0_dp
         logical :: has_arrow = .false.
+        ! "->" adds a head at the annotated point; the shaft is pulled back
+        ! from both ends by shrink points so it never touches either.
+        logical :: arrow_head = .false.
+        character(len=7) :: arrow_color = "#000000"
+        real(dp) :: arrow_lw = 1.0_dp, arrow_shrink = 2.0_dp
         real(dp) :: fontsize = 10.0_dp
         character(len=7) :: color = "#000000"
         character(len=8) :: ha = "left"
@@ -274,8 +293,11 @@ module fplot
         logical :: has_box = .false.
         character(len=7) :: box_fc = "#ffffff", box_ec = ""
         real(dp) :: box_alpha = 1.0_dp, box_pad = 0.3_dp
-        ! figtext places in figure coordinates rather than data ones.
+        ! figtext places in figure coordinates rather than data ones;
+        ! transform="axes" places in fractions of the axes box, so that a
+        ! note stays put when the data range changes.
         logical :: in_fig = .false.
+        logical :: in_axes = .false.
         character(len=256) :: s = ""
     end type text_t
 
@@ -304,6 +326,11 @@ module fplot
         ! User-specified tick positions and optional labels.
         integer :: n_xticks = 0, n_yticks = 0
         real(dp) :: xtick_pos(MAX_TICKS), ytick_pos(MAX_TICKS)
+        ! Minor ticks placed by hand, and the ends the locator is told to
+        ! leave alone ("lower", "upper" or "both").
+        integer :: n_xminor = 0, n_yminor = 0
+        real(dp) :: xminor_pos(MAX_TICKS), yminor_pos(MAX_TICKS)
+        character(len=6) :: xtick_prune = "", ytick_prune = ""
         logical :: xtick_labeled = .false., ytick_labeled = .false.
         character(len=24) :: xtick_lab(MAX_TICKS), ytick_lab(MAX_TICKS)
         ! Image (imshow). One image per axes, as in normal matplotlib use.
@@ -332,12 +359,23 @@ module fplot
         real(dp) :: img_vmin = 0.0_dp, img_vmax = 1.0_dp
         ! How a value is placed on the colormap: linearly, or by its
         ! logarithm, matplotlib's LogNorm.
-        logical :: img_log_norm = .false.
+        ! How values are mapped onto the colormap.
+        integer :: img_norm = NORM_LINEAR
+        real(dp) :: img_vcenter = 0.0_dp, img_gamma = 1.0_dp
+        real(dp) :: img_linthresh = 1.0_dp
         ! BoundaryNorm: the edges of the bands the data is sorted into. The
         ! image then takes one flat color per band rather than a ramp.
         real(dp), allocatable :: img_bounds(:)
         real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: img_origin_upper = .true.
+        ! Colours for the values a colormap has nothing to say about, and
+        ! a colormap of the caller's own making.
+        character(len=7) :: cmap_bad = "", cmap_under = "", cmap_over = ""
+        character(len=7), allocatable :: cmap_list(:)
+        ! An image whose colours are given outright rather than through a
+        ! colormap: (row, column, channel) with three or four channels.
+        real(dp), allocatable :: img_rgb(:, :, :)
+        logical :: has_rgb = .false.
         ! pcolormesh keeps the same samples in img, but with its own cell
         ! edges instead of an evenly divided extent.
         ! Where the axes sits in the figure's grid, zero based, and how
@@ -370,6 +408,10 @@ module fplot
         real(dp) :: xtick_size = TICK_FONT, ytick_size = TICK_FONT
         real(dp) :: title_size = TITLE_FONT
         real(dp) :: xlabel_size = LABEL_FONT, ylabel_size = LABEL_FONT
+        ! loc is "center", "left" or "right"; the pads are matplotlib's
+        ! labelpad in points, measured from its default of LABEL_PAD.
+        character(len=6) :: title_loc = "center"
+        real(dp) :: xlabel_pad = LABEL_PAD, ylabel_pad = LABEL_PAD
         ! Face of the title and the two axis labels.
         integer :: title_w = WEIGHT_NORMAL, title_sl = SLANT_ROMAN
         integer :: xlabel_w = WEIGHT_NORMAL, xlabel_sl = SLANT_ROMAN
@@ -450,6 +492,7 @@ module fplot
         character(len=32) :: cbar_label = ""
         type(scale_t) :: xsc
         type(scale_t) :: ysc
+        logical :: x_inv = .false., y_inv = .false.
         logical :: xlim_set = .false.
         logical :: ylim_set = .false.
         real(dp) :: xmin_user = 0.0_dp, xmax_user = 1.0_dp
@@ -475,8 +518,8 @@ module fplot
         procedure :: inset_axes => ax_inset_axes
         procedure :: secondary_xaxis => ax_secondary_xaxis
         procedure :: secondary_yaxis => ax_secondary_yaxis
-        procedure, private :: ax_plot, ax_plot_cat
-        generic :: plot => ax_plot, ax_plot_cat
+        procedure, private :: ax_plot, ax_plot_cat, ax_plot_y
+        generic :: plot => ax_plot, ax_plot_cat, ax_plot_y
         procedure :: scatter => ax_scatter
         procedure, private :: ax_bar, ax_bar_cat, ax_barh, ax_barh_cat
         generic :: bar => ax_bar, ax_bar_cat
@@ -495,7 +538,8 @@ module fplot
         procedure :: add_circle => ax_add_circle
         procedure :: add_ellipse => ax_add_ellipse
         procedure :: add_polygon => ax_add_polygon
-        procedure :: imshow => ax_imshow
+        procedure, private :: ax_imshow, ax_imshow_rgb
+        generic :: imshow => ax_imshow, ax_imshow_rgb
         procedure :: xaxis_date => ax_xaxis_date
         procedure :: yaxis_date => ax_yaxis_date
         procedure :: pcolormesh => ax_pcolormesh
@@ -520,6 +564,10 @@ module fplot
         procedure :: set_ylabel => ax_set_ylabel
         procedure :: set_xlim => ax_set_xlim
         procedure :: set_ylim => ax_set_ylim
+        procedure :: get_xlim => ax_get_xlim
+        procedure :: get_ylim => ax_get_ylim
+        procedure :: invert_xaxis => ax_invert_xaxis
+        procedure :: invert_yaxis => ax_invert_yaxis
         procedure :: set_xscale => ax_set_xscale
         procedure :: set_yscale => ax_set_yscale
         procedure :: set_xticks => ax_set_xticks
@@ -577,8 +625,12 @@ module fplot
     end interface barh
 
     interface plot
-        module procedure plot_num, plot_cat
+        module procedure plot_num, plot_cat, plot_y
     end interface plot
+
+    interface imshow
+        module procedure imshow_z, imshow_rgb
+    end interface imshow
 
     interface subplots
         module procedure subplots_grid, subplots_row, subplots_one
@@ -1281,7 +1333,7 @@ contains
     function ylabel_out(a) result(v)
         type(axes_t), intent(in) :: a
         real(dp) :: v
-        v = TICK_LEN + 2.0_dp + tick_label_width(a) + LABEL_PAD &
+        v = TICK_LEN + 2.0_dp + tick_label_width(a) + a%ylabel_pad &
             + 0.76_dp * a%ylabel_size
     end function ylabel_out
 
@@ -1300,7 +1352,8 @@ contains
         end if
         if (a%xtick_rot /= 0.0_dp) v = v + tick_label_width(a) * &
                                         abs(sin(a%xtick_rot * PI / 180.0_dp))
-        if (len_trim(a%xlabel) > 0) v = v + LABEL_BOX * a%xlabel_size
+        if (len_trim(a%xlabel) > 0) &
+            v = v + LABEL_BOX * a%xlabel_size + a%xlabel_pad - LABEL_PAD
     end function decor_bottom
 
     ! How far the decorations reach to the right of the axes box. Only a
@@ -1708,6 +1761,23 @@ contains
                   markeredgewidth, markevery, drawstyle, dashes)
     end subroutine ax_plot
 
+    subroutine ax_plot_y(self, y, fmt, label, lw, color, marker, linestyle, &
+                         alpha, markersize, markerfacecolor, markeredgecolor, &
+                         markeredgewidth, markevery, drawstyle, dashes)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        character(len=*), intent(in), optional :: markerfacecolor, markeredgecolor
+        character(len=*), intent(in), optional :: drawstyle
+        real(dp), intent(in), optional :: lw, alpha, markersize, markeredgewidth
+        real(dp), intent(in), optional :: dashes(:)
+        integer, intent(in), optional :: markevery
+        call ax_sca(self)
+        call plot(y, fmt, label, lw, color, marker, linestyle, alpha, &
+                  markersize, markerfacecolor, markeredgecolor, &
+                  markeredgewidth, markevery, drawstyle, dashes)
+    end subroutine ax_plot_y
+
     subroutine ax_plot_cat(self, cats, y, fmt, label, lw, color, marker, &
                            linestyle, alpha)
         class(axes), intent(in) :: self
@@ -1757,15 +1827,19 @@ contains
     end subroutine ax_scatter
 
     subroutine ax_bar(self, x, height, width, color, label, alpha, bottom, &
-                      colors, edgecolor, linewidth)
+                      colors, edgecolor, linewidth, hatch, yerr, align, &
+                      tick_label, ecolor, capsize)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), height(:)
         real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
-        character(len=*), intent(in), optional :: color, label, edgecolor
-        character(len=*), intent(in), optional :: colors(:)
+        real(dp), intent(in), optional :: yerr(:), capsize
+        character(len=*), intent(in), optional :: color, label, edgecolor, hatch
+        character(len=*), intent(in), optional :: colors(:), align, ecolor
+        character(len=*), intent(in), optional :: tick_label(:)
         call ax_sca(self)
         call bar(x, height, width, color, label, alpha, bottom, colors, &
-                 edgecolor, linewidth)
+                 edgecolor, linewidth, hatch, yerr, align, tick_label, &
+                 ecolor, capsize)
     end subroutine ax_bar
 
     subroutine ax_barh(self, y, width, height, color, label, alpha, left, &
@@ -1789,16 +1863,19 @@ contains
     end subroutine ax_bar_label
 
     subroutine ax_hist(self, x, bins, color, label, alpha, bin_edges, &
-                       density, cumulative, histtype)
+                       density, cumulative, histtype, weights, stacked, &
+                       orientation, log, rwidth)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:)
         integer, intent(in), optional :: bins
         character(len=*), intent(in), optional :: color, label, histtype
-        real(dp), intent(in), optional :: alpha, bin_edges(:)
-        logical, intent(in), optional :: density, cumulative
+        character(len=*), intent(in), optional :: orientation
+        real(dp), intent(in), optional :: alpha, bin_edges(:), weights(:), rwidth
+        logical, intent(in), optional :: density, cumulative, stacked, log
         call ax_sca(self)
         call hist(x, bins, color, label, alpha, bin_edges, density, &
-                  cumulative, histtype)
+                  cumulative, histtype, weights, stacked, orientation, &
+                  log, rwidth)
     end subroutine ax_hist
 
     subroutine ax_fill_between(self, x, y1, y2, color, label, alpha, where, &
@@ -2177,16 +2254,27 @@ contains
     end subroutine ax_stem
 
     subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect, &
-                         norm, interpolation, boundaries)
+                         norm, interpolation, boundaries, vcenter, gamma, &
+                         linthresh)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: z(:, :)
         character(len=*), intent(in), optional :: cmap, origin, aspect, norm
         character(len=*), intent(in), optional :: interpolation
         real(dp), intent(in), optional :: vmin, vmax, extent(4), boundaries(:)
+        real(dp), intent(in), optional :: vcenter, gamma, linthresh
         call ax_sca(self)
         call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
-                    interpolation, boundaries)
+                    interpolation, boundaries, vcenter, gamma, linthresh)
     end subroutine ax_imshow
+
+    subroutine ax_imshow_rgb(self, z, extent, origin, aspect)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z(:, :, :)
+        character(len=*), intent(in), optional :: origin, aspect
+        real(dp), intent(in), optional :: extent(4)
+        call ax_sca(self)
+        call imshow(z, extent, origin, aspect)
+    end subroutine ax_imshow_rgb
 
     subroutine ax_xaxis_date(self)
         class(axes), intent(in) :: self
@@ -2200,13 +2288,14 @@ contains
         call yaxis_date()
     end subroutine ax_yaxis_date
 
-    subroutine ax_pcolormesh(self, x, y, c, cmap, vmin, vmax, norm)
+    subroutine ax_pcolormesh(self, x, y, c, cmap, vmin, vmax, norm, vcenter, &
+                             gamma, linthresh)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y(:), c(:, :)
         character(len=*), intent(in), optional :: cmap, norm
-        real(dp), intent(in), optional :: vmin, vmax
+        real(dp), intent(in), optional :: vmin, vmax, vcenter, gamma, linthresh
         call ax_sca(self)
-        call pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+        call pcolormesh(x, y, c, cmap, vmin, vmax, norm, vcenter, gamma, linthresh)
     end subroutine ax_pcolormesh
 
     subroutine ax_clabel(self, fontsize)
@@ -2321,53 +2410,57 @@ contains
         call axline(xy1, xy2, slope, color, linestyle, lw, label)
     end subroutine ax_axline
 
-    subroutine ax_text(self, x, y, s, color, fontsize, ha, fontweight, fontstyle)
+    subroutine ax_text(self, x, y, s, color, fontsize, ha, fontweight, &
+                       fontstyle, transform)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x, y
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
+        character(len=*), intent(in), optional :: transform
         real(dp), intent(in), optional :: fontsize
         call ax_sca(self)
-        call text(x, y, s, color, fontsize, ha, fontweight, fontstyle)
+        call text(x, y, s, color, fontsize, ha, fontweight, fontstyle, &
+                  transform=transform)
     end subroutine ax_text
 
     subroutine ax_annotate(self, s, x, y, xtext, ytext, color, fontsize, ha, &
-                           fontweight, fontstyle)
+                           fontweight, fontstyle, transform)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: x, y
         real(dp), intent(in), optional :: xtext, ytext, fontsize
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
+        character(len=*), intent(in), optional :: transform
         call ax_sca(self)
         call annotate(s, x, y, xtext, ytext, color, fontsize, ha, &
-                      fontweight, fontstyle)
+                      fontweight, fontstyle, transform=transform)
     end subroutine ax_annotate
 
-    subroutine ax_set_title(self, s, fontsize, fontweight, fontstyle)
+    subroutine ax_set_title(self, s, fontsize, fontweight, fontstyle, loc)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
-        character(len=*), intent(in), optional :: fontweight, fontstyle
+        character(len=*), intent(in), optional :: fontweight, fontstyle, loc
         call ax_sca(self)
-        call title(s, fontsize, fontweight, fontstyle)
+        call title(s, fontsize, fontweight, fontstyle, loc)
     end subroutine ax_set_title
 
-    subroutine ax_set_xlabel(self, s, fontsize, fontweight, fontstyle)
+    subroutine ax_set_xlabel(self, s, fontsize, fontweight, fontstyle, labelpad)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
-        real(dp), intent(in), optional :: fontsize
+        real(dp), intent(in), optional :: fontsize, labelpad
         character(len=*), intent(in), optional :: fontweight, fontstyle
         call ax_sca(self)
-        call xlabel(s, fontsize, fontweight, fontstyle)
+        call xlabel(s, fontsize, fontweight, fontstyle, labelpad)
     end subroutine ax_set_xlabel
 
-    subroutine ax_set_ylabel(self, s, fontsize, fontweight, fontstyle)
+    subroutine ax_set_ylabel(self, s, fontsize, fontweight, fontstyle, labelpad)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
-        real(dp), intent(in), optional :: fontsize
+        real(dp), intent(in), optional :: fontsize, labelpad
         character(len=*), intent(in), optional :: fontweight, fontstyle
         call ax_sca(self)
-        call ylabel(s, fontsize, fontweight, fontstyle)
+        call ylabel(s, fontsize, fontweight, fontstyle, labelpad)
     end subroutine ax_set_ylabel
 
     subroutine ax_set_xlim(self, xmin, xmax)
@@ -2383,6 +2476,32 @@ contains
         call ax_sca(self)
         call ylim(ymin, ymax)
     end subroutine ax_set_ylim
+
+    subroutine ax_get_xlim(self, xmin, xmax)
+        class(axes), intent(in) :: self
+        real(dp), intent(out) :: xmin, xmax
+        call ax_sca(self)
+        call get_xlim(xmin, xmax)
+    end subroutine ax_get_xlim
+
+    subroutine ax_get_ylim(self, ymin, ymax)
+        class(axes), intent(in) :: self
+        real(dp), intent(out) :: ymin, ymax
+        call ax_sca(self)
+        call get_ylim(ymin, ymax)
+    end subroutine ax_get_ylim
+
+    subroutine ax_invert_xaxis(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call invert_xaxis()
+    end subroutine ax_invert_xaxis
+
+    subroutine ax_invert_yaxis(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call invert_yaxis()
+    end subroutine ax_invert_yaxis
 
     subroutine ax_set_xscale(self, name, linthresh, linscale)
         class(axes), intent(in) :: self
@@ -2400,20 +2519,22 @@ contains
         call set_yscale(name, linthresh, linscale)
     end subroutine ax_set_yscale
 
-    subroutine ax_set_xticks(self, vals, labels)
+    subroutine ax_set_xticks(self, vals, labels, minor)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: vals(:)
         character(len=*), intent(in), optional :: labels(:)
+        logical, intent(in), optional :: minor
         call ax_sca(self)
-        call xticks(vals, labels)
+        call xticks(vals, labels, minor)
     end subroutine ax_set_xticks
 
-    subroutine ax_set_yticks(self, vals, labels)
+    subroutine ax_set_yticks(self, vals, labels, minor)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: vals(:)
         character(len=*), intent(in), optional :: labels(:)
+        logical, intent(in), optional :: minor
         call ax_sca(self)
-        call yticks(vals, labels)
+        call yticks(vals, labels, minor)
     end subroutine ax_set_yticks
 
     subroutine ax_set_aspect(self, ratio, adjustable)
@@ -2501,34 +2622,37 @@ contains
         if (present(fontstyle)) fig_suptitle_sl = slant_from_str(fontstyle)
     end subroutine suptitle
 
-    subroutine title(s, fontsize, fontweight, fontstyle)
+    subroutine title(s, fontsize, fontweight, fontstyle, loc)
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
-        character(len=*), intent(in), optional :: fontweight, fontstyle
+        character(len=*), intent(in), optional :: fontweight, fontstyle, loc
         call ensure_fig()
         ax(cur_i)%title = s
+        if (present(loc)) ax(cur_i)%title_loc = loc
         if (present(fontsize)) ax(cur_i)%title_size = fontsize
         if (present(fontweight)) ax(cur_i)%title_w = weight_from_str(fontweight)
         if (present(fontstyle)) ax(cur_i)%title_sl = slant_from_str(fontstyle)
     end subroutine title
 
-    subroutine xlabel(s, fontsize, fontweight, fontstyle)
+    subroutine xlabel(s, fontsize, fontweight, fontstyle, labelpad)
         character(len=*), intent(in) :: s
-        real(dp), intent(in), optional :: fontsize
+        real(dp), intent(in), optional :: fontsize, labelpad
         character(len=*), intent(in), optional :: fontweight, fontstyle
         call ensure_fig()
         ax(cur_i)%xlabel = s
+        if (present(labelpad)) ax(cur_i)%xlabel_pad = labelpad
         if (present(fontsize)) ax(cur_i)%xlabel_size = fontsize
         if (present(fontweight)) ax(cur_i)%xlabel_w = weight_from_str(fontweight)
         if (present(fontstyle)) ax(cur_i)%xlabel_sl = slant_from_str(fontstyle)
     end subroutine xlabel
 
-    subroutine ylabel(s, fontsize, fontweight, fontstyle)
+    subroutine ylabel(s, fontsize, fontweight, fontstyle, labelpad)
         character(len=*), intent(in) :: s
-        real(dp), intent(in), optional :: fontsize
+        real(dp), intent(in), optional :: fontsize, labelpad
         character(len=*), intent(in), optional :: fontweight, fontstyle
         call ensure_fig()
         ax(cur_i)%ylabel = s
+        if (present(labelpad)) ax(cur_i)%ylabel_pad = labelpad
         if (present(fontsize)) ax(cur_i)%ylabel_size = fontsize
         if (present(fontweight)) ax(cur_i)%ylabel_w = weight_from_str(fontweight)
         if (present(fontstyle)) ax(cur_i)%ylabel_sl = slant_from_str(fontstyle)
@@ -2613,6 +2737,42 @@ contains
     ! just outside the right-hand edge. When it is given, loc names which
     ! corner of the legend sits on the anchor rather than a position in the
     ! axes, exactly as matplotlib treats it.
+    ! One legend for the whole figure: an invisible axes covering the
+    ! canvas, carrying a copy of every labelled series in the figure. The
+    ! ordinary legend machinery then places it against the figure rather
+    ! than against any one panel, which is exactly what figlegend means.
+    subroutine figlegend(loc, fontsize, ncol, frameon, title)
+        character(len=*), intent(in), optional :: loc, title
+        real(dp), intent(in), optional :: fontsize
+        integer, intent(in), optional :: ncol
+        logical, intent(in), optional :: frameon
+        integer :: i, j, is, host, n_before
+        type(axes) :: h
+
+        call ensure_fig()
+        n_before = n_ax
+        h = add_axes([0.0_dp, 0.0_dp, 1.0_dp, 1.0_dp])
+        host = h%idx
+        ax(host)%patch_off = .true.
+        ax(host)%frame_off = .true.
+        do i = 1, n_before
+            do j = 1, ax(i)%n_series
+                if (len_trim(ax(i)%series(j)%label) == 0) cycle
+                call push_series(ax(host), is)
+                ax(host)%series(is) = ax(i)%series(j)
+                ! The copy is there for its label alone; nothing of it is
+                ! drawn, and an empty axes autoscales to the unit square.
+                if (allocated(ax(host)%series(is)%x)) &
+                    deallocate (ax(host)%series(is)%x)
+                if (allocated(ax(host)%series(is)%y)) &
+                    deallocate (ax(host)%series(is)%y)
+                ax(host)%series(is)%n = 0
+            end do
+        end do
+        call legend(loc, fontsize, ncol, frameon, title)
+        cur_i = 1
+    end subroutine figlegend
+
     subroutine legend(loc, fontsize, ncol, frameon, title, bbox_to_anchor)
         character(len=*), intent(in), optional :: loc, title
         real(dp), intent(in), optional :: fontsize, bbox_to_anchor(2)
@@ -2756,21 +2916,86 @@ contains
         end select
     end subroutine which_axis
 
-    subroutine xticks(vals, labels)
+    subroutine xticks(vals, labels, minor)
         real(dp), intent(in) :: vals(:)
         character(len=*), intent(in), optional :: labels(:)
+        logical, intent(in), optional :: minor
         call ensure_fig()
+        if (is_minor(minor)) then
+            call set_minor_ticks(vals, ax(cur_i)%n_xminor, ax(cur_i)%xminor_pos)
+            return
+        end if
         call set_ticks(vals, labels, ax(cur_i)%n_xticks, ax(cur_i)%xtick_pos, &
                        ax(cur_i)%xtick_labeled, ax(cur_i)%xtick_lab)
     end subroutine xticks
 
-    subroutine yticks(vals, labels)
+    subroutine yticks(vals, labels, minor)
         real(dp), intent(in) :: vals(:)
         character(len=*), intent(in), optional :: labels(:)
+        logical, intent(in), optional :: minor
         call ensure_fig()
+        if (is_minor(minor)) then
+            call set_minor_ticks(vals, ax(cur_i)%n_yminor, ax(cur_i)%yminor_pos)
+            return
+        end if
         call set_ticks(vals, labels, ax(cur_i)%n_yticks, ax(cur_i)%ytick_pos, &
                        ax(cur_i)%ytick_labeled, ax(cur_i)%ytick_lab)
     end subroutine yticks
+
+    pure function is_minor(minor) result(v)
+        logical, intent(in), optional :: minor
+        logical :: v
+        v = .false.
+        if (present(minor)) v = minor
+    end function is_minor
+
+    subroutine set_minor_ticks(vals, n, pos)
+        real(dp), intent(in) :: vals(:)
+        integer, intent(out) :: n
+        real(dp), intent(out) :: pos(MAX_TICKS)
+        integer :: i
+        n = min(size(vals), MAX_TICKS)
+        do i = 1, n
+            pos(i) = vals(i)
+        end do
+    end subroutine set_minor_ticks
+
+    ! matplotlib's locator_params: how many intervals the locator may use,
+    ! and whether to drop the tick at one end so that it does not collide
+    ! with a neighbouring subplot.
+    subroutine locator_params(axis, nbins, prune)
+        character(len=*), intent(in), optional :: axis, prune
+        integer, intent(in), optional :: nbins
+        logical :: dox, doy
+        call ensure_fig()
+        call which_axis(axis, dox, doy)
+        if (present(nbins)) then
+            if (dox) ax(cur_i)%xtick_nbins = nbins
+            if (doy) ax(cur_i)%ytick_nbins = nbins
+        end if
+        if (present(prune)) then
+            if (dox) ax(cur_i)%xtick_prune = prune
+            if (doy) ax(cur_i)%ytick_prune = prune
+        end if
+    end subroutine locator_params
+
+    ! Drop the tick at one or both ends of a located set.
+    pure subroutine prune_ticks(prune, t, n)
+        character(len=*), intent(in) :: prune
+        real(dp), intent(inout) :: t(:)
+        integer, intent(inout) :: n
+        if (n <= 0) return
+        select case (trim(prune))
+        case ("lower", "both")
+            t(1:n - 1) = t(2:n)
+            n = n - 1
+        end select
+        if (n <= 0) return
+        select case (trim(prune))
+        case ("upper", "both")
+            n = n - 1
+        end select
+    end subroutine prune_ticks
 
     subroutine set_ticks(vals, labels, n, pos, labeled, lab)
         real(dp), intent(in) :: vals(:)
@@ -2815,6 +3040,33 @@ contains
         ax(cur_i)%ymax_user = ymax
         ax(cur_i)%ylim_set = .true.
     end subroutine ylim
+
+    ! The limits actually in force, autoscaling included, so that a caller
+    ! can place something relative to what the axes ended up showing.
+    subroutine get_xlim(xmin, xmax)
+        real(dp), intent(out) :: xmin, xmax
+        real(dp) :: ylo, yhi
+        call ensure_fig()
+        call compute_limits(ax(cur_i), xmin, xmax, ylo, yhi)
+    end subroutine get_xlim
+
+    subroutine get_ylim(ymin, ymax)
+        real(dp), intent(out) :: ymin, ymax
+        real(dp) :: xlo, xhi
+        call ensure_fig()
+        call compute_limits(ax(cur_i), xlo, xhi, ymin, ymax)
+    end subroutine get_ylim
+
+    ! Turn an axis round, so that it counts down instead of up.
+    subroutine invert_xaxis()
+        call ensure_fig()
+        ax(cur_i)%x_inv = .not. ax(cur_i)%x_inv
+    end subroutine invert_xaxis
+
+    subroutine invert_yaxis()
+        call ensure_fig()
+        ax(cur_i)%y_inv = .not. ax(cur_i)%y_inv
+    end subroutine invert_yaxis
 
     ! matplotlib's artist.set_zorder, applied to the artist just drawn.
     ! Fortran has no artist objects to hang a keyword off, so rather than
@@ -2870,6 +3122,29 @@ contains
         end if
     end subroutine plot_num
 
+    ! plot(y): matplotlib numbers the points 0, 1, 2 ... when it is given
+    ! only one array, and so does this.
+    subroutine plot_y(y, fmt, label, lw, color, marker, linestyle, alpha, &
+                      markersize, markerfacecolor, markeredgecolor, &
+                      markeredgewidth, markevery, drawstyle, dashes)
+        real(dp), intent(in) :: y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        character(len=*), intent(in), optional :: markerfacecolor, markeredgecolor
+        character(len=*), intent(in), optional :: drawstyle
+        real(dp), intent(in), optional :: lw, alpha, markersize, markeredgewidth
+        real(dp), intent(in), optional :: dashes(:)
+        integer, intent(in), optional :: markevery
+        integer :: i
+        real(dp) :: idx(size(y))
+
+        do i = 1, size(y)
+            idx(i) = real(i - 1, dp)
+        end do
+        call plot_num(idx, y, fmt, label, lw, color, marker, linestyle, alpha, &
+                      markersize, markerfacecolor, markeredgecolor, &
+                      markeredgewidth, markevery, drawstyle, dashes)
+    end subroutine plot_y
+
     subroutine plot_cat(cats, y, fmt, label, lw, color, marker, linestyle, alpha)
         character(len=*), intent(in) :: cats(:)
         real(dp), intent(in) :: y(:)
@@ -2885,11 +3160,12 @@ contains
     ! s and c are the scalar forms; sizes and cvals are their per-point
     ! equivalents. Fortran cannot overload one dummy as scalar-or-array, so
     ! they are separate keywords rather than matplotlib's single s= and c=.
-    subroutine scatter(x, y, s, c, marker, label, alpha, sizes, cvals, cmap, vmin, vmax)
+    subroutine scatter(x, y, s, c, marker, label, alpha, sizes, cvals, cmap, vmin, vmax, &
+                       edgecolors, linewidths)
         real(dp), intent(in) :: x(:), y(:)
-        real(dp), intent(in), optional :: s, alpha, vmin, vmax
+        real(dp), intent(in), optional :: s, alpha, vmin, vmax, linewidths
         real(dp), intent(in), optional :: sizes(:), cvals(:)
-        character(len=*), intent(in), optional :: c, marker, label, cmap
+        character(len=*), intent(in), optional :: c, marker, label, cmap, edgecolors
         integer :: is, n, k, id
         real(dp) :: lo, hi
 
@@ -2904,6 +3180,12 @@ contains
         is = ax(cur_i)%n_series
         if (is < 1) return
         n = ax(cur_i)%series(is)%n
+
+        ! matplotlib draws scatter markers with no edge at all by default,
+        ! so an edge only appears once one is asked for.
+        if (present(edgecolors)) &
+            ax(cur_i)%series(is)%mec = resolve_color(edgecolors)
+        if (present(linewidths)) ax(cur_i)%series(is)%mew = max(linewidths, 0.0_dp)
 
         ! matplotlib's s is an area in points squared.
         if (present(s)) ax(cur_i)%series(is)%markersize = sqrt(max(s, 0.0_dp))
@@ -3171,11 +3453,12 @@ contains
     ! Draw z as an image. z is indexed (row, column) and, with the default
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
     ! a descending y axis exactly as matplotlib does.
-    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
-                      interpolation, boundaries)
+    subroutine imshow_z(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
+                        interpolation, boundaries, vcenter, gamma, linthresh)
         real(dp), intent(in) :: z(:, :)
         character(len=*), intent(in), optional :: cmap, origin, aspect, norm, interpolation
         real(dp), intent(in), optional :: vmin, vmax, extent(4), boundaries(:)
+        real(dp), intent(in), optional :: vcenter, gamma, linthresh
         integer :: nr, nc
         real(dp) :: lo, hi
 
@@ -3197,8 +3480,9 @@ contains
         if (present(interpolation)) &
             ax(cur_i)%img_bilinear = trim(interpolation) == "bilinear"
 
-        ax(cur_i)%img_log_norm = .false.
-        if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
+        ax(cur_i)%img_norm = NORM_LINEAR
+        if (present(norm)) ax(cur_i)%img_norm = norm_from_str(norm)
+        call norm_params(vcenter, gamma, linthresh)
 
         if (allocated(ax(cur_i)%img_bounds)) deallocate (ax(cur_i)%img_bounds)
         if (present(boundaries)) then
@@ -3208,15 +3492,19 @@ contains
             end if
         end if
 
-        if (ax(cur_i)%img_log_norm) then
+        if (ax(cur_i)%img_norm == NORM_LOG) then
             ! A log scale cannot start at zero, so the smallest positive
             ! sample sets the bottom of the range.
             lo = huge(1.0_dp)
             if (any(z > 0.0_dp)) lo = minval(z, mask=(z > 0.0_dp))
             hi = maxval(z)
+        else if (any(z == z)) then
+            ! Values that are not there at all say nothing about the range.
+            lo = minval(z, mask=(z == z))
+            hi = maxval(z, mask=(z == z))
         else
-            lo = minval(z)
-            hi = maxval(z)
+            lo = 0.0_dp
+            hi = 1.0_dp
         end if
         if (present(vmin)) lo = vmin
         if (present(vmax)) hi = vmax
@@ -3245,7 +3533,92 @@ contains
         if (present(aspect)) then
             if (trim(aspect) == "auto") ax(cur_i)%aspect = 0.0_dp
         end if
-    end subroutine imshow
+    end subroutine imshow_z
+
+    ! An image whose colours are given directly: z is (row, column, channel)
+    ! with three channels for RGB or four for RGBA, each in 0..1 as
+    ! matplotlib reads a float array. There is nothing here for a colorbar
+    ! to describe, so none is offered.
+    subroutine imshow_rgb(z, extent, origin, aspect)
+        real(dp), intent(in) :: z(:, :, :)
+        character(len=*), intent(in), optional :: origin, aspect
+        real(dp), intent(in), optional :: extent(4)
+        integer :: nr, nc, nch
+
+        call ensure_fig()
+        nr = size(z, 1)
+        nc = size(z, 2)
+        nch = size(z, 3)
+        if (nr < 1 .or. nc < 1 .or. nch < 3) return
+
+        if (allocated(ax(cur_i)%img)) deallocate (ax(cur_i)%img)
+        allocate (ax(cur_i)%img(nr, nc))
+        ax(cur_i)%img = 0.0_dp
+        if (allocated(ax(cur_i)%img_rgb)) deallocate (ax(cur_i)%img_rgb)
+        allocate (ax(cur_i)%img_rgb(nr, nc, nch))
+        ax(cur_i)%img_rgb = min(1.0_dp, max(0.0_dp, z))
+        ax(cur_i)%has_img = .true.
+        ax(cur_i)%has_rgb = .true.
+        ax(cur_i)%has_cmap_src = .false.
+        ax(cur_i)%has_mesh = .false.
+        ax(cur_i)%img_bilinear = .false.
+        ax(cur_i)%img_norm = NORM_LINEAR
+
+        ax(cur_i)%img_origin_upper = .true.
+        if (present(origin)) ax(cur_i)%img_origin_upper = trim(origin) /= "lower"
+        if (present(extent)) then
+            ax(cur_i)%img_ext = extent
+        else
+            ax(cur_i)%img_ext = [-0.5_dp, real(nc, dp) - 0.5_dp, &
+                                 -0.5_dp, real(nr, dp) - 0.5_dp]
+        end if
+        ax(cur_i)%aspect = 1.0_dp
+        if (present(aspect)) then
+            if (trim(aspect) == "auto") ax(cur_i)%aspect = 0.0_dp
+        end if
+    end subroutine imshow_rgb
+
+    ! The colour of one image sample as a hex string, for the paths that
+    ! draw the image as rectangles rather than as a raster.
+    pure function img_hex(a, i, j) result(hex)
+        type(axes_t), intent(in) :: a
+        integer, intent(in) :: i, j
+        character(len=7) :: hex
+        character(len=16), parameter :: D = "0123456789abcdef"
+        integer :: c(4), k
+        if (.not. a%has_rgb) then
+            hex = img_color(a, a%img(i, j))
+            return
+        end if
+        call img_rgba(a, i, j, c)
+        hex = "#000000"
+        do k = 1, 3
+            hex(2*k:2*k) = D(c(k)/16 + 1:c(k)/16 + 1)
+            hex(2*k + 1:2*k + 1) = D(mod(c(k), 16) + 1:mod(c(k), 16) + 1)
+        end do
+    end function img_hex
+
+    ! The colour of one image sample, ready for the raster.
+    pure subroutine img_rgba(a, i, j, c)
+        type(axes_t), intent(in) :: a
+        integer, intent(in) :: i, j
+        integer, intent(out) :: c(4)
+        c(4) = 255
+        if (.not. a%has_rgb) then
+            if (img_bad_hidden(a, a%img(i, j))) then
+                ! matplotlib leaves missing samples fully transparent
+                ! unless a colour was set aside for them.
+                c = [255, 255, 255, 0]
+                return
+            end if
+        end if
+        if (a%has_rgb) then
+            c(1:3) = nint(255.0_dp*a%img_rgb(i, j, 1:3))
+            if (size(a%img_rgb, 3) >= 4) c(4) = nint(255.0_dp*a%img_rgb(i, j, 4))
+        else
+            c(1:3) = hex_rgb(img_color(a, a%img(i, j)))
+        end if
+    end subroutine img_rgba
 
     ! matshow: an image of a matrix. The first row is at the top, the
     ! cells are square and the column numbers run along the top, which is
@@ -3905,10 +4278,11 @@ contains
     ! y are the edges, one more than the samples along that direction; if
     ! they are the same length as the samples they are taken as centres,
     ! which is matplotlib's shading="nearest".
-    subroutine pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+    subroutine pcolormesh(x, y, c, cmap, vmin, vmax, norm, vcenter, gamma, &
+                          linthresh)
         real(dp), intent(in) :: x(:), y(:), c(:, :)
         character(len=*), intent(in), optional :: cmap, norm
-        real(dp), intent(in), optional :: vmin, vmax
+        real(dp), intent(in), optional :: vmin, vmax, vcenter, gamma, linthresh
         integer :: nr, nc
         real(dp) :: lo, hi
 
@@ -3933,10 +4307,11 @@ contains
 
         ax(cur_i)%img_cmap = CMAP_VIRIDIS
         if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
-        ax(cur_i)%img_log_norm = .false.
-        if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
+        ax(cur_i)%img_norm = NORM_LINEAR
+        if (present(norm)) ax(cur_i)%img_norm = norm_from_str(norm)
+        call norm_params(vcenter, gamma, linthresh)
 
-        if (ax(cur_i)%img_log_norm) then
+        if (ax(cur_i)%img_norm == NORM_LOG) then
             lo = huge(1.0_dp)
             if (any(c > 0.0_dp)) lo = minval(c, mask=(c > 0.0_dp))
             hi = maxval(c)
@@ -4900,18 +5275,47 @@ contains
     ! bottom stacks this series on top of another; colors gives every bar
     ! its own color, as matplotlib's list-valued color does.
     subroutine bar_num(x, height, width, color, label, alpha, bottom, colors, &
-                       edgecolor, linewidth, hatch)
+                       edgecolor, linewidth, hatch, yerr, align, tick_label, &
+                       ecolor, capsize)
         real(dp), intent(in) :: x(:), height(:)
         real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        real(dp), intent(in), optional :: yerr(:), capsize
         character(len=*), intent(in), optional :: color, label, edgecolor, hatch
-        character(len=*), intent(in), optional :: colors(:)
-        integer :: is
+        character(len=*), intent(in), optional :: colors(:), align, ecolor
+        character(len=*), intent(in), optional :: tick_label(:)
+        real(dp), allocatable :: pos(:)
+        integer :: is, n
 
         call ensure_fig()
-        is = new_shape_series(SERIES_BAR, x, height, color, label, alpha)
+        n = min(size(x), size(height))
+        allocate (pos(n))
+        pos = x(1:n)
+        ! align="edge" measures from the left edge of the bar rather than
+        ! from its middle, so the positions move by half a width.
+        if (present(align)) then
+            if (align == "edge") then
+                if (present(width)) then
+                    pos = pos + 0.5_dp*width
+                else
+                    pos = pos + 0.4_dp
+                end if
+            end if
+        end if
+        is = new_shape_series(SERIES_BAR, pos, height, color, label, alpha)
         if (is < 1) return
         if (present(width)) ax(cur_i)%series(is)%width = width
         call bar_options(is, bottom, colors, edgecolor, linewidth, hatch)
+        if (present(yerr)) then
+            call set_arm(ax(cur_i)%series(is)%eylo, n, yerr)
+            call set_arm(ax(cur_i)%series(is)%eyhi, n, yerr)
+            ! matplotlib draws bar error bars in black, with no caps unless
+            ! a capsize is asked for.
+            ax(cur_i)%series(is)%ecolor = "#000000"
+            ax(cur_i)%series(is)%ecap = 0.0_dp
+            if (present(ecolor)) ax(cur_i)%series(is)%ecolor = resolve_color(ecolor)
+            if (present(capsize)) ax(cur_i)%series(is)%ecap = capsize
+        end if
+        if (present(tick_label)) call xticks(pos, tick_label)
     end subroutine bar_num
 
     subroutine bar_cat(cats, height, width, color, label, alpha, bottom, &
@@ -4997,17 +5401,19 @@ contains
 
     ! Histogram of x using `bins` equal-width bins over the data range.
     subroutine hist(x, bins, color, label, alpha, bin_edges, density, &
-                    cumulative, histtype, weights, stacked)
+                    cumulative, histtype, weights, stacked, orientation, &
+                    log, rwidth)
         real(dp), intent(in) :: x(:)
         integer, intent(in), optional :: bins
         character(len=*), intent(in), optional :: color, label, histtype
-        real(dp), intent(in), optional :: alpha, bin_edges(:), weights(:)
-        logical, intent(in), optional :: density, cumulative, stacked
+        character(len=*), intent(in), optional :: orientation
+        real(dp), intent(in), optional :: alpha, bin_edges(:), weights(:), rwidth
+        logical, intent(in), optional :: density, cumulative, stacked, log
         integer :: nb, i, k, n, is
         real(dp) :: lo, hi, w, tot
         real(dp), allocatable :: edges(:), centers(:), counts(:), widths(:)
         real(dp), allocatable :: sx(:), sy(:), base(:), sb(:)
-        logical :: norm, cum, stk
+        logical :: norm, cum, stk, horiz
         character(len=16) :: ht
 
         n = size(x)
@@ -5020,6 +5426,8 @@ contains
         if (present(stacked)) stk = stacked
         ht = "bar"
         if (present(histtype)) ht = histtype
+        horiz = .false.
+        if (present(orientation)) horiz = orientation == "horizontal"
 
         if (present(bin_edges)) then
             nb = size(bin_edges) - 1
@@ -5071,7 +5479,22 @@ contains
             end do
         end if
 
+        ! rwidth leaves a gap between the bars by shrinking each about its
+        ! own centre; the bins themselves are untouched.
+        if (present(rwidth)) widths = widths*rwidth
+
         call ensure_fig()
+        ! log puts the count axis on a log scale, which is the y axis for an
+        ! upright histogram and the x axis for one lying on its side.
+        if (present(log)) then
+            if (log) then
+                if (horiz) then
+                    call set_xscale("log")
+                else
+                    call set_yscale("log")
+                end if
+            end if
+        end if
         ! A stacked histogram starts where the last one in these axes ended.
         allocate (base(nb))
         base = 0.0_dp
@@ -5106,16 +5529,30 @@ contains
             sy(2*nb + 2) = base(nb)
             sb(2*nb + 2) = base(nb)
             if (trim(ht) == "stepfilled") then
-                call fill_between(sx, sy, sb, color, label, alpha)
+                if (horiz) then
+                    call fill_betweenx(sx, sy, sb, color, label, alpha)
+                else
+                    call fill_between(sx, sy, sb, color, label, alpha)
+                end if
+            else if (horiz) then
+                is = new_shape_series(SERIES_LINE, sy, sx, color, label, alpha)
             else
                 is = new_shape_series(SERIES_LINE, sx, sy, color, label, alpha)
             end if
         case default
-            is = new_shape_series(SERIES_BAR, centers, counts, color, label, alpha)
+            ! Horizontal bars hold the bin position in x and the count in y
+            ! exactly as barh does, so nothing below has to know the
+            ! difference.
+            is = new_shape_series(merge(SERIES_BARH, SERIES_BAR, horiz), &
+                                  centers, counts, color, label, alpha)
             if (is >= 1) then
                 ! Histogram bars touch, so a contrasting edge would show up
-                ! as a seam between them.
+                ! as a seam between them. Bars narrowed by rwidth stand
+                ! apart, and then there is no seam to hide.
                 ax(cur_i)%series(is)%edgecolor = ax(cur_i)%series(is)%color
+                if (present(rwidth)) then
+                    if (rwidth < 1.0_dp) ax(cur_i)%series(is)%edgewidth = 0.0_dp
+                end if
                 ax(cur_i)%series(is)%width = widths(1)
                 allocate (ax(cur_i)%series(is)%bwidth(nb))
                 ax(cur_i)%series(is)%bwidth = widths
@@ -5141,38 +5578,44 @@ contains
     ! Shade between y1 and y2 (default 0).
     ! where selects the x range to shade. matplotlib fills each run of true
     ! values as its own polygon, and so does this.
-    subroutine fill_between(x, y1, y2, color, label, alpha, where, hatch, edgecolor)
+    subroutine fill_between(x, y1, y2, color, label, alpha, where, hatch, edgecolor, &
+                            interpolate)
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
         character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
-        logical, intent(in), optional :: where(:)
-        call fill_core(.false., x, y1, y2, color, label, alpha, where, hatch, edgecolor)
+        logical, intent(in), optional :: where(:), interpolate
+        call fill_core(.false., x, y1, y2, color, label, alpha, where, hatch, edgecolor, &
+                       interpolate)
     end subroutine fill_between
 
     ! The same band, but between two curves in x, run along y. The stored
     ! series carries the independent coordinate in x and the two edges in
     ! y and y2 exactly as fill_between does; only `horiz` says which way
     ! round the limits and the polygon are read.
-    subroutine fill_betweenx(y, x1, x2, color, label, alpha, where, hatch, edgecolor)
+    subroutine fill_betweenx(y, x1, x2, color, label, alpha, where, hatch, edgecolor, &
+                             interpolate)
         real(dp), intent(in) :: y(:), x1(:)
         real(dp), intent(in), optional :: x2(:)
         character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
-        logical, intent(in), optional :: where(:)
-        call fill_core(.true., y, x1, x2, color, label, alpha, where, hatch, edgecolor)
+        logical, intent(in), optional :: where(:), interpolate
+        call fill_core(.true., y, x1, x2, color, label, alpha, where, hatch, edgecolor, &
+                       interpolate)
     end subroutine fill_betweenx
 
-    subroutine fill_core(horiz, x, y1, y2, color, label, alpha, where, hatch, edgecolor)
+    subroutine fill_core(horiz, x, y1, y2, color, label, alpha, where, hatch, edgecolor, &
+                         interpolate)
         logical, intent(in) :: horiz
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
         character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
-        logical, intent(in), optional :: where(:)
-        integer :: n, i, j, k
+        logical, intent(in), optional :: where(:), interpolate
+        integer :: n, i, j, k, m
         character(len=7) :: col
-        logical :: first
+        logical :: first, interp
+        real(dp), allocatable :: xr(:), ar(:), br(:)
 
         call ensure_fig()
         n = min(size(x), size(y1))
@@ -5181,6 +5624,9 @@ contains
             call add_fill(horiz, x(1:n), y1(1:n), y2, color, label, alpha, hatch, edgecolor)
             return
         end if
+
+        interp = .false.
+        if (present(interpolate)) interp = interpolate .and. present(y2)
 
         ! Every run after the first reuses the color of the first, and only
         ! the first carries the label, so the group is one legend entry.
@@ -5197,10 +5643,25 @@ contains
                 if (.not. where(j + 1)) exit
                 j = j + 1
             end do
-            if (first) then
-                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), color, label, alpha, hatch, edgecolor)
+            if (allocated(xr)) deallocate (xr)
+            if (allocated(ar)) deallocate (ar)
+            if (allocated(br)) deallocate (br)
+            if (interp) then
+                call interp_run(x, y1, y2, i, j, n, xr, ar, br, m)
             else
-                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), col, alpha=alpha, &
+                m = j - i + 1
+                allocate (xr(m), ar(m), br(m))
+                xr = x(i:j)
+                ar = y1(i:j)
+                br = 0.0_dp
+                if (present(y2)) then
+                    if (size(y2) >= j) br = y2(i:j)
+                end if
+            end if
+            if (first) then
+                call add_fill(horiz, xr(1:m), ar(1:m), br(1:m), color, label, alpha, hatch, edgecolor)
+            else
+                call add_fill(horiz, xr(1:m), ar(1:m), br(1:m), col, alpha=alpha, &
                               hatch=hatch, edgecolor=edgecolor)
             end if
             k = ax(cur_i)%n_series
@@ -5213,6 +5674,74 @@ contains
             i = j + 1
         end do
     end subroutine fill_core
+
+    ! matplotlib's interpolate=: the shaded run is carried out to the point
+    ! where the two curves actually cross, instead of stopping at the last
+    ! sample on the near side of the crossing. The crossing is found by
+    ! linear interpolation of y1 - y2 across the straddling interval, which
+    ! is what matplotlib does too.
+    subroutine interp_run(x, y1, y2, i, j, n, xr, ar, br, m)
+        real(dp), intent(in) :: x(:), y1(:), y2(:)
+        integer, intent(in) :: i, j, n
+        real(dp), allocatable, intent(out) :: xr(:), ar(:), br(:)
+        integer, intent(out) :: m
+        integer :: k
+        real(dp) :: t, xc, yc
+        logical :: pre, post
+
+        pre = i > 1
+        post = j < n
+        m = (j - i + 1)
+        allocate (xr(m + 2), ar(m + 2), br(m + 2))
+        m = 0
+        if (pre) then
+            call crossing(x, y1, y2, i - 1, i, t, xc, yc)
+            if (t >= 0.0_dp) then
+                m = 1
+                xr(1) = xc
+                ar(1) = yc
+                br(1) = yc
+            end if
+        end if
+        do k = i, j
+            m = m + 1
+            xr(m) = x(k)
+            ar(m) = y1(k)
+            br(m) = y2(k)
+        end do
+        if (post) then
+            call crossing(x, y1, y2, j, j + 1, t, xc, yc)
+            if (t >= 0.0_dp) then
+                m = m + 1
+                xr(m) = xc
+                ar(m) = yc
+                br(m) = yc
+            end if
+        end if
+    end subroutine interp_run
+
+    ! Where y1 - y2 changes sign between samples p and q. t < 0 says the
+    ! two never meet there and the caller should leave the run as it is.
+    subroutine crossing(x, y1, y2, p, q, t, xc, yc)
+        real(dp), intent(in) :: x(:), y1(:), y2(:)
+        integer, intent(in) :: p, q
+        real(dp), intent(out) :: t, xc, yc
+        real(dp) :: d0, d1
+
+        d0 = y1(p) - y2(p)
+        d1 = y1(q) - y2(q)
+        t = -1.0_dp
+        xc = 0.0_dp
+        yc = 0.0_dp
+        if (abs(d0 - d1) <= 0.0_dp) return
+        t = d0 / (d0 - d1)
+        if (t < 0.0_dp .or. t > 1.0_dp) then
+            t = -1.0_dp
+            return
+        end if
+        xc = x(p) + t * (x(q) - x(p))
+        yc = y1(p) + t * (y1(q) - y1(p))
+    end subroutine crossing
 
     ! matplotlib's stackplot: every row of y is one layer, drawn as a band
     ! from the sum of the layers below it to that sum plus its own values.
@@ -5287,18 +5816,20 @@ contains
     ! yerr/xerr are symmetric; the _lo/_hi pairs give an asymmetric error,
     ! matplotlib's 2xN array written as two arrays.
     subroutine errorbar(x, y, yerr, fmt, color, label, capsize, marker, &
-                        xerr, yerr_lo, yerr_hi, xerr_lo, xerr_hi)
+                        xerr, yerr_lo, yerr_hi, xerr_lo, xerr_hi, &
+                        ecolor, elinewidth, lw, alpha)
         real(dp), intent(in) :: x(:), y(:)
         real(dp), intent(in), optional :: yerr(:), xerr(:)
         real(dp), intent(in), optional :: yerr_lo(:), yerr_hi(:)
         real(dp), intent(in), optional :: xerr_lo(:), xerr_hi(:)
         character(len=*), intent(in), optional :: fmt, color, label, marker
-        real(dp), intent(in), optional :: capsize
+        character(len=*), intent(in), optional :: ecolor
+        real(dp), intent(in), optional :: capsize, elinewidth, lw, alpha
         integer :: is, n, mk, ls
         character(len=7) :: col
 
         call ensure_fig()
-        is = new_shape_series(SERIES_ERRORBAR, x, y, color, label)
+        is = new_shape_series(SERIES_ERRORBAR, x, y, color, label, alpha)
         if (is < 1) return
         n = ax(cur_i)%series(is)%n
         call set_arm(ax(cur_i)%series(is)%eylo, n, yerr, yerr_lo)
@@ -5318,6 +5849,9 @@ contains
         ! width doubles as the cap half-width, in points.
         ax(cur_i)%series(is)%width = 3.0_dp
         if (present(capsize)) ax(cur_i)%series(is)%width = capsize
+        if (present(ecolor)) ax(cur_i)%series(is)%ecolor = resolve_color(ecolor)
+        if (present(elinewidth)) ax(cur_i)%series(is)%elw = elinewidth
+        if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
     end subroutine errorbar
 
     ! One arm of the error bars: the asymmetric value if it was given, else
@@ -5503,15 +6037,16 @@ contains
     ! Text at a point in data coordinates.
     subroutine text(x, y, s, color, fontsize, ha, fontweight, fontstyle, &
                     va, rotation, bbox_facecolor, bbox_edgecolor, bbox_alpha, &
-                    bbox_pad)
+                    bbox_pad, transform)
         real(dp), intent(in) :: x, y
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
+        character(len=*), intent(in), optional :: transform
         real(dp), intent(in), optional :: fontsize, rotation, bbox_alpha, bbox_pad
         call add_text(x, y, s, color, fontsize, ha, .false., 0.0_dp, 0.0_dp, &
                       fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                      bbox_edgecolor, bbox_alpha, bbox_pad)
+                      bbox_edgecolor, bbox_alpha, bbox_pad, transform)
     end subroutine text
 
     ! The same, but placed in figure coordinates, so that a note can sit
@@ -5533,35 +6068,43 @@ contains
     ! Text at (xtext, ytext) with an arrow pointing at (x, y).
     subroutine annotate(s, x, y, xtext, ytext, color, fontsize, ha, &
                         fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                        bbox_edgecolor, bbox_alpha, bbox_pad)
+                        bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
+                        arrowstyle, arrowcolor, arrowlw, shrink)
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: x, y
         real(dp), intent(in), optional :: xtext, ytext, fontsize
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
+        character(len=*), intent(in), optional :: transform, arrowstyle, arrowcolor
         real(dp), intent(in), optional :: rotation, bbox_alpha, bbox_pad
+        real(dp), intent(in), optional :: arrowlw, shrink
         real(dp) :: xt, yt
         logical :: arrow
 
         xt = x
         yt = y
-        arrow = present(xtext) .or. present(ytext)
+        ! Like matplotlib, the connector appears only when it is asked for.
+        arrow = present(arrowstyle)
         if (present(xtext)) xt = xtext
         if (present(ytext)) yt = ytext
         ! The label sits at the text position; the arrow runs back to (x, y).
         call add_text(xt, yt, s, color, fontsize, ha, arrow, x, y, &
                       fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                      bbox_edgecolor, bbox_alpha, bbox_pad)
+                      bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
+                      arrowstyle, arrowcolor, arrowlw, shrink)
     end subroutine annotate
 
     subroutine add_text(x, y, s, color, fontsize, ha, arrow, xarr, yarr, &
                         fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                        bbox_edgecolor, bbox_alpha, bbox_pad)
+                        bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
+                        arrowstyle, arrowcolor, arrowlw, shrink)
         real(dp), intent(in) :: x, y, xarr, yarr
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
+        character(len=*), intent(in), optional :: transform, arrowstyle, arrowcolor
         real(dp), intent(in), optional :: fontsize, rotation, bbox_alpha, bbox_pad
+        real(dp), intent(in), optional :: arrowlw, shrink
         logical, intent(in) :: arrow
         integer :: it
         character(len=7) :: col
@@ -5597,6 +6140,18 @@ contains
         if (present(bbox_pad)) ax(cur_i)%texts(it)%box_pad = bbox_pad
         col = resolve_color(color)
         if (len_trim(col) > 0) ax(cur_i)%texts(it)%color = col
+        if (present(arrowstyle)) &
+            ax(cur_i)%texts(it)%arrow_head = index(arrowstyle, ">") > 0
+        if (present(arrowcolor)) &
+            ax(cur_i)%texts(it)%arrow_color = resolve_color(arrowcolor)
+        if (present(arrowlw)) ax(cur_i)%texts(it)%arrow_lw = arrowlw
+        if (present(shrink)) ax(cur_i)%texts(it)%arrow_shrink = shrink
+        if (present(transform)) then
+            select case (transform)
+            case ("axes"); ax(cur_i)%texts(it)%in_axes = .true.
+            case ("figure"); ax(cur_i)%texts(it)%in_fig = .true.
+            end select
+        end if
     end subroutine add_text
 
     subroutine add_series(ia, x, y, fmt, label, lw, color, marker, linestyle, alpha)
@@ -5842,6 +6397,7 @@ contains
                         xlo = xv - arm(a%series(i)%exlo, j)
                         xhi = xv + arm(a%series(i)%exhi, j)
                     end if
+                    if (a%xsc%kind == SCALE_LOG .and. xlo <= 0.0_dp) xlo = xhi
                     if (.not. (a%xsc%kind == SCALE_LOG .and. xlo <= 0.0_dp)) then
                         anyx = .true.
                         xmin = min(xmin, xlo)
@@ -5859,6 +6415,10 @@ contains
                         ! series they were stacked on.
                         ylo = min(bar_base(a%series(i), j), bar_base(a%series(i), j) + yv)
                         yhi = max(bar_base(a%series(i), j), bar_base(a%series(i), j) + yv)
+                        ylo = min(ylo, bar_base(a%series(i), j) + yv &
+                                  - arm(a%series(i)%eylo, j))
+                        yhi = max(yhi, bar_base(a%series(i), j) + yv &
+                                  + arm(a%series(i)%eyhi, j))
                     case (SERIES_FILL)
                         ylo = min(yv, a%series(i)%y2(j))
                         yhi = max(yv, a%series(i)%y2(j))
@@ -5866,6 +6426,10 @@ contains
                         ylo = yv - arm(a%series(i)%eylo, j)
                         yhi = yv + arm(a%series(i)%eyhi, j)
                     end select
+                    ! On a log axis a bar reaching down to zero has no
+                    ! bottom to speak of, so only its top counts towards the
+                    ! limits.
+                    if (a%ysc%kind == SCALE_LOG .and. ylo <= 0.0_dp) ylo = yhi
                     if (.not. (a%ysc%kind == SCALE_LOG .and. yhi <= 0.0_dp)) then
                         anyy = .true.
                         ymin = min(ymin, ylo)
@@ -5995,6 +6559,11 @@ contains
         ! up and a feature at one x is at the same place in all of them.
         if (a%link_x > 0) call union_limits(a%link_x, .true., xmin, xmax)
         if (a%link_y > 0) call union_limits(a%link_y, .false., ymin, ymax)
+        ! An inverted axis is simply one whose limits run the other way; the
+        ! data-to-device mapping and the tick locators already cope, since
+        ! origin="upper" images have always produced a descending y.
+        if (a%x_inv) call swap(xmin, xmax)
+        if (a%y_inv) call swap(ymin, ymax)
     end subroutine compute_limits
 
     ! The limits of one axis across a share group. Each member is measured
@@ -6265,9 +6834,9 @@ contains
         select case (mk)
         case (MARKER_CIRCLE, MARKER_POINT)
             if (mk == MARKER_POINT) then
-                r = 0.5_dp*ms*0.35_dp
+                r = 0.5_dp*ms*0.5_dp
             else
-                r = 0.5_dp*ms*0.75_dp
+                r = 0.5_dp*ms
                 do_stroke = .true.
             end if
             ! Four cubics with the standard offset match a circle to about a
@@ -6291,7 +6860,7 @@ contains
                        VERB_CUBIC, VERB_CLOSE]
             nv = 6
         case (MARKER_X)
-            r = 0.5_dp*ms*0.7_dp
+            r = 0.5_dp*ms
             mx(1:4) = [-r, r, -r, r]
             my(1:4) = [-r, r, r, -r]
             mv(1:4) = [VERB_MOVE, VERB_LINE, VERB_MOVE, VERB_LINE]
@@ -6301,7 +6870,7 @@ contains
             do_stroke = .true.
             lw = 1.5_dp
         case (MARKER_PLUS)
-            r = 0.5_dp*ms*0.75_dp
+            r = 0.5_dp*ms
             mx(1:4) = [-r, r, 0.0_dp, 0.0_dp]
             my(1:4) = [0.0_dp, 0.0_dp, -r, r]
             mv(1:4) = [VERB_MOVE, VERB_LINE, VERB_MOVE, VERB_LINE]
@@ -6311,46 +6880,48 @@ contains
             do_stroke = .true.
             lw = 1.5_dp
         case (MARKER_SQUARE)
-            r = 0.5_dp*ms*0.75_dp
+            r = 0.5_dp*ms
             mx(1:4) = [-r, r, r, -r]
             my(1:4) = [-r, -r, r, r]
             np = 4
         case (MARKER_DIAMOND)
-            r = 0.5_dp*ms*0.75_dp
+            ! The diamond is the unit square turned on its corner, so it
+            ! reaches a half diagonal rather than a half side.
+            r = 0.5_dp*ms*sqrt(2.0_dp)
             mx(1:4) = [0.0_dp, r, 0.0_dp, -r]
             my(1:4) = [-r, 0.0_dp, r, 0.0_dp]
             np = 4
         case (MARKER_TRI_UP)
-            r = 0.5_dp*ms*0.85_dp
+            r = 0.5_dp*ms
             mx(1:3) = [0.0_dp, r, -r]
             my(1:3) = [-r, r, r]
             np = 3
         case (MARKER_TRI_DOWN)
-            r = 0.5_dp*ms*0.85_dp
+            r = 0.5_dp*ms
             mx(1:3) = [0.0_dp, r, -r]
             my(1:3) = [r, -r, -r]
             np = 3
         case (MARKER_TRI_LEFT)
-            r = 0.5_dp*ms*0.85_dp
+            r = 0.5_dp*ms
             mx(1:3) = [-r, r, r]
             my(1:3) = [0.0_dp, -r, r]
             np = 3
         case (MARKER_TRI_RIGHT)
-            r = 0.5_dp*ms*0.85_dp
+            r = 0.5_dp*ms
             mx(1:3) = [r, -r, -r]
             my(1:3) = [0.0_dp, -r, r]
             np = 3
         case (MARKER_STAR)
             ! Five-pointed star: alternate outer and inner vertices.
-            r = 0.5_dp*ms*0.95_dp
+            r = 0.5_dp*ms
             do i = 1, 10
                 ang = -0.5_dp*PI + real(i - 1, dp)*PI/5.0_dp
                 if (mod(i, 2) == 1) then
                     mx(i) = r*cos(ang)
                     my(i) = r*sin(ang)
                 else
-                    mx(i) = 0.4_dp*r*cos(ang)
-                    my(i) = 0.4_dp*r*sin(ang)
+                    mx(i) = 0.5_dp*r*cos(ang)
+                    my(i) = 0.5_dp*r*sin(ang)
                 end if
             end do
             np = 10
@@ -6541,6 +7112,43 @@ contains
             i0 = i + 1
         end do
     end subroutine line_bounds
+
+    ! The connector of an annotation: a shaft from the text to the point it
+    ! talks about, pulled back at both ends, and optionally a two-stroke head
+    ! at the point. Head geometry follows matplotlib's "->" style: it reaches
+    ! 0.4 em back along the shaft and 0.2 em out to each side.
+    subroutine append_arrow(b, t, px, py, tx, ty)
+        class(renderer_t), intent(inout) :: b
+        type(text_t), intent(in) :: t
+        real(dp), intent(in) :: px, py, tx, ty
+        real(dp) :: dx, dy, d, ux, uy, x0, y0, x1, y1, hl, hw
+        real(dp) :: bx(3), by(3)
+
+        dx = tx - px
+        dy = ty - py
+        d = sqrt(dx*dx + dy*dy)
+        if (d <= 0.0_dp) return
+        ux = dx/d
+        uy = dy/d
+        if (d <= 2.0_dp*t%arrow_shrink) return
+        x0 = px + ux*t%arrow_shrink
+        y0 = py + uy*t%arrow_shrink
+        x1 = tx - ux*t%arrow_shrink
+        y1 = ty - uy*t%arrow_shrink
+        call append_line(b, x0, y0, x1, y1, trim(t%arrow_color), t%arrow_lw, &
+                         LINE_SOLID, 1.0_dp)
+        if (.not. t%arrow_head) return
+        hl = 0.4_dp*t%fontsize
+        hw = 0.2_dp*t%fontsize
+        bx(1) = x1 - hl*ux + hw*uy
+        by(1) = y1 - hl*uy - hw*ux
+        bx(2) = x1
+        by(2) = y1
+        bx(3) = x1 - hl*ux - hw*uy
+        by(3) = y1 - hl*uy + hw*ux
+        call append_stroke_path(b, bx, by, 3, trim(t%arrow_color), t%arrow_lw, &
+                                1.0_dp)
+    end subroutine append_arrow
 
     ! One annotation: its box, then its lines. A string is broken at every
     ! newline and the lines are stacked at matplotlib's spacing of 1.2 times
@@ -6835,14 +7443,43 @@ contains
             yb = map_y(bar_base(s, j) + s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         end if
 
-        call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
-                         abs(yb - ya), point_color(s, j), s%alpha, &
-                         trim(s%edgecolor), s%edgewidth)
+        if (s%edgewidth > 0.0_dp) then
+            call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
+                             abs(yb - ya), point_color(s, j), s%alpha, &
+                             trim(s%edgecolor), s%edgewidth)
+        else
+            call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
+                             abs(yb - ya), point_color(s, j), s%alpha)
+        end if
         if (len_trim(s%hatch) > 0) &
             call append_hatch(b, [xa, xb, xb, xa], [ya, ya, yb, yb], 4, &
                               trim(s%hatch), trim(s%hcolor), s%alpha)
         if (s%bar_labels) call append_bar_label(b, s, j, xa, xb, ya, yb)
+        if (allocated(s%eyhi)) call append_bar_err(b, s, j, ymin, ymax, ax_b, &
+                                                   ax_h, ysc, 0.5_dp*(xa + xb))
     end subroutine append_bar
+
+    ! The error bar on top of a bar. It is centred on the end of the bar,
+    ! which is where the value is, not on the value axis origin.
+    subroutine append_bar_err(b, s, j, ymin, ymax, ax_b, ax_h, ysc, px)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp), intent(in) :: ymin, ymax, ax_b, ax_h, px
+        type(scale_t), intent(in) :: ysc
+        real(dp) :: top, plo, phi, cap
+
+        top = bar_base(s, j) + s%y(j)
+        plo = map_y(top - arm(s%eylo, j), ymin, ymax, ax_b, ax_h, ysc)
+        phi = map_y(top + arm(s%eyhi, j), ymin, ymax, ax_b, ax_h, ysc)
+        call append_line(b, px, plo, px, phi, trim(s%ecolor), s%elw, LINE_SOLID, 1.0_dp)
+        cap = s%ecap
+        if (cap <= 0.0_dp) return
+        call append_line(b, px - cap, plo, px + cap, plo, trim(s%ecolor), &
+                         s%elw, LINE_SOLID, 1.0_dp)
+        call append_line(b, px - cap, phi, px + cap, phi, trim(s%ecolor), &
+                         s%elw, LINE_SOLID, 1.0_dp)
+    end subroutine append_bar_err
 
     ! Where a bar starts: y = 0 unless the series was stacked on another.
     pure function bar_base(s, j) result(v)
@@ -7244,33 +7881,37 @@ contains
         integer, intent(in) :: j
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
-        real(dp) :: px, py, plo, phi, cap
+        real(dp) :: px, py, plo, phi, cap, elw
+        character(len=7) :: ec
 
         px = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
         py = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         cap = s%width
+        elw = s%elw
+        ec = s%ecolor
+        if (len_trim(ec) == 0) ec = s%color
 
         if (allocated(s%eylo) .or. allocated(s%eyhi)) then
             plo = map_y(s%y(j) - arm(s%eylo, j), ymin, ymax, ax_b, ax_h, ysc)
             phi = map_y(s%y(j) + arm(s%eyhi, j), ymin, ymax, ax_b, ax_h, ysc)
-            call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+            call append_line(b, px, plo, px, phi, trim(ec), elw, LINE_SOLID, s%alpha)
             if (cap > 0.0_dp) then
-                call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), &
-                                 1.0_dp, LINE_SOLID, s%alpha)
-                call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), &
-                                 1.0_dp, LINE_SOLID, s%alpha)
+                call append_line(b, px - cap, plo, px + cap, plo, trim(ec), &
+                                 elw, LINE_SOLID, s%alpha)
+                call append_line(b, px - cap, phi, px + cap, phi, trim(ec), &
+                                 elw, LINE_SOLID, s%alpha)
             end if
         end if
 
         if (allocated(s%exlo) .or. allocated(s%exhi)) then
             plo = map_x(s%x(j) - arm(s%exlo, j), xmin, xmax, ax_l, ax_w, xsc)
             phi = map_x(s%x(j) + arm(s%exhi, j), xmin, xmax, ax_l, ax_w, xsc)
-            call append_line(b, plo, py, phi, py, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+            call append_line(b, plo, py, phi, py, trim(ec), elw, LINE_SOLID, s%alpha)
             if (cap > 0.0_dp) then
-                call append_line(b, plo, py - cap, plo, py + cap, trim(s%color), &
-                                 1.0_dp, LINE_SOLID, s%alpha)
-                call append_line(b, phi, py - cap, phi, py + cap, trim(s%color), &
-                                 1.0_dp, LINE_SOLID, s%alpha)
+                call append_line(b, plo, py - cap, plo, py + cap, trim(ec), &
+                                 elw, LINE_SOLID, s%alpha)
+                call append_line(b, phi, py - cap, phi, py + cap, trim(ec), &
+                                 elw, LINE_SOLID, s%alpha)
             end if
         end if
     end subroutine append_errorbar
@@ -7905,9 +8546,9 @@ contains
         type(axes_t), intent(in) :: a
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
-        integer :: nr, nc, i, j, si, sj, fx, fy
+        integer :: nr, nc, i, j, si, sj, fx, fy, c(4)
         integer, allocatable :: rgba(:, :, :)
-        real(dp) :: px0, px1, py0, py1, t
+        real(dp) :: px0, px1, py0, py1
         type(paint_t) :: p
         logical :: flip_x, flip_y
 
@@ -7953,9 +8594,8 @@ contains
             do j = 1, nc*fx
                 sj = (j - 1)/fx + 1
                 if (flip_x) sj = nc - sj + 1
-                t = cmap_t(a, a%img(si, sj))
-                rgba(1:3, j, i) = hex_rgb(cmap_color(a%img_cmap, t))
-                rgba(4, j, i) = 255
+                call img_rgba(a, si, sj, c)
+                rgba(1:4, j, i) = c
             end do
         end do
 
@@ -8004,8 +8644,7 @@ contains
                                      + fu*a%img(i0 + 1, j1 + 1)) &
                       + fv*((1.0_dp - fu)*a%img(i1 + 1, j0 + 1) &
                             + fu*a%img(i1 + 1, j1 + 1))
-                t = cmap_t(a, val)
-                rgba(1:3, j, i) = hex_rgb(cmap_color(a%img_cmap, t))
+                rgba(1:3, j, i) = hex_rgb(img_color(a, val))
                 rgba(4, j, i) = 255
             end do
         end do
@@ -8064,16 +8703,15 @@ contains
                 end if
                 px0 = map_x(xe0, xmin, xmax, ax_l, ax_w, xsc)
                 px1 = map_x(xe1, xmin, xmax, ax_l, ax_w, xsc)
-                t = cmap_t(a, a%img(i, j))
+                if (img_bad_hidden(a, a%img(i, j))) cycle
                 call append_cell(b, min(px0, px1), min(py0, py1), &
                                  abs(px1 - px0), abs(py1 - py0), &
-                                 cmap_color(a%img_cmap, t))
+                                 img_hex(a, i, j))
             end do
         end do
     end subroutine append_image_cells
 
     ! Cells are grown by a hairline so that neighbours overlap; without it the
-    ! renderer leaves visible seams between abutting rectangles.
     ! renderer leaves visible seams between abutting rectangles.
     subroutine append_cell(b, x, y, w, h, color)
         class(renderer_t), intent(inout) :: b
@@ -8176,7 +8814,7 @@ contains
                 y1 = (a%img_bounds(i + 1) - lo) / (hi - lo)
                 v = 0.5_dp * (a%img_bounds(i) + a%img_bounds(i + 1))
                 call cbar_band(b, a%cbar_horiz, bx, bt, bw, bh, y0, y1, &
-                               cmap_color(a%img_cmap, cmap_t(a, v)))
+                               img_color(a, v))
             end do
         else
             do i = 1, CBAR_SLICES
@@ -8184,7 +8822,7 @@ contains
                 y1 = real(i, dp) / real(CBAR_SLICES, dp)
                 t = (real(i, dp) - 0.5_dp) / real(CBAR_SLICES, dp)
                 call cbar_band(b, a%cbar_horiz, bx, bt, bw, bh, y0, y1, &
-                               cmap_color(a%img_cmap, t))
+                               map_color(a, t))
             end do
         end if
         call clear_clip()
@@ -8197,7 +8835,7 @@ contains
             ! A tick at every band edge, which is what the bands mean.
             nt = min(MAX_TICKS, size(a%img_bounds))
             cb_ticks(1:nt) = a%img_bounds(1:nt)
-        else if (a%img_log_norm) then
+        else if (a%img_norm == NORM_LOG) then
             call log_ticks(lo, hi, cb_ticks, nt)
         else if (a%cbar_horiz) then
             call linear_ticks(lo, hi, tick_space(bw, a%xtick_size, .true.), &
@@ -8207,14 +8845,16 @@ contains
                               cb_ticks, nt)
         end if
         dec = -1
-        if (.not. a%img_log_norm) dec = tick_decimals(cb_ticks, nt)
+        if (.not. a%img_norm == NORM_LOG) dec = tick_decimals(cb_ticks, nt)
 
         do i = 1, nt
             v = cb_ticks(i)
             if (v < lo .or. v > hi) cycle
-            t = (v - lo) / (hi - lo)
-            if (a%img_log_norm) t = cmap_t(a, v)
-            if (a%img_log_norm) then
+            t = (v - lo)/(hi - lo)
+            ! Bands place their ticks at the edges they stand for; every
+            ! other norm puts a tick where the norm puts the value.
+            if (.not. allocated(a%img_bounds)) t = cmap_t(a, v)
+            if (a%img_norm == NORM_LOG) then
                 call format_tick_to(v, .true., lbl, ln)
             else
                 call format_tick_fixed(v, dec, lbl, ln)
@@ -8269,6 +8909,146 @@ contains
     end function fmt_pt
 
     ! Per-point color when scatter mapped c values, otherwise the series color.
+    ! The knobs the nonlinear norms turn. A centred norm needs a centre;
+    ! without one it would be the plain linear norm anyway.
+    subroutine norm_params(vcenter, gamma, linthresh)
+        real(dp), intent(in), optional :: vcenter, gamma, linthresh
+        if (present(vcenter)) ax(cur_i)%img_vcenter = vcenter
+        if (present(gamma)) ax(cur_i)%img_gamma = gamma
+        if (present(linthresh)) ax(cur_i)%img_linthresh = linthresh
+    end subroutine norm_params
+
+    ! A place on the colormap as a colour, honouring a colormap the caller
+    ! built themselves.
+    pure function map_color(a, t) result(hex)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: t
+        character(len=7) :: hex
+        real(dp) :: u, f
+        integer :: n, i0
+        if (.not. allocated(a%cmap_list)) then
+            hex = cmap_color(a%img_cmap, t)
+            return
+        end if
+        n = size(a%cmap_list)
+        if (n == 1) then
+            hex = a%cmap_list(1)
+            return
+        end if
+        u = max(0.0_dp, min(1.0_dp, t))*real(n - 1, dp)
+        i0 = min(n - 2, int(u))
+        f = u - real(i0, dp)
+        hex = blend_hex(a%cmap_list(i0 + 1), a%cmap_list(i0 + 2), f)
+    end function map_color
+
+    ! Two colours mixed, as a colormap built from a list of stops mixes them.
+    pure function blend_hex(c0, c1, f) result(hex)
+        character(len=*), intent(in) :: c0, c1
+        real(dp), intent(in) :: f
+        character(len=7) :: hex
+        character(len=16), parameter :: D = "0123456789abcdef"
+        integer :: a3(3), b3(3), v, k
+        a3 = hex_rgb(c0)
+        b3 = hex_rgb(c1)
+        hex = "#000000"
+        do k = 1, 3
+            v = nint(real(a3(k), dp) + f*real(b3(k) - a3(k), dp))
+            v = max(0, min(255, v))
+            hex(2*k:2*k) = D(v/16 + 1:v/16 + 1)
+            hex(2*k + 1:2*k + 1) = D(mod(v, 16) + 1:mod(v, 16) + 1)
+        end do
+    end function blend_hex
+
+    ! Whether a sample is simply not drawn: it is missing and nothing was
+    ! said about what to put in its place.
+    pure function img_bad_hidden(a, v) result(hidden)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: v
+        logical :: hidden
+        hidden = (.not. finite(v)) .and. len_trim(a%cmap_bad) == 0
+    end function img_bad_hidden
+
+    ! The colour of one value: the colours set aside for the values that
+    ! fall outside the range, or off the scale altogether, take precedence
+    ! over the colormap itself.
+    pure function img_color(a, v) result(hex)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: v
+        character(len=7) :: hex
+        if (.not. finite(v)) then
+            hex = a%cmap_bad
+            if (len_trim(hex) == 0) hex = map_color(a, 0.0_dp)
+            return
+        end if
+        if (v < a%img_vmin .and. len_trim(a%cmap_under) > 0) then
+            hex = a%cmap_under
+            return
+        end if
+        if (v > a%img_vmax .and. len_trim(a%cmap_over) > 0) then
+            hex = a%cmap_over
+            return
+        end if
+        hex = map_color(a, cmap_t(a, v))
+    end function img_color
+
+    ! matplotlib's Colormap.set_bad / set_under / set_over, and
+    ! LinearSegmentedColormap.from_list, applied to the current axes.
+    subroutine set_bad(color)
+        character(len=*), intent(in) :: color
+        call ensure_fig()
+        ax(cur_i)%cmap_bad = resolve_color(color)
+    end subroutine set_bad
+
+    subroutine set_under(color)
+        character(len=*), intent(in) :: color
+        call ensure_fig()
+        ax(cur_i)%cmap_under = resolve_color(color)
+    end subroutine set_under
+
+    subroutine set_over(color)
+        character(len=*), intent(in) :: color
+        call ensure_fig()
+        ax(cur_i)%cmap_over = resolve_color(color)
+    end subroutine set_over
+
+    subroutine set_cmap_colors(colors)
+        character(len=*), intent(in) :: colors(:)
+        integer :: i
+        call ensure_fig()
+        if (allocated(ax(cur_i)%cmap_list)) deallocate (ax(cur_i)%cmap_list)
+        if (size(colors) < 1) return
+        allocate (ax(cur_i)%cmap_list(size(colors)))
+        do i = 1, size(colors)
+            ax(cur_i)%cmap_list(i) = resolve_color(colors(i))
+        end do
+    end subroutine set_cmap_colors
+
+    pure function norm_from_str(s) result(k)
+        character(len=*), intent(in) :: s
+        integer :: k
+        select case (trim(s))
+        case ("log"); k = NORM_LOG
+        case ("centered", "twoslope"); k = NORM_CENTER
+        case ("power"); k = NORM_POWER
+        case ("symlog"); k = NORM_SYMLOG
+        case default; k = NORM_LINEAR
+        end select
+    end function norm_from_str
+
+    ! matplotlib's SymLogNorm with base 10 and linscale 1: linear within
+    ! linthresh of zero, logarithmic outside it, and continuous at the join.
+    pure function symlog_fwd(v, linthresh) result(u)
+        real(dp), intent(in) :: v, linthresh
+        real(dp) :: u, adj, lt
+        lt = max(linthresh, tiny(1.0_dp))
+        adj = 1.0_dp/(1.0_dp - exp(-1.0_dp))
+        if (abs(v) <= lt) then
+            u = v*adj
+        else
+            u = sign(lt*(adj + log10(abs(v)/lt)), v)
+        end if
+    end function symlog_fwd
+
     ! Where a value sits on the colormap, in [0, 1].
     pure function cmap_t(a, v) result(t)
         type(axes_t), intent(in) :: a
@@ -8295,17 +9075,41 @@ contains
             end if
             return
         end if
-        if (a%img_log_norm) then
+        select case (a%img_norm)
+        case (NORM_LOG)
             ! Anything at or below zero has no logarithm, so it takes the
             ! bottom of the map, as matplotlib's LogNorm does.
             if (v <= 0.0_dp .or. lo <= 0.0_dp .or. hi <= lo) then
                 t = 0.0_dp
             else
-                t = (log10(v) - log10(lo)) / (log10(hi) - log10(lo))
+                t = (log10(v) - log10(lo))/(log10(hi) - log10(lo))
             end if
-        else
-            t = (v - lo) / (hi - lo)
-        end if
+        case (NORM_CENTER)
+            ! TwoSlopeNorm: the centre lands in the middle of the map, and
+            ! each side is stretched to fill its half.
+            if (v < a%img_vcenter) then
+                t = 0.0_dp
+                if (a%img_vcenter > lo) &
+                    t = 0.5_dp*(v - lo)/(a%img_vcenter - lo)
+            else
+                t = 1.0_dp
+                if (hi > a%img_vcenter) &
+                    t = 0.5_dp + 0.5_dp*(v - a%img_vcenter)/(hi - a%img_vcenter)
+            end if
+        case (NORM_POWER)
+            t = (v - lo)/(hi - lo)
+            t = max(0.0_dp, min(1.0_dp, t))**a%img_gamma
+        case (NORM_SYMLOG)
+            t = symlog_fwd(hi, a%img_linthresh) - symlog_fwd(lo, a%img_linthresh)
+            if (t <= 0.0_dp) then
+                t = 0.0_dp
+            else
+                t = (symlog_fwd(v, a%img_linthresh) &
+                     - symlog_fwd(lo, a%img_linthresh))/t
+            end if
+        case default
+            t = (v - lo)/(hi - lo)
+        end select
     end function cmap_t
 
     ! matplotlib layers artists rather than drawing them in call order: an
@@ -9216,6 +10020,8 @@ contains
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
                         ysc, nbins_for(a%ytick_nbins, ax_h, a%ytick_size, .false.), &
                         a%y_date, yticks, nyt, y_unit, a%ytick_base)
+        if (a%n_xticks == 0) call prune_ticks(a%xtick_prune, xticks, nxt)
+        if (a%n_yticks == 0) call prune_ticks(a%ytick_prune, yticks, nyt)
         xfmt = axis_fmt(xticks, nxt, a, .true., xmin, xmax)
         yfmt = axis_fmt(yticks, nyt, a, .false., min(ymin, ymax), max(ymin, ymax))
         if (wants_minor(a) .or. a%xsc%kind == SCALE_LOG .or. &
@@ -9225,6 +10031,16 @@ contains
         else
             nxm = 0
             nym = 0
+        end if
+        ! Minor ticks placed by hand stand in for the automatic ones, and
+        ! asking for them is asking to see them.
+        if (a%n_xminor > 0) then
+            nxm = a%n_xminor
+            xminor(1:nxm) = a%xminor_pos(1:nxm)
+        end if
+        if (a%n_yminor > 0) then
+            nym = a%n_yminor
+            yminor(1:nym) = a%yminor_pos(1:nym)
         end if
 
         ! axis("off") leaves only the artists: no frame, no ticks, no labels.
@@ -9481,14 +10297,17 @@ contains
             ! figtext is placed on the canvas, so it waits until the clip
             ! is dropped below.
             if (a%texts(i)%in_fig) cycle
-            px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xsc)
-            py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ysc)
-            if (a%texts(i)%has_arrow) then
-                call append_line(b, px, py, &
-                                 map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xsc), &
-                                 map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ysc), &
-                                 trim(a%texts(i)%color), 1.0_dp, LINE_SOLID, 1.0_dp)
+            if (a%texts(i)%in_axes) then
+                px = ax_l + a%texts(i)%x*ax_w
+                py = ax_b - a%texts(i)%y*ax_h
+            else
+                px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xsc)
+                py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ysc)
             end if
+            if (a%texts(i)%has_arrow) &
+                call append_arrow(b, a%texts(i), px, py, &
+                                  map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xsc), &
+                                  map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ysc))
             call append_annotation(b, a%texts(i), px, py)
         end do
 
@@ -9523,8 +10342,10 @@ contains
         end if
         if (a%yaxis_off) nyt = 0
         if (a%xaxis_off) nxt = 0
-        if (a%xaxis_off .or. .not. (a%minor_ticks .or. xsc%kind == SCALE_LOG)) nxm = 0
-        if (a%yaxis_off .or. .not. (a%minor_ticks .or. ysc%kind == SCALE_LOG)) nym = 0
+        if (a%xaxis_off .or. .not. (a%minor_ticks .or. a%n_xminor > 0 .or. &
+                                    xsc%kind == SCALE_LOG)) nxm = 0
+        if (a%yaxis_off .or. .not. (a%minor_ticks .or. a%n_yminor > 0 .or. &
+                                    ysc%kind == SCALE_LOG)) nym = 0
 
         do i = 1, nxt
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
@@ -9590,6 +10411,7 @@ contains
         if (len_trim(a%xlabel) > 0) then
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_b + xtick_gap(a) + 0.24_dp * a%xtick_size + 1.84_dp &
+                             + a%xlabel_pad - LABEL_PAD &
                              + 0.76_dp * a%xlabel_size, trim(a%xlabel), &
                              "center", a%xlabel_size, rc_text_color, &
                              weight=a%xlabel_w, slant=a%xlabel_sl)
@@ -9605,12 +10427,24 @@ contains
                              weight=a%ylabel_w, slant=a%ylabel_sl)
         end if
 
-        ! title
+        ! title, centred over the axes unless it was asked to sit against
+        ! one end of it
         if (len_trim(a%title) > 0) then
-            call append_text(b, 0.5_dp * (ax_l + ax_r), &
-                             ax_t - 0.5_dp * a%title_size, trim(a%title), &
-                             "center", a%title_size, rc_text_color, &
-                             weight=a%title_w, slant=a%title_sl)
+            select case (trim(a%title_loc))
+            case ("left")
+                call append_text(b, ax_l, ax_t - 0.5_dp*a%title_size, &
+                                 trim(a%title), "left", a%title_size, &
+                                 rc_text_color, weight=a%title_w, slant=a%title_sl)
+            case ("right")
+                call append_text(b, ax_r, ax_t - 0.5_dp*a%title_size, &
+                                 trim(a%title), "right", a%title_size, &
+                                 rc_text_color, weight=a%title_w, slant=a%title_sl)
+            case default
+                call append_text(b, 0.5_dp*(ax_l + ax_r), &
+                                 ax_t - 0.5_dp*a%title_size, trim(a%title), &
+                                 "center", a%title_size, rc_text_color, &
+                                 weight=a%title_w, slant=a%title_sl)
+            end select
         end if
 
 

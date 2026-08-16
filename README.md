@@ -30,6 +30,11 @@ call suptitle("figure title")
 ## Features
 
 - `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
+- `bar` takes `yerr=`, `capsize=`, `align="edge"` and `tick_label=`;
+  `errorbar` takes `ecolor=`, `elinewidth=`, `lw=` and `alpha=`
+- `plot(y)` with a single array numbers the points `0, 1, 2, ...` for x
+- `xlim`/`ylim` to set, `get_xlim`/`get_ylim` to read back what autoscaling
+  chose, and `invert_xaxis`/`invert_yaxis` to make an axis count down
 - `scatter` also takes per-point `sizes=` and color-mapped `cvals=`
   (separate keywords because Fortran cannot overload one dummy as
   scalar-or-array the way matplotlib's `s=` and `c=` do)
@@ -38,9 +43,13 @@ call suptitle("figure title")
 - `fill_betweenx` for a band along y, `stackplot` for layers summed on top
   of each other, and `axline` for an endless line through two points or
   through one with a `slope=`
-- `text` and `annotate` (with a leader line to the annotated point), with
+- `text` and `annotate` (`arrowstyle="->"` draws a leader with a head at the
+  annotated point, with `arrowcolor=`, `arrowlw=` and `shrink=`), with
   `rotation=`, `va=`, a `bbox_facecolor=` box behind them and lines broken
-  at `achar(10)`; `figtext` places on the canvas instead of in the axes
+  at `achar(10)`; `figtext` places on the canvas instead of in the axes, and
+  `transform="axes"` places in fractions of the axes box
+- `imshow` of an (row, column, channel) array paints the colours given,
+  three channels for RGB or four for RGBA
 - `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
   `aspect`, plus `colorbar(label=, orientation=, fraction=, pad=, shrink=,
   aspect=)`, upright or lying on its side
@@ -69,7 +78,11 @@ call suptitle("figure title")
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
 - `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
-  `xticks` / `yticks` with optional labels, `minorticks_on`
+  `figlegend(loc=, fontsize=, ncol=, frameon=, title=)` for one legend
+  covering every panel,
+  `xticks` / `yticks` with optional labels, `minorticks_on`,
+  `xticks(vals, minor=.true.)` to place minor ticks by hand, and
+  `locator_params(axis=, nbins=, prune=)`
 - Formatters and locators: `tick_format(axis, "percent"/"comma"/"fixed")`,
   `tick_locator(axis, base=, nbins=)` and `ticklabel_format(style=,
   useoffset=, scilimits=)`. An axis whose labels would otherwise repeat
@@ -77,6 +90,7 @@ call suptitle("figure title")
   label at its end, as matplotlib's ScalarFormatter does
 - Font sizes: `fontsize=` on `title` / `xlabel` / `ylabel` / `suptitle`, and
   `set_fontsize(size=, title=, labels=, ticks=, legend=)` to set them globally
+- `title(loc="left"|"right")` and `xlabel`/`ylabel(labelpad=)`
 - `savefig(dpi=, bbox_inches="tight", pad_inches=)` to crop to the drawing
 - Several live figures at once: `figure(num=)`, `gcf()`, `close(num=, all=)`
 - `subplots(m, n, axs, sharex=, sharey=)` hands back axes handles, so
@@ -142,10 +156,17 @@ call suptitle("figure title")
 - `imshow(norm="log")` for a logarithmic color scale, and
   `imshow(boundaries=)` for matplotlib's `BoundaryNorm`: one flat color
   per band, and a colorbar of blocks to match
+- `norm="centered"` with `vcenter=`, `norm="power"` with `gamma=` and
+  `norm="symlog"` with `linthresh=`, on `imshow` and `pcolormesh`
+- `set_bad`, `set_under` and `set_over` for the samples a colormap has
+  nothing to say about, and `set_cmap_colors` to build one from a list of
+  stops; missing samples are left clear unless `set_bad` says otherwise
 - `errorbar` with `xerr=` and asymmetric `yerr_lo=`/`yerr_hi=` arms
-- `fill_between(where=)` to shade only where a condition holds
+- `fill_between(where=, interpolate=)` to shade only where a condition
+  holds, carried out to the crossing point
+- `scatter(edgecolors=, linewidths=)` to outline the markers
 - `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled",
-  weights=, stacked=)`
+  weights=, stacked=, orientation="horizontal", log=, rwidth=)`
 - `axhspan`/`axvspan` shaded bands and `hlines`/`vlines` line runs
 - `style_use("ggplot")` and friends (`seaborn`, `fivethirtyeight`,
   `dark_background`, `grayscale`, `default`), or `rc(figsize=, dpi=,
