@@ -274,8 +274,11 @@ module fplot
         logical :: has_box = .false.
         character(len=7) :: box_fc = "#ffffff", box_ec = ""
         real(dp) :: box_alpha = 1.0_dp, box_pad = 0.3_dp
-        ! figtext places in figure coordinates rather than data ones.
+        ! figtext places in figure coordinates rather than data ones;
+        ! transform="axes" places in fractions of the axes box, so that a
+        ! note stays put when the data range changes.
         logical :: in_fig = .false.
+        logical :: in_axes = .false.
         character(len=256) :: s = ""
     end type text_t
 
@@ -2338,26 +2341,30 @@ contains
         call axline(xy1, xy2, slope, color, linestyle, lw, label)
     end subroutine ax_axline
 
-    subroutine ax_text(self, x, y, s, color, fontsize, ha, fontweight, fontstyle)
+    subroutine ax_text(self, x, y, s, color, fontsize, ha, fontweight, &
+                       fontstyle, transform)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x, y
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
+        character(len=*), intent(in), optional :: transform
         real(dp), intent(in), optional :: fontsize
         call ax_sca(self)
-        call text(x, y, s, color, fontsize, ha, fontweight, fontstyle)
+        call text(x, y, s, color, fontsize, ha, fontweight, fontstyle, &
+                  transform=transform)
     end subroutine ax_text
 
     subroutine ax_annotate(self, s, x, y, xtext, ytext, color, fontsize, ha, &
-                           fontweight, fontstyle)
+                           fontweight, fontstyle, transform)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: x, y
         real(dp), intent(in), optional :: xtext, ytext, fontsize
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
+        character(len=*), intent(in), optional :: transform
         call ax_sca(self)
         call annotate(s, x, y, xtext, ytext, color, fontsize, ha, &
-                      fontweight, fontstyle)
+                      fontweight, fontstyle, transform=transform)
     end subroutine ax_annotate
 
     subroutine ax_set_title(self, s, fontsize, fontweight, fontstyle)
@@ -5543,15 +5550,16 @@ contains
     ! Text at a point in data coordinates.
     subroutine text(x, y, s, color, fontsize, ha, fontweight, fontstyle, &
                     va, rotation, bbox_facecolor, bbox_edgecolor, bbox_alpha, &
-                    bbox_pad)
+                    bbox_pad, transform)
         real(dp), intent(in) :: x, y
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
+        character(len=*), intent(in), optional :: transform
         real(dp), intent(in), optional :: fontsize, rotation, bbox_alpha, bbox_pad
         call add_text(x, y, s, color, fontsize, ha, .false., 0.0_dp, 0.0_dp, &
                       fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                      bbox_edgecolor, bbox_alpha, bbox_pad)
+                      bbox_edgecolor, bbox_alpha, bbox_pad, transform)
     end subroutine text
 
     ! The same, but placed in figure coordinates, so that a note can sit
@@ -5573,12 +5581,13 @@ contains
     ! Text at (xtext, ytext) with an arrow pointing at (x, y).
     subroutine annotate(s, x, y, xtext, ytext, color, fontsize, ha, &
                         fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                        bbox_edgecolor, bbox_alpha, bbox_pad)
+                        bbox_edgecolor, bbox_alpha, bbox_pad, transform)
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: x, y
         real(dp), intent(in), optional :: xtext, ytext, fontsize
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
+        character(len=*), intent(in), optional :: transform
         real(dp), intent(in), optional :: rotation, bbox_alpha, bbox_pad
         real(dp) :: xt, yt
         logical :: arrow
@@ -5591,16 +5600,17 @@ contains
         ! The label sits at the text position; the arrow runs back to (x, y).
         call add_text(xt, yt, s, color, fontsize, ha, arrow, x, y, &
                       fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                      bbox_edgecolor, bbox_alpha, bbox_pad)
+                      bbox_edgecolor, bbox_alpha, bbox_pad, transform)
     end subroutine annotate
 
     subroutine add_text(x, y, s, color, fontsize, ha, arrow, xarr, yarr, &
                         fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                        bbox_edgecolor, bbox_alpha, bbox_pad)
+                        bbox_edgecolor, bbox_alpha, bbox_pad, transform)
         real(dp), intent(in) :: x, y, xarr, yarr
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
+        character(len=*), intent(in), optional :: transform
         real(dp), intent(in), optional :: fontsize, rotation, bbox_alpha, bbox_pad
         logical, intent(in) :: arrow
         integer :: it
@@ -5637,6 +5647,12 @@ contains
         if (present(bbox_pad)) ax(cur_i)%texts(it)%box_pad = bbox_pad
         col = resolve_color(color)
         if (len_trim(col) > 0) ax(cur_i)%texts(it)%color = col
+        if (present(transform)) then
+            select case (transform)
+            case ("axes"); ax(cur_i)%texts(it)%in_axes = .true.
+            case ("figure"); ax(cur_i)%texts(it)%in_fig = .true.
+            end select
+        end if
     end subroutine add_text
 
     subroutine add_series(ia, x, y, fmt, label, lw, color, marker, linestyle, alpha)
@@ -9521,8 +9537,13 @@ contains
             ! figtext is placed on the canvas, so it waits until the clip
             ! is dropped below.
             if (a%texts(i)%in_fig) cycle
-            px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xsc)
-            py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ysc)
+            if (a%texts(i)%in_axes) then
+                px = ax_l + a%texts(i)%x*ax_w
+                py = ax_b - a%texts(i)%y*ax_h
+            else
+                px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xsc)
+                py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ysc)
+            end if
             if (a%texts(i)%has_arrow) then
                 call append_line(b, px, py, &
                                  map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xsc), &

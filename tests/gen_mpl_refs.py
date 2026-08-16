@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "transform_axes",
     "plot_y",
     "basic_line",
     "multi_style",
@@ -868,6 +869,14 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 98 text pinned to the corners of the axes, not to the data
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.text(0.05, 0.95, "top left", transform=ax.transAxes, va="top")
+    ax.text(0.95, 0.05, "bottom right", transform=ax.transAxes, ha="right")
+    ax.set_title("transform=axes")
+    save(fig, "transform_axes")
 
     # 97 one array is enough
     fig, ax = setup_fig()

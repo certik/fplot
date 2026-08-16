@@ -850,6 +850,14 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 98) text pinned to the corners of the axes, not to the data
+    call clf()
+    call plot(x, y)
+    call text(0.05_dp, 0.95_dp, "top left", transform="axes", va="top")
+    call text(0.95_dp, 0.05_dp, "bottom right", transform="axes", ha="right")
+    call title("transform=axes")
+    call save_all("transform_axes")
+
 ! 97) one array is enough
     call clf()
     call plot(y)
