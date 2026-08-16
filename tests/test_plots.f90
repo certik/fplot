@@ -22,8 +22,24 @@ program test_plots
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
     real(dp) :: xs(ns), ys(ns)
+    integer, parameter :: ntc = 120
+    real(dp) :: tx2(ntc), ty2(ntc), tz2(ntc)
+    integer, parameter :: nts = 60
+    real(dp) :: usx(nts), usy(nts), usz(nts)
+    integer, parameter :: nb3 = 12
+    real(dp) :: b3x(nb3), b3y(nb3), b3z(nb3), b3d(nb3)
+    integer, parameter :: nq3 = 9
+    real(dp) :: q3x(nq3), q3y(nq3), q3z(nq3), q3u(nq3), q3v(nq3), q3w(nq3)
+    integer, parameter :: nc3 = 21
+    real(dp) :: c3x(nc3), c3y(nc3), c3z(nc3, nc3)
+    integer, parameter :: ntp = 24
+    real(dp) :: tx(ntp), ty(ntp), tz(ntp)
+    integer, parameter :: nlg = 60
+    real(dp) :: lgx(nlg), lgy(nlg)
     integer, parameter :: nd = 40
-    real(dp) :: dist1(nd), dist2(nd)
+    real(dp) :: dist1(nd), dist2(nd), boxmat(2, nd)
+    character(len=8) :: mkeys
+    type(axes) :: mos(8)
     integer, parameter :: nsym = 201
     real(dp) :: xsym(nsym)
     integer, parameter :: nsm = 2
@@ -853,6 +869,194 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+    ! 125) level lines drawn in space
+    call clf()
+    do i = 1, nc3
+        c3x(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/real(nc3 - 1, dp)
+        c3y(i) = c3x(i)
+    end do
+    do i = 1, nc3
+        do j = 1, nc3
+            c3z(i, j) = sin(c3x(j))*cos(c3y(i))
+        end do
+    end do
+    call contour3d(c3x, c3y, c3z)
+    call title("contour3d")
+    call save_all("contour3d")
+
+    ! 124) arrows in space
+    call clf()
+    k = 0
+    do i = 1, 3
+        do j = 1, 3
+            k = k + 1
+            q3x(k) = -0.8_dp + 0.8_dp*real(i - 1, dp)
+            q3y(k) = -0.8_dp + 0.8_dp*real(j - 1, dp)
+            q3z(k) = 0.0_dp
+            q3u(k) = sin(PI_T*q3x(k))*cos(PI_T*q3y(k))
+            q3v(k) = -cos(PI_T*q3x(k))*sin(PI_T*q3y(k))
+            q3w(k) = 0.5_dp*sin(PI_T*q3x(k))
+        end do
+    end do
+    call quiver3d(q3x, q3y, q3z, q3u, q3v, q3w, length=0.4_dp, normalize=.true.)
+    call title("quiver3d")
+    call save_all("quiver3d")
+
+    ! 123) boxes standing on the xy plane
+    call clf()
+    do k = 1, nb3
+        b3x(k) = real(mod(k - 1, 4), dp)
+        b3y(k) = real((k - 1)/4, dp)
+        b3z(k) = 0.0_dp
+        b3d(k) = 1.0_dp + sin(real(k, dp))
+    end do
+    call bar3d(b3x, b3y, b3z, 0.6_dp, 0.6_dp, b3d)
+    call title("bar3d")
+    call save_all("bar3d")
+
+    ! 122) a surface over scattered points
+    call clf()
+    do k = 1, nts
+        usx(k) = 3.0_dp*sin(real(2*k, dp))
+        usy(k) = 3.0_dp*cos(real(3*k, dp))
+        usz(k) = sin(usx(k))*cos(usy(k))
+    end do
+    call plot_trisurf(usx, usy, usz, cmap="viridis")
+    call title("trisurf")
+    call save_all("trisurf")
+
+! A denser scatter for the contours, matching what matplotlib is given.
+    do k = 1, ntc
+        tx2(k) = 3.0_dp*(1.0_dp + sin(real(7*k, dp)))
+        ty2(k) = 3.0_dp*(1.0_dp + cos(real(11*k, dp)))
+        tz2(k) = sin(tx2(k))*cos(ty2(k))
+    end do
+
+    ! 121) the bands between those lines, filled
+    call clf()
+    call tricontourf(tx2, ty2, tz2)
+    call colorbar()
+    call title("tricontourf")
+    call save_all("tricontourf")
+
+! 120) level lines over the triangles
+    call clf()
+    call tricontour(tx2, ty2, tz2)
+    call title("tricontour")
+    call save_all("tricontour")
+
+! Points on a jittered grid, the same ones matplotlib is given.
+    k = 0
+    do i = 1, 6
+        do j = 1, 4
+            k = k + 1
+            tx(k) = real(i - 1, dp) + 0.35_dp*sin(real(3*k, dp))
+            ty(k) = real(j - 1, dp) + 0.35_dp*cos(real(5*k, dp))
+            tz(k) = tx(k)*ty(k)
+        end do
+    end do
+
+    ! 119) the same triangles, filled by value
+    call clf()
+    call tripcolor(tx, ty, tz)
+    call colorbar()
+    call title("tripcolor")
+    call save_all("tripcolor")
+
+! 118) scattered points, triangulated
+    call clf()
+    call triplot(tx, ty, marker="o")
+    call title("triplot")
+    call save_all("triplot")
+
+! 117) a log axis too short to label by decades alone
+    call clf()
+    do i = 1, nlg
+        lgx(i) = 1.0_dp + 7.0_dp*real(i - 1, dp)/real(nlg - 1, dp)
+        lgy(i) = lgx(i)**1.5_dp
+    end do
+    call loglog(lgx, lgy)
+    call xlim(1.0_dp, 8.0_dp)
+    call save_all("log_minor_labels")
+
+! 116) a bowed connector and a box with round corners
+    call clf()
+    call plot(x, y)
+    call annotate("peak", 1.57_dp, 1.0_dp, 3.5_dp, 0.6_dp, &
+                  arrowstyle="->", connectionstyle="arc3,rad=0.3", &
+                  boxstyle="round,pad=0.5", bbox_facecolor="#ffff99", &
+                  bbox_edgecolor="#333333", ha="center")
+    call annotate("trough", 4.71_dp, -1.0_dp, 1.5_dp, -0.6_dp, &
+                  arrowstyle="->", connectionstyle="arc3,rad=-0.4", ha="center")
+    call save_all("annotate_curve")
+
+! 115) margins refitted to the decorations at draw time
+    call clf()
+    call subplots(1, 2, axs)
+    call constrained_layout(.true.)
+    do j = 1, 2
+        call axs(1, j)%plot(x, real(j, dp)*y)
+        call axs(1, j)%set_xlabel("a long x label")
+        call axs(1, j)%set_ylabel("a long y label")
+        call axs(1, j)%set_title("panel")
+    end do
+    call save_all("constrained")
+
+! 114) panels drawn as a picture of the figure
+    call clf()
+    call subplot_mosaic(["AB", "CC"], mkeys, mos)
+    call mos(1)%plot(x, y)
+    call mos(1)%set_title("A")
+    call mos(2)%plot(x, y2, "r-")
+    call mos(2)%set_title("B")
+    call mos(3)%plot(x, 0.5_dp*y, "g-")
+    call mos(3)%set_title("C")
+    call save_all("mosaic")
+
+! 113) names given at legend time, and a line kept out of it
+    call clf()
+    call plot(x, y)
+    call plot(x, y2)
+    call plot(x, 0.5_dp*y, label="_hidden")
+    call legend(labels=["first ", "second"])
+    call title("legend labels")
+    call save_all("legend_labels")
+
+! 112) violins across, with the mean and median marked
+    call clf()
+    boxmat(1, :) = dist1
+    boxmat(2, :) = dist2
+    call subplot(1, 2, 1)
+    call violinplot(boxmat, labels=["one", "two"], showmeans=.true., &
+                    showmedians=.true.)
+    call title("means")
+    call subplot(1, 2, 2)
+    call violinplot(boxmat, labels=["one", "two"], vert=.false., &
+                    showextrema=.false.)
+    call title("across")
+    call save_all("violin_opts")
+
+! 111) boxes across, waisted, filled and with the mean marked
+    call clf()
+    boxmat(1, :) = dist1
+    boxmat(2, :) = dist2
+    call subplot(1, 2, 1)
+    call boxplot(boxmat, labels=["one", "two"], notch=.true., &
+                 showmeans=.true., patch_artist=.true.)
+    call title("notched")
+    call subplot(1, 2, 2)
+    call boxplot(boxmat, labels=["one", "two"], vert=.false.)
+    call title("across")
+    call save_all("box_opts")
+
+! 110) a pie with a slice pulled out and its shares written in
+    call clf()
+    call pie(hb, labels=["a", "b", "c", "d", "e", "f"], &
+             explode=[0.0_dp, 0.1_dp, 0.0_dp, 0.0_dp, 0.0_dp, 0.0_dp], &
+             startangle=90.0_dp, counterclock=.false., autopct="%.1f%%")
+    call title("pie options")
+    call save_all("pie_opts")
 
 ! 109) marker edges and a band carried to the crossing
     call clf()

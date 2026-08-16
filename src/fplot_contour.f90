@@ -7,7 +7,6 @@
 ! valid resolutions, simply cannot arise.
 module fplot_contour
     use fplot_style, only: dp
-    use fplot_ticks, only: nice_number
     implicit none
     private
 
@@ -29,7 +28,7 @@ contains
         real(dp) :: step, lo
         integer :: i
 
-        step = nice_number((zmax - zmin) / real(nbins, dp), .true.)
+        step = level_step((zmax - zmin) / real(nbins, dp))
         if (step <= 0.0_dp) step = 1.0_dp
         lo = floor(zmin / step) * step
 
@@ -40,6 +39,30 @@ contains
             if (lev(nlev) >= zmax) exit
         end do
     end subroutine contour_levels
+
+    ! The smallest of matplotlib's tick steps, 1, 2, 2.5, 5 or 10 times a power
+    ! of ten, that is no smaller than raw. Rounding down would put more levels
+    ! on the plot than the caller asked for.
+    pure function level_step(raw) result(step)
+        real(dp), intent(in) :: raw
+        real(dp) :: step, scale, f
+        real(dp), parameter :: steps(5) = [1.0_dp, 2.0_dp, 2.5_dp, 5.0_dp, 10.0_dp]
+        integer :: i
+
+        if (raw <= 0.0_dp) then
+            step = 1.0_dp
+            return
+        end if
+        scale = 10.0_dp**floor(log10(raw))
+        f = raw/scale
+        step = 10.0_dp*scale
+        do i = 1, size(steps)
+            if (steps(i) >= f) then
+                step = steps(i)*scale
+                exit
+            end if
+        end do
+    end function level_step
 
     ! Segment where the plane through the triangle crosses lev. Returns ns = 0
     ! when the level misses the triangle, otherwise ns = 2 endpoints.

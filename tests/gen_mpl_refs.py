@@ -23,6 +23,22 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "contour3d",
+    "quiver3d",
+    "bar3d",
+    "trisurf",
+    "tricontourf",
+    "tricontour",
+    "tripcolor",
+    "triplot",
+    "log_minor_labels",
+    "annotate_curve",
+    "constrained",
+    "mosaic",
+    "legend_labels",
+    "violin_opts",
+    "box_opts",
+    "pie_opts",
     "scatter_edge",
     "figlegend",
     "tick_locator",
@@ -880,6 +896,177 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    tpx, tpy, tpz = [], [], []
+    k = 0
+    for i in range(6):
+        for j in range(4):
+            k += 1
+            tpx.append(i + 0.35 * np.sin(3.0 * k))
+            tpy.append(j + 0.35 * np.cos(5.0 * k))
+            tpz.append(tpx[-1] * tpy[-1])
+    tx, ty, tz = np.array(tpx), np.array(tpy), np.array(tpz)
+
+    # 125 level lines drawn in space
+    c3 = np.linspace(-3, 3, 21)
+    c3x, c3y = np.meshgrid(c3, c3)
+    c3z = np.sin(c3x) * np.cos(c3y)
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a = fig.add_subplot(projection="3d")
+    a.contour(c3x, c3y, c3z)
+    a.set_title("contour3d")
+    save(fig, "contour3d")
+
+    # 124 arrows in space
+    q3x, q3y, q3z, q3u, q3v, q3w = [], [], [], [], [], []
+    for i in range(3):
+        for j in range(3):
+            qx = -0.8 + 0.8 * i
+            qy = -0.8 + 0.8 * j
+            q3x.append(qx)
+            q3y.append(qy)
+            q3z.append(0.0)
+            q3u.append(np.sin(np.pi * qx) * np.cos(np.pi * qy))
+            q3v.append(-np.cos(np.pi * qx) * np.sin(np.pi * qy))
+            q3w.append(0.5 * np.sin(np.pi * qx))
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a = fig.add_subplot(projection="3d")
+    a.quiver(q3x, q3y, q3z, q3u, q3v, q3w, length=0.4, normalize=True)
+    a.set_title("quiver3d")
+    save(fig, "quiver3d")
+
+    # 123 boxes standing on the xy plane
+    kb = np.arange(1, 13)
+    b3x = ((kb - 1) % 4).astype(float)
+    b3y = ((kb - 1) // 4).astype(float)
+    b3z = np.zeros(12)
+    b3d = 1.0 + np.sin(kb.astype(float))
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a = fig.add_subplot(projection="3d")
+    a.bar3d(b3x, b3y, b3z, 0.6, 0.6, b3d)
+    a.set_title("bar3d")
+    save(fig, "bar3d")
+
+    # 122 a surface over scattered points
+    ks = np.arange(1, 61)
+    usx = 3.0 * np.sin(2.0 * ks)
+    usy = 3.0 * np.cos(3.0 * ks)
+    usz = np.sin(usx) * np.cos(usy)
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a = fig.add_subplot(projection="3d")
+    a.plot_trisurf(usx, usy, usz, cmap="viridis")
+    a.set_title("trisurf")
+    save(fig, "trisurf")
+
+    kk = np.arange(1, 121)
+    tx2 = 3.0 * (1.0 + np.sin(7.0 * kk))
+    ty2 = 3.0 * (1.0 + np.cos(11.0 * kk))
+    tz2 = np.sin(tx2) * np.cos(ty2)
+
+    # 121 the bands between those lines, filled
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    tcf = a.tricontourf(tx2, ty2, tz2)
+    fig.colorbar(tcf, ax=a)
+    a.set_title("tricontourf")
+    save(fig, "tricontourf")
+
+    # 120 level lines over the triangles
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    a.tricontour(tx2, ty2, tz2)
+    a.set_title("tricontour")
+    save(fig, "tricontour")
+
+    # 119 the same triangles, filled by value
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    tpc = a.tripcolor(tx, ty, tz)
+    fig.colorbar(tpc, ax=a)
+    a.set_title("tripcolor")
+    save(fig, "tripcolor")
+
+    # 118 scattered points, triangulated
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    a.triplot(tx, ty, "o-")
+    a.set_title("triplot")
+    save(fig, "triplot")
+
+    # 117 a log axis too short to label by decades alone
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    lx = np.linspace(1.0, 8.0, 60)
+    a.loglog(lx, lx**1.5)
+    a.set_xlim(1.0, 8.0)
+    save(fig, "log_minor_labels")
+
+    # 116 a bowed connector and a box with round corners
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    a.plot(x, y)
+    a.annotate("peak", xy=(1.57, 1.0), xytext=(3.5, 0.6), ha="center",
+               arrowprops=dict(arrowstyle="->",
+                               connectionstyle="arc3,rad=0.3"),
+               bbox=dict(boxstyle="round,pad=0.5", fc="#ffff99",
+                         ec="#333333"))
+    a.annotate("trough", xy=(4.71, -1.0), xytext=(1.5, -0.6), ha="center",
+               arrowprops=dict(arrowstyle="->",
+                               connectionstyle="arc3,rad=-0.4"))
+    save(fig, "annotate_curve")
+
+    # 115 margins refitted to the decorations at draw time
+    fig, cax = plt.subplots(1, 2, figsize=(6.4, 4.8), layout="constrained")
+    for i, a in enumerate(cax.ravel()):
+        a.plot(x, (i + 1) * y)
+        a.set_xlabel("a long x label")
+        a.set_ylabel("a long y label")
+        a.set_title("panel")
+    save(fig, "constrained")
+
+    # 114 panels drawn as a picture of the figure
+    fig = plt.figure(figsize=(6.4, 4.8))
+    mos = fig.subplot_mosaic("AB\nCC")
+    mos["A"].plot(x, y)
+    mos["A"].set_title("A")
+    mos["B"].plot(x, y2, "r-")
+    mos["B"].set_title("B")
+    mos["C"].plot(x, 0.5 * y, "g-")
+    mos["C"].set_title("C")
+    save(fig, "mosaic")
+
+    # 113 names given at legend time, and a line kept out of it
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.plot(x, y2)
+    ax.plot(x, 0.5 * y, label="_hidden")
+    ax.legend(labels=["first", "second"])
+    ax.set_title("legend labels")
+    save(fig, "legend_labels")
+
+    # 112 violins across, with the mean and median marked
+    boxmat = np.vstack([dist1, dist2])
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].violinplot([boxmat[0], boxmat[1]], showmeans=True, showmedians=True)
+    axs[0].set_xticks([1, 2], ["one", "two"])
+    axs[0].set_title("means")
+    axs[1].violinplot([boxmat[0], boxmat[1]], vert=False, showextrema=False)
+    axs[1].set_yticks([1, 2], ["one", "two"])
+    axs[1].set_title("across")
+    save(fig, "violin_opts")
+
+    # 111 boxes across, waisted, filled and with the mean marked
+    boxmat = np.vstack([dist1, dist2])
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].boxplot(boxmat.T, tick_labels=["one", "two"], notch=True,
+                   showmeans=True, patch_artist=True)
+    axs[0].set_title("notched")
+    axs[1].boxplot(boxmat.T, tick_labels=["one", "two"], vert=False)
+    axs[1].set_title("across")
+    save(fig, "box_opts")
+
+    # 110 a pie with a slice pulled out and its shares written in
+    fig, ax = plt.subplots(figsize=(6.4, 4.8))
+    pievals = np.array([3.0, 5.0, 2.0, 7.0, 4.0, 6.0])
+    ax.pie(pievals, labels=["a", "b", "c", "d", "e", "f"],
+           explode=[0.0, 0.1, 0.0, 0.0, 0.0, 0.0],
+           startangle=90.0, counterclock=False, autopct="%.1f%%")
+    ax.set_title("pie options")
+    save(fig, "pie_opts")
 
     # 109 marker edges and a band carried to the crossing
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))

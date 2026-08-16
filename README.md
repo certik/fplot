@@ -39,6 +39,12 @@ call suptitle("figure title")
   (separate keywords because Fortran cannot overload one dummy as
   scalar-or-array the way matplotlib's `s=` and `c=` do)
 - `step`, `stem`, `barh`, `pie`, `boxplot`, `violinplot`
+- `boxplot(y)` for one dataset or `boxplot(y(:,:), labels=)` for a row
+  each, with `vert=`, `notch=`, `showmeans=`, `patch_artist=` and `whis=`
+- `violinplot` the same way, with `vert=`, `showmeans=`, `showmedians=`
+  and `showextrema=`
+- `pie(explode=, startangle=, counterclock=, autopct=, pctdistance=,
+  labeldistance=, radius=, colors=, edgecolor=, linewidth=)`
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`
 - `fill_betweenx` for a band along y, `stackplot` for layers summed on top
   of each other, and `axline` for an endless line through two points or
@@ -47,7 +53,9 @@ call suptitle("figure title")
   annotated point, with `arrowcolor=`, `arrowlw=` and `shrink=`), with
   `rotation=`, `va=`, a `bbox_facecolor=` box behind them and lines broken
   at `achar(10)`; `figtext` places on the canvas instead of in the axes, and
-  `transform="axes"` places in fractions of the axes box
+  `transform="axes"` places in fractions of the axes box.
+  `connectionstyle="arc3,rad=0.3"` bows the leader out of the straight
+  line, and `boxstyle="round,pad=0.5"` rounds the corners of the box
 - `imshow` of an (row, column, channel) array paints the colours given,
   three channels for RGB or four for RGBA
 - `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
@@ -77,7 +85,10 @@ call suptitle("figure title")
   where the data has put them so far, so nothing drawn later moves them
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
-- `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
+- `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=,
+  labels=)`, placed where the data leaves most room when `loc` is left
+  out, as matplotlib's `"best"` does; a label starting with `_` keeps
+  its artist out of the legend,
   `figlegend(loc=, fontsize=, ncol=, frameon=, title=)` for one legend
   covering every panel,
   `xticks` / `yticks` with optional labels, `minorticks_on`,
@@ -101,6 +112,9 @@ call suptitle("figure title")
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing
 - `subplots_adjust` and `tight_layout`
+- `constrained_layout(.true.)`: the same fit, but made afresh at draw
+  time, so labels added after the plotting still get their room. Ours
+  keeps one margin for the whole grid where matplotlib works row by row
 - `twinx` and `twiny` for a second y or x axis on the same plot
 - Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
   color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
@@ -134,13 +148,29 @@ call suptitle("figure title")
   have the ticks land on round dates and read as dates
 - `subplot2grid`: panels that span several cells of a grid, so a wide
   plot can sit over two narrow ones
+- `subplot_mosaic(["AB", "CC"], keys, axs)`: the panels drawn as a small
+  picture of the figure, one character per cell, a panel per character
 - `gridspec(width_ratios=, height_ratios=)`: columns and rows of unequal
   size, for a wide panel beside a narrow one
 - `pcolormesh` and `pcolor`: a grid of cells with edges of your own
   choosing, which is what an unevenly sampled field needs
+- `triplot` and `tripcolor`: scattered points joined into triangles by
+  the same Delaunay triangulation matplotlib gets from Qhull, drawn as
+  edges or filled by value
+- `tricontour` and `tricontourf`: level lines and filled bands over those
+  same triangles, with matplotlib's rounded levels and a colorbar
+- `plot_trisurf`: those triangles lifted into three dimensions and lit by
+  the same light source `plot_surface` uses
+- `bar3d`: boxes standing on the xy plane, six lit faces each, painted
+  back to front with everything else in the axes
+- `quiver3d`: arrows in space, a shaft and two barbs turned fifteen
+  degrees off it, with the limits taken from where the arrows start
+- `contour3d`: level lines of a grid drawn in space, each at the height
+  of its own level
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
   same number of ticks for the space available, and one decimal count
-  shared by the whole axis
+  shared by the whole axis. A log axis writes its decades as powers, and
+  when it spans a decade or less it labels the multiples between them
 - Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$`, `$\frac{a}{b}$`,
   `$\sqrt{x}$` and the greek letters in any label, laid out once and
   drawn by every backend, with the letters sloped and the rest upright as
@@ -213,6 +243,9 @@ five comparisons.
 
 ```
 src/           library modules
+               fplot_state.f90   shared types and the figure state
+               fplot_artist.f90  drawing primitives (strokes, fills, markers)
+               fplot.f90         the plotting API and the renderers
 examples/      demo.f90
 tests/         Fortran test plots, matplotlib refs, compare scripts
 scripts/       build_flang.sh, build_lfortran.sh
@@ -240,9 +273,9 @@ difference. As of this writing, over 100 cases:
 
 | format | cases | mean difference |
 | --- | --- | --- |
-| PNG | 108 | 1.51/255 |
-| PDF | 107 | 2.06/255 |
-| EPS | 108 | 3.58/255 |
+| PNG | 124 | 1.50/255 |
+| PDF | 123 | 2.05/255 |
+| EPS | 124 | 3.57/255 |
 | GIF | 20 frames | 0.60/255 |
 
 What is left is mostly antialiasing along edges, and text: fplot draws with
