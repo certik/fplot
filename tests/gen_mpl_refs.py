@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "surface3d_extra",
     "mathtext_frac",
     "hatch",
     "colorbar_orient",
@@ -866,6 +867,19 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 96 a wireframe and a colormapped surface
+    fig = plt.figure(figsize=(6.4, 4.8))
+    s3 = np.linspace(-3, 3, 31)
+    sx, sy = np.meshgrid(s3, s3)
+    sz = np.sin(np.sqrt(sx ** 2 + sy ** 2))
+    ax = fig.add_subplot(1, 2, 1, projection="3d")
+    ax.plot_wireframe(sx, sy, sz, color="tab:blue")
+    ax.set_title("wireframe")
+    ax = fig.add_subplot(1, 2, 2, projection="3d")
+    ax.plot_surface(sx, sy, sz, cmap="viridis")
+    ax.set_title("colormapped")
+    save(fig, "surface3d_extra")
 
     # 95 fractions, roots and greek
     fig, ax = setup_fig()

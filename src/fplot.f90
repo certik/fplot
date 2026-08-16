@@ -43,7 +43,8 @@ module fplot
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
-    public :: axes3d, plot3d, scatter3d, plot_surface, view_init, zlabel, zlim
+    public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
+    public :: view_init, zlabel, zlim
     public :: subplot, subplot2grid, gridspec, suptitle, subplots_adjust, tight_layout
     public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
@@ -204,6 +205,10 @@ module fplot
         ! FILL: set by fill_betweenx, where x holds the independent
         ! coordinate and y, y2 the two edges, all with the axes swapped.
         logical :: horiz = .false.
+        ! Surfaces: a colormap over z rather than one flat color, and the
+        ! wireframe form, which rules the grid instead of filling it.
+        integer :: scmap = -1
+        logical :: wire = .false.
         ! QUIVER: the vector at each point, and how it is drawn. A negative
         ! scale or width means matplotlib's autoscale.
         real(dp), allocatable :: qu(:), qv(:)
@@ -551,6 +556,7 @@ module fplot
         procedure :: plot3d => ax_plot3d
         procedure :: scatter3d => ax_scatter3d
         procedure :: plot_surface => ax_plot_surface
+        procedure :: plot_wireframe => ax_plot_wireframe
         procedure :: view_init => ax_view_init
         procedure :: set_zlabel => ax_set_zlabel
         procedure :: set_zlim => ax_set_zlim
@@ -2113,13 +2119,22 @@ contains
         call scatter3d(x, y, z, s, c, marker, label, alpha)
     end subroutine ax_scatter3d
 
-    subroutine ax_plot_surface(self, x, y, z, color, alpha)
+    subroutine ax_plot_wireframe(self, x, y, z, color, alpha, lw)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y(:), z(:, :)
         character(len=*), intent(in), optional :: color
+        real(dp), intent(in), optional :: alpha, lw
+        call ax_sca(self)
+        call plot_wireframe(x, y, z, color, alpha, lw)
+    end subroutine ax_plot_wireframe
+
+    subroutine ax_plot_surface(self, x, y, z, color, alpha, cmap)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), z(:, :)
+        character(len=*), intent(in), optional :: color, cmap
         real(dp), intent(in), optional :: alpha
         call ax_sca(self)
-        call plot_surface(x, y, z, color, alpha)
+        call plot_surface(x, y, z, color, alpha, cmap)
     end subroutine ax_plot_surface
 
     subroutine ax_view_init(self, elev, azim)
@@ -4049,9 +4064,9 @@ contains
     end subroutine scatter3d
 
     ! z is indexed (row, column) = (y, x), as the 2D grids are.
-    subroutine plot_surface(x, y, z, color, alpha)
+    subroutine plot_surface(x, y, z, color, alpha, cmap)
         real(dp), intent(in) :: x(:), y(:), z(:, :)
-        character(len=*), intent(in), optional :: color
+        character(len=*), intent(in), optional :: color, cmap
         real(dp), intent(in), optional :: alpha
         integer :: is, nx, ny
 
@@ -4073,8 +4088,24 @@ contains
             ax(cur_i)%series(is)%color = cycle_color(ax(cur_i)%color_cycle)
             ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
         end if
+        if (present(cmap)) ax(cur_i)%series(is)%scmap = cmap_from_str(cmap)
         if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
     end subroutine plot_surface
+
+    ! The same grid, ruled rather than filled. matplotlib draws every line
+    ! of the mesh whether it is in front or behind, and so does this.
+    subroutine plot_wireframe(x, y, z, color, alpha, lw)
+        real(dp), intent(in) :: x(:), y(:), z(:, :)
+        character(len=*), intent(in), optional :: color
+        real(dp), intent(in), optional :: alpha, lw
+        integer :: is
+
+        call plot_surface(x, y, z, color, alpha)
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        ax(cur_i)%series(is)%wire = .true.
+        if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
+    end subroutine plot_wireframe
 
     subroutine contour(z, levels, cmap, extent)
         real(dp), intent(in) :: z(:, :)
@@ -8976,6 +9007,7 @@ contains
         real(dp), allocatable :: fx(:, :), fy(:, :), depth(:)
         integer, allocatable :: idx(:)
         real(dp) :: cx(4), cy(4), cz(4), ux, uy, uz, v1(3), v2(3), nrm(3), nl, shade
+        real(dp) :: zlo, zhi, t
         integer :: nx, ny, nf, f, i, j, c, rgb(3)
         character(len=7) :: col
 
@@ -8984,8 +9016,14 @@ contains
         ny = size(s%y)
         nf = (nx - 1)*(ny - 1)
         if (nf <= 0) return
+        if (s%wire) then
+            call render_wireframe(b, s, M, bl, bt, side)
+            return
+        end if
         allocate (fx(4, nf), fy(4, nf), depth(nf), idx(nf))
         rgb = hex_rgb(s%color)
+        zlo = minval(s%zg)
+        zhi = maxval(s%zg)
 
         f = 0
         do j = 1, ny - 1
@@ -9028,6 +9066,17 @@ contains
         do f = 1, nf
             ! depth now carries the lighting factor for each face, and idx
             ! the order to paint them in.
+            if (s%scmap >= 0) then
+                ! A colormapped surface takes its color from the height of
+                ! the cell, and is then lit exactly as a flat one is.
+                j = (idx(f) - 1)/(nx - 1) + 1
+                i = idx(f) - (j - 1)*(nx - 1)
+                t = 0.0_dp
+                if (zhi > zlo) t = (0.25_dp*(s%zg(j, i) + s%zg(j, i + 1) &
+                                             + s%zg(j + 1, i) + s%zg(j + 1, i + 1)) &
+                                    - zlo)/(zhi - zlo)
+                rgb = hex_rgb(cmap_color(s%scmap, t))
+            end if
             col = "#"//hex_pair(nint(rgb(1)*depth(idx(f)))) &
                   //hex_pair(nint(rgb(2)*depth(idx(f)))) &
                   //hex_pair(nint(rgb(3)*depth(idx(f))))
@@ -9035,6 +9084,36 @@ contains
         end do
         deallocate (fx, fy, depth, idx)
     end subroutine render_surface
+
+    ! Every line of the mesh, in front and behind alike: matplotlib hides
+    ! nothing in a wireframe either.
+    subroutine render_wireframe(b, s, M, bl, bt, side)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: M(4, 4), bl, bt, side
+        real(dp), allocatable :: gx(:, :), gy(:, :)
+        real(dp) :: uz
+        integer :: nx, ny, i, j
+
+        nx = size(s%x)
+        ny = size(s%y)
+        allocate (gx(ny, nx), gy(ny, nx))
+        do j = 1, ny
+            do i = 1, nx
+                call dev3(M, bl, bt, side, s%x(i), s%y(j), s%zg(j, i), &
+                          gx(j, i), gy(j, i), uz)
+            end do
+        end do
+        do j = 1, ny
+            call append_stroke_path(b, gx(j, :), gy(j, :), nx, s%color, s%linewidth, &
+                                    s%alpha)
+        end do
+        do i = 1, nx
+            call append_stroke_path(b, gx(:, i), gy(:, i), ny, s%color, s%linewidth, &
+                                    s%alpha)
+        end do
+        deallocate (gx, gy)
+    end subroutine render_wireframe
 
     pure subroutine polar_circle(cx, cy, r, px, py)
         real(dp), intent(in) :: cx, cy, r
