@@ -5643,14 +5643,16 @@ contains
                 if (.not. where(j + 1)) exit
                 j = j + 1
             end do
+            if (allocated(xr)) deallocate (xr)
+            if (allocated(ar)) deallocate (ar)
+            if (allocated(br)) deallocate (br)
             if (interp) then
                 call interp_run(x, y1, y2, i, j, n, xr, ar, br, m)
             else
                 m = j - i + 1
+                allocate (xr(m), ar(m), br(m))
                 xr = x(i:j)
                 ar = y1(i:j)
-                if (allocated(br)) deallocate (br)
-                allocate (br(m))
                 br = 0.0_dp
                 if (present(y2)) then
                     if (size(y2) >= j) br = y2(i:j)
