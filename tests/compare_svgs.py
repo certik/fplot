@@ -184,7 +184,6 @@ def main() -> int:
     print("  - matplotlib embeds DejaVu glyph paths; fplot uses <text>")
     print("  - matplotlib uses path IDs/metadata; fplot uses simpler SVG")
     print("  - tick locations may differ slightly (nice-number algorithm)")
-    print("  - marker geometry is approximate")
 
     if hard_fail:
         print(f"\nFAILED with {hard_fail} hard error(s)")

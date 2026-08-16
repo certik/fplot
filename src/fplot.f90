@@ -6832,9 +6832,9 @@ contains
         select case (mk)
         case (MARKER_CIRCLE, MARKER_POINT)
             if (mk == MARKER_POINT) then
-                r = 0.5_dp*ms*0.35_dp
+                r = 0.5_dp*ms*0.5_dp
             else
-                r = 0.5_dp*ms*0.75_dp
+                r = 0.5_dp*ms
                 do_stroke = .true.
             end if
             ! Four cubics with the standard offset match a circle to about a
@@ -6858,7 +6858,7 @@ contains
                        VERB_CUBIC, VERB_CLOSE]
             nv = 6
         case (MARKER_X)
-            r = 0.5_dp*ms*0.7_dp
+            r = 0.5_dp*ms
             mx(1:4) = [-r, r, -r, r]
             my(1:4) = [-r, r, r, -r]
             mv(1:4) = [VERB_MOVE, VERB_LINE, VERB_MOVE, VERB_LINE]
@@ -6868,7 +6868,7 @@ contains
             do_stroke = .true.
             lw = 1.5_dp
         case (MARKER_PLUS)
-            r = 0.5_dp*ms*0.75_dp
+            r = 0.5_dp*ms
             mx(1:4) = [-r, r, 0.0_dp, 0.0_dp]
             my(1:4) = [0.0_dp, 0.0_dp, -r, r]
             mv(1:4) = [VERB_MOVE, VERB_LINE, VERB_MOVE, VERB_LINE]
@@ -6878,46 +6878,48 @@ contains
             do_stroke = .true.
             lw = 1.5_dp
         case (MARKER_SQUARE)
-            r = 0.5_dp*ms*0.75_dp
+            r = 0.5_dp*ms
             mx(1:4) = [-r, r, r, -r]
             my(1:4) = [-r, -r, r, r]
             np = 4
         case (MARKER_DIAMOND)
-            r = 0.5_dp*ms*0.75_dp
+            ! The diamond is the unit square turned on its corner, so it
+            ! reaches a half diagonal rather than a half side.
+            r = 0.5_dp*ms*sqrt(2.0_dp)
             mx(1:4) = [0.0_dp, r, 0.0_dp, -r]
             my(1:4) = [-r, 0.0_dp, r, 0.0_dp]
             np = 4
         case (MARKER_TRI_UP)
-            r = 0.5_dp*ms*0.85_dp
+            r = 0.5_dp*ms
             mx(1:3) = [0.0_dp, r, -r]
             my(1:3) = [-r, r, r]
             np = 3
         case (MARKER_TRI_DOWN)
-            r = 0.5_dp*ms*0.85_dp
+            r = 0.5_dp*ms
             mx(1:3) = [0.0_dp, r, -r]
             my(1:3) = [r, -r, -r]
             np = 3
         case (MARKER_TRI_LEFT)
-            r = 0.5_dp*ms*0.85_dp
+            r = 0.5_dp*ms
             mx(1:3) = [-r, r, r]
             my(1:3) = [0.0_dp, -r, r]
             np = 3
         case (MARKER_TRI_RIGHT)
-            r = 0.5_dp*ms*0.85_dp
+            r = 0.5_dp*ms
             mx(1:3) = [r, -r, -r]
             my(1:3) = [0.0_dp, -r, r]
             np = 3
         case (MARKER_STAR)
             ! Five-pointed star: alternate outer and inner vertices.
-            r = 0.5_dp*ms*0.95_dp
+            r = 0.5_dp*ms
             do i = 1, 10
                 ang = -0.5_dp*PI + real(i - 1, dp)*PI/5.0_dp
                 if (mod(i, 2) == 1) then
                     mx(i) = r*cos(ang)
                     my(i) = r*sin(ang)
                 else
-                    mx(i) = 0.4_dp*r*cos(ang)
-                    my(i) = 0.4_dp*r*sin(ang)
+                    mx(i) = 0.5_dp*r*cos(ang)
+                    my(i) = 0.5_dp*r*sin(ang)
                 end if
             end do
             np = 10
