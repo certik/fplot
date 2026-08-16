@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "constrained",
     "mosaic",
     "legend_labels",
     "violin_opts",
@@ -885,6 +886,15 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 115 margins refitted to the decorations at draw time
+    fig, cax = plt.subplots(1, 2, figsize=(6.4, 4.8), layout="constrained")
+    for i, a in enumerate(cax.ravel()):
+        a.plot(x, (i + 1) * y)
+        a.set_xlabel("a long x label")
+        a.set_ylabel("a long y label")
+        a.set_title("panel")
+    save(fig, "constrained")
 
     # 114 panels drawn as a picture of the figure
     fig = plt.figure(figsize=(6.4, 4.8))

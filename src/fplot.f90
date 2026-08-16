@@ -49,7 +49,7 @@ module fplot
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
     public :: view_init, zlabel, zlim
     public :: subplot, subplot2grid, subplot_mosaic, gridspec, suptitle
-    public :: subplots_adjust, tight_layout
+    public :: subplots_adjust, tight_layout, constrained_layout
     public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
     public :: set_fontsize, set_zorder
@@ -725,6 +725,8 @@ module fplot
     ! rather than all at once by subplot.
     logical, save :: grid_sparse = .false.
     logical, save :: fig_initialized = .false.
+    ! Refit the margins to the decorations just before every draw.
+    logical, save :: fig_constrained = .false.
 
     ! A parked figure. Holds exactly the module state above, so switching
     ! figures is a copy in and a copy out rather than threading a figure
@@ -738,7 +740,7 @@ module fplot
         real(dp) :: d_title, d_label, d_tick, d_legend, suptitle_size
         type(axes_t), allocatable :: ax(:)
         integer :: n_ax, cur_i, grid_m, grid_n
-        logical :: sparse
+        logical :: sparse, constrained
         real(dp) :: wratio(MAX_RATIO), hratio(MAX_RATIO)
     end type figure_t
     type(figure_t), allocatable, save :: figs(:)
@@ -789,6 +791,7 @@ contains
         figs(k)%grid_m = grid_m
         figs(k)%grid_n = grid_n
         figs(k)%sparse = grid_sparse
+        figs(k)%constrained = fig_constrained
         figs(k)%wratio = fig_wratio
         figs(k)%hratio = fig_hratio
         if (allocated(figs(k)%ax)) deallocate (figs(k)%ax)
@@ -824,6 +827,7 @@ contains
         grid_m = figs(k)%grid_m
         grid_n = figs(k)%grid_n
         grid_sparse = figs(k)%sparse
+        fig_constrained = figs(k)%constrained
         if (allocated(ax)) deallocate (ax)
         if (allocated(figs(k)%ax)) then
             allocate (ax(size(figs(k)%ax)))
@@ -960,6 +964,7 @@ contains
         fig_top = MARGIN_TOP
         fig_wspace = WSPACE
         fig_hspace = HSPACE
+        fig_constrained = .false.
         fig_wratio = 1.0_dp
         fig_hratio = 1.0_dp
         def_title = TITLE_FONT
@@ -1282,23 +1287,36 @@ contains
 
     ! Shrink the margins to what the decorations actually need, so that long
     ! tick labels stop running into the neighbouring subplot or off the page.
+    ! matplotlib's constrained_layout. Ours is the tight_layout fit, run at
+    ! draw time rather than as a solve, which comes to the same thing for
+    ! the plain grids a figure usually has.
+    subroutine constrained_layout(on)
+        logical, intent(in), optional :: on
+        call ensure_fig()
+        fig_constrained = .true.
+        if (present(on)) fig_constrained = on
+    end subroutine constrained_layout
+
     subroutine tight_layout(pad)
         real(dp), intent(in), optional :: pad
         real(dp) :: p, W, H, need_l, need_b, need_t, need_r, inner_l, inner_b
+        real(dp) :: inner_t, gp
         integer :: i
 
         call ensure_fig()
         p = 1.08_dp * TICK_FONT
+        ! constrained_layout pads by a flat 1/24 inch instead.
+        if (fig_constrained) p = PT_PER_IN / 24.0_dp
         if (present(pad)) p = pad * TICK_FONT
         W = fig_w_in * PT_PER_IN
         H = fig_h_in * PT_PER_IN
-
         need_l = 0.0_dp
         need_b = 0.0_dp
         need_t = 0.0_dp
         need_r = 0.0_dp
         inner_l = 0.0_dp
         inner_b = 0.0_dp
+        inner_t = 0.0_dp
         do i = 1, n_ax
             ! An axes the caller placed itself is not the grid's business.
             if (ax(i)%fixed_pos .or. ax(i)%inset_of > 0) cycle
@@ -1310,6 +1328,8 @@ contains
             if (ax(i)%g_col > 0) inner_l = max(inner_l, decor_left(ax(i)))
             if (ax(i)%g_row + ax(i)%g_rowspan < grid_m) &
                 inner_b = max(inner_b, decor_bottom(ax(i), W, H))
+            ! and the row below puts its title into the same gap.
+            if (ax(i)%g_row > 0) inner_t = max(inner_t, decor_top(ax(i)))
         end do
         if (len_trim(fig_suptitle) > 0) need_t = need_t + LABEL_BOX * fig_suptitle_size
 
@@ -1320,8 +1340,11 @@ contains
 
         ! Inner subplots carry the same decorations, so the gaps between them
         ! have to hold those decorations and the same pad again.
-        fig_wspace = spacing_for((p + inner_l) / W, fig_right - fig_left, grid_n)
-        fig_hspace = spacing_for((p + inner_b) / H, fig_top - fig_bottom, grid_m)
+        ! constrained_layout pads both sides of a gap; tight_layout the one.
+        gp = p
+        if (fig_constrained) gp = 2.0_dp * p
+        fig_wspace = spacing_for((gp + inner_l) / W, fig_right - fig_left, grid_n)
+        fig_hspace = spacing_for((gp + inner_b + inner_t) / H, fig_top - fig_bottom, grid_m)
         call layout_grid()
     end subroutine tight_layout
 
@@ -11069,6 +11092,9 @@ contains
         integer :: i, en, n_grp
 
         call ensure_fig()
+        ! constrained_layout fits the decorations just before the drawing
+        ! goes out, when every label the figure will carry is known.
+        if (fig_constrained) call tight_layout()
         clear = .false.
         if (present(transparent)) clear = transparent
         face = resolve_color(facecolor)

@@ -856,6 +856,18 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 115) margins refitted to the decorations at draw time
+    call clf()
+    call subplots(1, 2, axs)
+    call constrained_layout(.true.)
+    do j = 1, 2
+        call axs(1, j)%plot(x, real(j, dp)*y)
+        call axs(1, j)%set_xlabel("a long x label")
+        call axs(1, j)%set_ylabel("a long y label")
+        call axs(1, j)%set_title("panel")
+    end do
+    call save_all("constrained")
+
 ! 114) panels drawn as a picture of the figure
     call clf()
     call subplot_mosaic(["AB", "CC"], mkeys, mos)

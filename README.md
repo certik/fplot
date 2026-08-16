@@ -110,6 +110,9 @@ call suptitle("figure title")
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing
 - `subplots_adjust` and `tight_layout`
+- `constrained_layout(.true.)`: the same fit, but made afresh at draw
+  time, so labels added after the plotting still get their room. Ours
+  keeps one margin for the whole grid where matplotlib works row by row
 - `twinx` and `twiny` for a second y or x axis on the same plot
 - Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
   color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
