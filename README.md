@@ -39,7 +39,8 @@ call suptitle("figure title")
 - `fill_betweenx` for a band along y, `stackplot` for layers summed on top
   of each other, and `axline` for an endless line through two points or
   through one with a `slope=`
-- `text` and `annotate` (with a leader line to the annotated point), with
+- `text` and `annotate` (`arrowstyle="->"` draws a leader with a head at the
+  annotated point, with `arrowcolor=`, `arrowlw=` and `shrink=`), with
   `rotation=`, `va=`, a `bbox_facecolor=` box behind them and lines broken
   at `achar(10)`; `figtext` places on the canvas instead of in the axes, and
   `transform="axes"` places in fractions of the axes box

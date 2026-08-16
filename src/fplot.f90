@@ -261,6 +261,11 @@ module fplot
         ! Arrow tail; only used when has_arrow is set.
         real(dp) :: xtail = 0.0_dp, ytail = 0.0_dp
         logical :: has_arrow = .false.
+        ! "->" adds a head at the annotated point; the shaft is pulled back
+        ! from both ends by shrink points so it never touches either.
+        logical :: arrow_head = .false.
+        character(len=7) :: arrow_color = "#000000"
+        real(dp) :: arrow_lw = 1.0_dp, arrow_shrink = 2.0_dp
         real(dp) :: fontsize = 10.0_dp
         character(len=7) :: color = "#000000"
         character(len=8) :: ha = "left"
@@ -5581,37 +5586,43 @@ contains
     ! Text at (xtext, ytext) with an arrow pointing at (x, y).
     subroutine annotate(s, x, y, xtext, ytext, color, fontsize, ha, &
                         fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                        bbox_edgecolor, bbox_alpha, bbox_pad, transform)
+                        bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
+                        arrowstyle, arrowcolor, arrowlw, shrink)
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: x, y
         real(dp), intent(in), optional :: xtext, ytext, fontsize
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
-        character(len=*), intent(in), optional :: transform
+        character(len=*), intent(in), optional :: transform, arrowstyle, arrowcolor
         real(dp), intent(in), optional :: rotation, bbox_alpha, bbox_pad
+        real(dp), intent(in), optional :: arrowlw, shrink
         real(dp) :: xt, yt
         logical :: arrow
 
         xt = x
         yt = y
-        arrow = present(xtext) .or. present(ytext)
+        ! Like matplotlib, the connector appears only when it is asked for.
+        arrow = present(arrowstyle)
         if (present(xtext)) xt = xtext
         if (present(ytext)) yt = ytext
         ! The label sits at the text position; the arrow runs back to (x, y).
         call add_text(xt, yt, s, color, fontsize, ha, arrow, x, y, &
                       fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                      bbox_edgecolor, bbox_alpha, bbox_pad, transform)
+                      bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
+                      arrowstyle, arrowcolor, arrowlw, shrink)
     end subroutine annotate
 
     subroutine add_text(x, y, s, color, fontsize, ha, arrow, xarr, yarr, &
                         fontweight, fontstyle, va, rotation, bbox_facecolor, &
-                        bbox_edgecolor, bbox_alpha, bbox_pad, transform)
+                        bbox_edgecolor, bbox_alpha, bbox_pad, transform, &
+                        arrowstyle, arrowcolor, arrowlw, shrink)
         real(dp), intent(in) :: x, y, xarr, yarr
         character(len=*), intent(in) :: s
         character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         character(len=*), intent(in), optional :: va, bbox_facecolor, bbox_edgecolor
-        character(len=*), intent(in), optional :: transform
+        character(len=*), intent(in), optional :: transform, arrowstyle, arrowcolor
         real(dp), intent(in), optional :: fontsize, rotation, bbox_alpha, bbox_pad
+        real(dp), intent(in), optional :: arrowlw, shrink
         logical, intent(in) :: arrow
         integer :: it
         character(len=7) :: col
@@ -5647,6 +5658,12 @@ contains
         if (present(bbox_pad)) ax(cur_i)%texts(it)%box_pad = bbox_pad
         col = resolve_color(color)
         if (len_trim(col) > 0) ax(cur_i)%texts(it)%color = col
+        if (present(arrowstyle)) &
+            ax(cur_i)%texts(it)%arrow_head = index(arrowstyle, ">") > 0
+        if (present(arrowcolor)) &
+            ax(cur_i)%texts(it)%arrow_color = resolve_color(arrowcolor)
+        if (present(arrowlw)) ax(cur_i)%texts(it)%arrow_lw = arrowlw
+        if (present(shrink)) ax(cur_i)%texts(it)%arrow_shrink = shrink
         if (present(transform)) then
             select case (transform)
             case ("axes"); ax(cur_i)%texts(it)%in_axes = .true.
@@ -6597,6 +6614,43 @@ contains
             i0 = i + 1
         end do
     end subroutine line_bounds
+
+    ! The connector of an annotation: a shaft from the text to the point it
+    ! talks about, pulled back at both ends, and optionally a two-stroke head
+    ! at the point. Head geometry follows matplotlib's "->" style: it reaches
+    ! 0.4 em back along the shaft and 0.2 em out to each side.
+    subroutine append_arrow(b, t, px, py, tx, ty)
+        class(renderer_t), intent(inout) :: b
+        type(text_t), intent(in) :: t
+        real(dp), intent(in) :: px, py, tx, ty
+        real(dp) :: dx, dy, d, ux, uy, x0, y0, x1, y1, hl, hw
+        real(dp) :: bx(3), by(3)
+
+        dx = tx - px
+        dy = ty - py
+        d = sqrt(dx*dx + dy*dy)
+        if (d <= 0.0_dp) return
+        ux = dx/d
+        uy = dy/d
+        if (d <= 2.0_dp*t%arrow_shrink) return
+        x0 = px + ux*t%arrow_shrink
+        y0 = py + uy*t%arrow_shrink
+        x1 = tx - ux*t%arrow_shrink
+        y1 = ty - uy*t%arrow_shrink
+        call append_line(b, x0, y0, x1, y1, trim(t%arrow_color), t%arrow_lw, &
+                         LINE_SOLID, 1.0_dp)
+        if (.not. t%arrow_head) return
+        hl = 0.4_dp*t%fontsize
+        hw = 0.2_dp*t%fontsize
+        bx(1) = x1 - hl*ux + hw*uy
+        by(1) = y1 - hl*uy - hw*ux
+        bx(2) = x1
+        by(2) = y1
+        bx(3) = x1 - hl*ux - hw*uy
+        by(3) = y1 - hl*uy + hw*ux
+        call append_stroke_path(b, bx, by, 3, trim(t%arrow_color), t%arrow_lw, &
+                                1.0_dp)
+    end subroutine append_arrow
 
     ! One annotation: its box, then its lines. A string is broken at every
     ! newline and the lines are stacked at matplotlib's spacing of 1.2 times
@@ -9544,12 +9598,10 @@ contains
                 px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xsc)
                 py = map_y(a%texts(i)%y, ymin, ymax, ax_b, ax_h, ysc)
             end if
-            if (a%texts(i)%has_arrow) then
-                call append_line(b, px, py, &
-                                 map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xsc), &
-                                 map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ysc), &
-                                 trim(a%texts(i)%color), 1.0_dp, LINE_SOLID, 1.0_dp)
-            end if
+            if (a%texts(i)%has_arrow) &
+                call append_arrow(b, a%texts(i), px, py, &
+                                  map_x(a%texts(i)%xtail, xmin, xmax, ax_l, ax_w, xsc), &
+                                  map_y(a%texts(i)%ytail, ymin, ymax, ax_b, ax_h, ysc))
             call append_annotation(b, a%texts(i), px, py)
         end do
 

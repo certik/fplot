@@ -850,6 +850,16 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 99) an annotation with a real arrow head
+    call clf()
+    call plot(x, y, "b-")
+    call annotate("minimum", 4.712_dp, -1.0_dp, xtext=2.2_dp, ytext=-0.55_dp, &
+                  arrowstyle="->")
+    call annotate("start", 0.0_dp, 0.0_dp, xtext=1.0_dp, ytext=0.6_dp, &
+                  arrowstyle="->", arrowcolor="r", arrowlw=1.5_dp)
+    call title("annotate arrows")
+    call save_all("annotate_arrow")
+
 ! 98) text pinned to the corners of the axes, not to the data
     call clf()
     call plot(x, y)
