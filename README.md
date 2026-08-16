@@ -104,8 +104,11 @@ call suptitle("figure title")
   once and drawn by every backend
 - Categorical axes: `plot`, `bar` and `barh` take a list of names in place
   of the numbers, and place them at 0, 1, 2, ... with the names as ticks
-- 49 matplotlib colormaps, any of them reversed with a `_r` suffix, and
-  `imshow(norm="log")` for a logarithmic color scale
+- 49 matplotlib colormaps, plus the qualitative `tab10`, `tab20` and
+  `Set1`, any of them reversed with a `_r` suffix
+- `imshow(norm="log")` for a logarithmic color scale, and
+  `imshow(boundaries=)` for matplotlib's `BoundaryNorm`: one flat color
+  per band, and a colorbar of blocks to match
 - `errorbar` with `xerr=` and asymmetric `yerr_lo=`/`yerr_hi=` arms
 - `fill_between(where=)` to shade only where a condition holds
 - `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled",

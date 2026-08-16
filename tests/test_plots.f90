@@ -846,6 +846,18 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 81) bands of a discrete norm, and the qualitative maps
+    call clf()
+    call subplot(1, 2, 1)
+    call imshow(zimg, cmap="viridis", &
+                boundaries=[-2.0_dp, -1.0_dp, 0.0_dp, 1.0_dp, 2.0_dp])
+    call colorbar()
+    call title("bands")
+    call subplot(1, 2, 2)
+    call imshow(zimg, cmap="tab20")
+    call title("tab20")
+    call save_all("cmap_discrete")
+
 ! 80) a stacked histogram, and one whose samples carry weights
     call clf()
     call subplot(1, 2, 1)

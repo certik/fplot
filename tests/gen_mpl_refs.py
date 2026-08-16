@@ -10,7 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-from matplotlib.colors import LogNorm
+from matplotlib.colors import LogNorm, BoundaryNorm
 import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon
 import datetime
@@ -75,6 +75,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "cmap_discrete",
     "hist_stacked",
     "grid_ratios",
     "formatters",
@@ -850,6 +851,18 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 81 bands of a discrete norm, and the qualitative maps
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a1 = fig.add_subplot(1, 2, 1)
+    bn = BoundaryNorm([-2.0, -1.0, 0.0, 1.0, 2.0], 256)
+    im = a1.imshow(zimg, cmap="viridis", norm=bn)
+    fig.colorbar(im, ax=a1)
+    a1.set_title("bands")
+    a2 = fig.add_subplot(1, 2, 2)
+    a2.imshow(zimg, cmap="tab20")
+    a2.set_title("tab20")
+    save(fig, "cmap_discrete")
 
     # 80 a stacked histogram, and one whose samples carry weights
     fig = plt.figure(figsize=(6.4, 4.8))

@@ -278,6 +278,9 @@ module fplot
         ! How a value is placed on the colormap: linearly, or by its
         ! logarithm, matplotlib's LogNorm.
         logical :: img_log_norm = .false.
+        ! BoundaryNorm: the edges of the bands the data is sorted into. The
+        ! image then takes one flat color per band rather than a ramp.
+        real(dp), allocatable :: img_bounds(:)
         real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: img_origin_upper = .true.
         ! pcolormesh keeps the same samples in img, but with its own cell
@@ -1773,13 +1776,16 @@ contains
         call stem(x, y, color, label, alpha)
     end subroutine ax_stem
 
-    subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect, norm)
+    subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect, &
+                         norm, interpolation, boundaries)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: z(:, :)
         character(len=*), intent(in), optional :: cmap, origin, aspect, norm
-        real(dp), intent(in), optional :: vmin, vmax, extent(4)
+        character(len=*), intent(in), optional :: interpolation
+        real(dp), intent(in), optional :: vmin, vmax, extent(4), boundaries(:)
         call ax_sca(self)
-        call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm)
+        call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
+                    interpolation, boundaries)
     end subroutine ax_imshow
 
     subroutine ax_xaxis_date(self)
@@ -2634,10 +2640,11 @@ contains
     ! Draw z as an image. z is indexed (row, column) and, with the default
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
     ! a descending y axis exactly as matplotlib does.
-    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, interpolation)
+    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
+                      interpolation, boundaries)
         real(dp), intent(in) :: z(:, :)
         character(len=*), intent(in), optional :: cmap, origin, aspect, norm, interpolation
-        real(dp), intent(in), optional :: vmin, vmax, extent(4)
+        real(dp), intent(in), optional :: vmin, vmax, extent(4), boundaries(:)
         integer :: nr, nc
         real(dp) :: lo, hi
 
@@ -2662,6 +2669,14 @@ contains
         ax(cur_i)%img_log_norm = .false.
         if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
 
+        if (allocated(ax(cur_i)%img_bounds)) deallocate (ax(cur_i)%img_bounds)
+        if (present(boundaries)) then
+            if (size(boundaries) >= 2) then
+                allocate (ax(cur_i)%img_bounds(size(boundaries)))
+                ax(cur_i)%img_bounds = boundaries
+            end if
+        end if
+
         if (ax(cur_i)%img_log_norm) then
             ! A log scale cannot start at zero, so the smallest positive
             ! sample sets the bottom of the range.
@@ -2674,6 +2689,11 @@ contains
         end if
         if (present(vmin)) lo = vmin
         if (present(vmax)) hi = vmax
+        ! The bands say what the range is; anything outside them is clamped.
+        if (allocated(ax(cur_i)%img_bounds)) then
+            lo = ax(cur_i)%img_bounds(1)
+            hi = ax(cur_i)%img_bounds(size(ax(cur_i)%img_bounds))
+        end if
         if (hi <= lo) hi = lo + 1.0_dp
         ax(cur_i)%img_vmin = lo
         ax(cur_i)%img_vmax = hi
@@ -6739,19 +6759,36 @@ contains
         ! Slices are grown slightly so they abut without seams, so keep them
         ! inside the bar.
         call set_clip(bx, bt, bw, bh)
-        do i = 1, CBAR_SLICES
-            y1 = bb - real(i - 1, dp) * bh / real(CBAR_SLICES, dp)
-            y0 = bb - real(i, dp) * bh / real(CBAR_SLICES, dp)
-            t = (real(i, dp) - 0.5_dp) / real(CBAR_SLICES, dp)
-            call append_cell(b, bx, y0, bw, y1 - y0, cmap_color(a%img_cmap, t))
-        end do
+        if (allocated(a%img_bounds)) then
+            ! One block per band, as tall as the band is wide in the data.
+            lo = a%img_bounds(1)
+            hi = a%img_bounds(size(a%img_bounds))
+            do i = 1, size(a%img_bounds) - 1
+                y1 = bb - (a%img_bounds(i) - lo) / (hi - lo) * bh
+                y0 = bb - (a%img_bounds(i + 1) - lo) / (hi - lo) * bh
+                v = 0.5_dp * (a%img_bounds(i) + a%img_bounds(i + 1))
+                call append_cell(b, bx, y0, bw, y1 - y0, &
+                                 cmap_color(a%img_cmap, cmap_t(a, v)))
+            end do
+        else
+            do i = 1, CBAR_SLICES
+                y1 = bb - real(i - 1, dp) * bh / real(CBAR_SLICES, dp)
+                y0 = bb - real(i, dp) * bh / real(CBAR_SLICES, dp)
+                t = (real(i, dp) - 0.5_dp) / real(CBAR_SLICES, dp)
+                call append_cell(b, bx, y0, bw, y1 - y0, cmap_color(a%img_cmap, t))
+            end do
+        end if
         call clear_clip()
 
         call b%draw_rect(bx, bt, bw, bh, pen(rc_spine_color, rc_spine_lw))
 
         lo = a%img_vmin
         hi = a%img_vmax
-        if (a%img_log_norm) then
+        if (allocated(a%img_bounds)) then
+            ! A tick at every band edge, which is what the bands mean.
+            nt = min(MAX_TICKS, size(a%img_bounds))
+            cb_ticks(1:nt) = a%img_bounds(1:nt)
+        else if (a%img_log_norm) then
             call log_ticks(lo, hi, cb_ticks, nt)
         else
             call linear_ticks(lo, hi, tick_space(bh, a%ytick_size, .false.), &
@@ -6759,10 +6796,12 @@ contains
         end if
         dec = -1
         if (.not. a%img_log_norm) dec = tick_decimals(cb_ticks, nt)
+
         do i = 1, nt
             v = cb_ticks(i)
             if (v < lo .or. v > hi) cycle
-            py = bb - cmap_t(a, v) * bh
+            py = bb - (v - lo) / (hi - lo) * bh
+            if (a%img_log_norm) py = bb - cmap_t(a, v) * bh
             call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
             if (a%img_log_norm) then
                 call format_tick_to(v, .true., lbl, ln)
@@ -6793,8 +6832,27 @@ contains
         type(axes_t), intent(in) :: a
         real(dp), intent(in) :: v
         real(dp) :: t, lo, hi
+        integer :: i, nb
         lo = a%img_vmin
         hi = a%img_vmax
+        if (allocated(a%img_bounds)) then
+            ! BoundaryNorm: find the band, then take the color matplotlib
+            ! gives that band, which is band*(N-1)/(nband-1) of the map.
+            nb = size(a%img_bounds) - 1
+            i = 0
+            do while (i < nb)
+                if (v < a%img_bounds(i + 2)) exit
+                i = i + 1
+            end do
+            if (v < a%img_bounds(1)) i = 0
+            i = max(0, min(nb - 1, i))
+            if (nb <= 1) then
+                t = 0.0_dp
+            else
+                t = real(int(real(i, dp) * 255.0_dp / real(nb - 1, dp)), dp) / 255.0_dp
+            end if
+            return
+        end if
         if (a%img_log_norm) then
             ! Anything at or below zero has no logarithm, so it takes the
             ! bottom of the map, as matplotlib's LogNorm does.
