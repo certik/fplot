@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "hist_orient",
     "title_loc",
     "bar_err",
     "invert_axes",
@@ -873,6 +874,16 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 103 a histogram on its side, one on a log axis, and one with gaps
+    fig, axs = plt.subplots(1, 3, figsize=(6.4, 4.8))
+    axs[0].hist(dist1, bins=12, orientation="horizontal", color="C0")
+    axs[0].set_title("horizontal")
+    axs[1].hist(dist1, bins=12, log=True, color="C1")
+    axs[1].set_title("log")
+    axs[2].hist(dist1, bins=12, rwidth=0.7, color="C2")
+    axs[2].set_title("rwidth")
+    save(fig, "hist_orient")
 
     # 102 a title against one end, and labels pushed further out
     fig, ax = setup_fig()

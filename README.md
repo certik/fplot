@@ -153,7 +153,7 @@ call suptitle("figure title")
 - `errorbar` with `xerr=` and asymmetric `yerr_lo=`/`yerr_hi=` arms
 - `fill_between(where=)` to shade only where a condition holds
 - `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled",
-  weights=, stacked=)`
+  weights=, stacked=, orientation="horizontal", log=, rwidth=)`
 - `axhspan`/`axvspan` shaded bands and `hlines`/`vlines` line runs
 - `style_use("ggplot")` and friends (`seaborn`, `fivethirtyeight`,
   `dark_background`, `grayscale`, `default`), or `rc(figsize=, dpi=,

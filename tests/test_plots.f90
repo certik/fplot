@@ -852,6 +852,19 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 103) a histogram on its side, one on a log axis, and one with gaps
+    call clf()
+    call subplot(1, 3, 1)
+    call hist(dist1, bins=12, orientation="horizontal", color="C0")
+    call title("horizontal")
+    call subplot(1, 3, 2)
+    call hist(dist1, bins=12, log=.true., color="C1")
+    call title("log")
+    call subplot(1, 3, 3)
+    call hist(dist1, bins=12, rwidth=0.7_dp, color="C2")
+    call title("rwidth")
+    call save_all("hist_orient")
+
 ! 102) a title against one end, and labels pushed further out
     call clf()
     call plot(x, y, "b-")

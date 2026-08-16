@@ -1833,16 +1833,19 @@ contains
     end subroutine ax_bar_label
 
     subroutine ax_hist(self, x, bins, color, label, alpha, bin_edges, &
-                       density, cumulative, histtype)
+                       density, cumulative, histtype, weights, stacked, &
+                       orientation, log, rwidth)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:)
         integer, intent(in), optional :: bins
         character(len=*), intent(in), optional :: color, label, histtype
-        real(dp), intent(in), optional :: alpha, bin_edges(:)
-        logical, intent(in), optional :: density, cumulative
+        character(len=*), intent(in), optional :: orientation
+        real(dp), intent(in), optional :: alpha, bin_edges(:), weights(:), rwidth
+        logical, intent(in), optional :: density, cumulative, stacked, log
         call ax_sca(self)
         call hist(x, bins, color, label, alpha, bin_edges, density, &
-                  cumulative, histtype)
+                  cumulative, histtype, weights, stacked, orientation, &
+                  log, rwidth)
     end subroutine ax_hist
 
     subroutine ax_fill_between(self, x, y1, y2, color, label, alpha, where, &
@@ -5153,17 +5156,19 @@ contains
 
     ! Histogram of x using `bins` equal-width bins over the data range.
     subroutine hist(x, bins, color, label, alpha, bin_edges, density, &
-                    cumulative, histtype, weights, stacked)
+                    cumulative, histtype, weights, stacked, orientation, &
+                    log, rwidth)
         real(dp), intent(in) :: x(:)
         integer, intent(in), optional :: bins
         character(len=*), intent(in), optional :: color, label, histtype
-        real(dp), intent(in), optional :: alpha, bin_edges(:), weights(:)
-        logical, intent(in), optional :: density, cumulative, stacked
+        character(len=*), intent(in), optional :: orientation
+        real(dp), intent(in), optional :: alpha, bin_edges(:), weights(:), rwidth
+        logical, intent(in), optional :: density, cumulative, stacked, log
         integer :: nb, i, k, n, is
         real(dp) :: lo, hi, w, tot
         real(dp), allocatable :: edges(:), centers(:), counts(:), widths(:)
         real(dp), allocatable :: sx(:), sy(:), base(:), sb(:)
-        logical :: norm, cum, stk
+        logical :: norm, cum, stk, horiz
         character(len=16) :: ht
 
         n = size(x)
@@ -5176,6 +5181,8 @@ contains
         if (present(stacked)) stk = stacked
         ht = "bar"
         if (present(histtype)) ht = histtype
+        horiz = .false.
+        if (present(orientation)) horiz = orientation == "horizontal"
 
         if (present(bin_edges)) then
             nb = size(bin_edges) - 1
@@ -5227,7 +5234,22 @@ contains
             end do
         end if
 
+        ! rwidth leaves a gap between the bars by shrinking each about its
+        ! own centre; the bins themselves are untouched.
+        if (present(rwidth)) widths = widths*rwidth
+
         call ensure_fig()
+        ! log puts the count axis on a log scale, which is the y axis for an
+        ! upright histogram and the x axis for one lying on its side.
+        if (present(log)) then
+            if (log) then
+                if (horiz) then
+                    call set_xscale("log")
+                else
+                    call set_yscale("log")
+                end if
+            end if
+        end if
         ! A stacked histogram starts where the last one in these axes ended.
         allocate (base(nb))
         base = 0.0_dp
@@ -5262,16 +5284,30 @@ contains
             sy(2*nb + 2) = base(nb)
             sb(2*nb + 2) = base(nb)
             if (trim(ht) == "stepfilled") then
-                call fill_between(sx, sy, sb, color, label, alpha)
+                if (horiz) then
+                    call fill_betweenx(sx, sy, sb, color, label, alpha)
+                else
+                    call fill_between(sx, sy, sb, color, label, alpha)
+                end if
+            else if (horiz) then
+                is = new_shape_series(SERIES_LINE, sy, sx, color, label, alpha)
             else
                 is = new_shape_series(SERIES_LINE, sx, sy, color, label, alpha)
             end if
         case default
-            is = new_shape_series(SERIES_BAR, centers, counts, color, label, alpha)
+            ! Horizontal bars hold the bin position in x and the count in y
+            ! exactly as barh does, so nothing below has to know the
+            ! difference.
+            is = new_shape_series(merge(SERIES_BARH, SERIES_BAR, horiz), &
+                                  centers, counts, color, label, alpha)
             if (is >= 1) then
                 ! Histogram bars touch, so a contrasting edge would show up
-                ! as a seam between them.
+                ! as a seam between them. Bars narrowed by rwidth stand
+                ! apart, and then there is no seam to hide.
                 ax(cur_i)%series(is)%edgecolor = ax(cur_i)%series(is)%color
+                if (present(rwidth)) then
+                    if (rwidth < 1.0_dp) ax(cur_i)%series(is)%edgewidth = 0.0_dp
+                end if
                 ax(cur_i)%series(is)%width = widths(1)
                 allocate (ax(cur_i)%series(is)%bwidth(nb))
                 ax(cur_i)%series(is)%bwidth = widths
@@ -6024,6 +6060,7 @@ contains
                         xlo = xv - arm(a%series(i)%exlo, j)
                         xhi = xv + arm(a%series(i)%exhi, j)
                     end if
+                    if (a%xsc%kind == SCALE_LOG .and. xlo <= 0.0_dp) xlo = xhi
                     if (.not. (a%xsc%kind == SCALE_LOG .and. xlo <= 0.0_dp)) then
                         anyx = .true.
                         xmin = min(xmin, xlo)
@@ -6052,6 +6089,10 @@ contains
                         ylo = yv - arm(a%series(i)%eylo, j)
                         yhi = yv + arm(a%series(i)%eyhi, j)
                     end select
+                    ! On a log axis a bar reaching down to zero has no
+                    ! bottom to speak of, so only its top counts towards the
+                    ! limits.
+                    if (a%ysc%kind == SCALE_LOG .and. ylo <= 0.0_dp) ylo = yhi
                     if (.not. (a%ysc%kind == SCALE_LOG .and. yhi <= 0.0_dp)) then
                         anyy = .true.
                         ymin = min(ymin, ylo)
@@ -7063,9 +7104,14 @@ contains
             yb = map_y(bar_base(s, j) + s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         end if
 
-        call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
-                         abs(yb - ya), point_color(s, j), s%alpha, &
-                         trim(s%edgecolor), s%edgewidth)
+        if (s%edgewidth > 0.0_dp) then
+            call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
+                             abs(yb - ya), point_color(s, j), s%alpha, &
+                             trim(s%edgecolor), s%edgewidth)
+        else
+            call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
+                             abs(yb - ya), point_color(s, j), s%alpha)
+        end if
         if (len_trim(s%hatch) > 0) &
             call append_hatch(b, [xa, xb, xb, xa], [ya, ya, yb, yb], 4, &
                               trim(s%hatch), trim(s%hcolor), s%alpha)
