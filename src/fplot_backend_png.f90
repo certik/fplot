@@ -23,7 +23,9 @@ module fplot_backend_png
     use fplot_raster
     use fplot_png, only: png_encode
     use fplot_glyphs, only: EM, ASCENT, DESCENT, XHEIGHT, &
-                            glyph_advance, glyph_verbs, glyph_points
+                            glyph_advance, glyph_verbs, glyph_points, &
+                            FACE_REGULAR, FACE_BOLD, FACE_OBLIQUE, &
+                            FACE_BOLD_OBLIQUE
     implicit none
     private
 
@@ -368,10 +370,27 @@ contains
 
         w = 0.0_dp
         do i = 1, len(s)
-            w = w + glyph_advance(iachar(s(i:i)))
+            w = w + glyph_advance(iachar(s(i:i)), font_face(font))
         end do
         w = w*font%size/EM
     end function text_width
+
+    ! Which of the four stacked faces the font asks for.
+    pure integer function font_face(font)
+        type(font_t), intent(in) :: font
+        logical :: b, o
+        b = font%weight == WEIGHT_BOLD
+        o = font%slant == SLANT_ITALIC
+        if (b .and. o) then
+            font_face = FACE_BOLD_OBLIQUE
+        else if (b) then
+            font_face = FACE_BOLD
+        else if (o) then
+            font_face = FACE_OBLIQUE
+        else
+            font_face = FACE_REGULAR
+        end if
+    end function font_face
 
     subroutine png_draw_text(self, x, y, s, font, paint, anchor, baseline, angle)
         class(png_renderer_t), intent(inout) :: self
@@ -385,11 +404,12 @@ contains
         real(dp) :: c1x, c1y, c2x, c2y, ex, ey
         real(dp), allocatable :: px(:), py(:)
         integer, allocatable :: gv(:)
-        integer :: i, j, p, nv, np, code
+        integer :: i, j, p, nv, np, code, face
         type(paint_t) :: pp
 
         if (len_trim(s) == 0) return
         sc = font%size/EM
+        face = font_face(font)
 
         pen = 0.0_dp
         select case (anchor)
@@ -419,8 +439,8 @@ contains
         call pb_reset(self%pb)
         do i = 1, len(s)
             code = iachar(s(i:i))
-            call glyph_verbs(code, gv, nv)
-            call glyph_points(code, px, py, np)
+            call glyph_verbs(code, gv, nv, face)
+            call glyph_points(code, px, py, np, face)
             p = 0
             do j = 1, nv
                 select case (gv(j))
@@ -442,7 +462,7 @@ contains
                     call pb_close(self%pb)
                 end select
             end do
-            pen = pen + glyph_advance(code)*sc
+            pen = pen + glyph_advance(code, face)*sc
         end do
 
         call fill_path_buf(self%cv, self%pb, paint%fill_rgb, paint%fill_alpha, pp%clip)

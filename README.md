@@ -35,7 +35,9 @@ call suptitle("figure title")
   scalar-or-array the way matplotlib's `s=` and `c=` do)
 - `step`, `stem`, `barh`, `pie`, `boxplot`, `violinplot`
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`
-- `text` and `annotate` (with a leader line to the annotated point)
+- `text` and `annotate` (with a leader line to the annotated point), with
+  `rotation=`, `va=`, a `bbox_facecolor=` box behind them and lines broken
+  at `achar(10)`; `figtext` places on the canvas instead of in the axes
 - `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
   `aspect`, plus `colorbar`
 - `contour` and `contourf` with automatic or explicit `levels`
@@ -43,7 +45,14 @@ call suptitle("figure title")
 - Format strings: colors `bgrcmykw` / `C0`–`C9`, linestyles `-` `--` `:` `-.`,
   markers `o x . s ^ v < > * + D`
 - Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
+- Marker and line detail on `plot`: `markersize=`, `markerfacecolor=`,
+  `markeredgecolor=`, `markeredgewidth=`, `markevery=`, `drawstyle=` and
+  a `dashes=` pattern of your own
 - Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure(figsize=, dpi=)`
+- `set_facecolor(color, alpha=)` for the background of one axes
+- `grid(on, axis=, which=, color=, linestyle=, lw=, alpha=)` for one axis
+  only, for the minor ticks, or in a colour of your own; log axes carry
+  minor ticks without being asked, as matplotlib's do
 - `savefig(file, transparent=, facecolor=)`; the extension picks the format,
   one of `.svg`, `.png`, `.pdf` or `.eps`, and `dpi=` sizes the PNG raster
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
@@ -62,7 +71,8 @@ call suptitle("figure title")
 - Several live figures at once: `figure(num=)`, `gcf()`, `close(num=, all=)`
 - `subplots(m, n, axs, sharex=, sharey=)` hands back axes handles, so
   `call axs(1,2)%plot(x, y)` works alongside the stateful `subplot` style;
-  shared axes span the union of the group and drop their inner tick labels
+  shared axes span the union of the group and drop their inner tick labels.
+  Every call the stateful interface offers is also a method on the handle
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing
@@ -84,6 +94,11 @@ call suptitle("figure title")
   `zlabel` and `zlim`, drawn with mplot3d's camera, panes and lighting
 - Polar axes: `polar(theta, r)`, or `set_polar()` on an axes, with the
   angular grid, the degree labels and the radial labels along 22.5°
+- Layered like matplotlib: images below patches, the grid above the
+  patches and below the lines, text on top, with `set_zorder` to lift
+  the artist just drawn out of that order
+- Missing data: a NaN or an infinity breaks the line and the band there
+  and takes no part in the limits, as it does in matplotlib
 - Patches: `add_rectangle`, `add_circle`, `add_ellipse`, `add_polygon`,
   `add_arrow` and `add_path` for an arbitrary path of lines and cubics,
   filled and outlined in data coordinates
@@ -102,7 +117,11 @@ call suptitle("figure title")
   same number of ticks for the space available, and one decimal count
   shared by the whole axis
 - Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$` in any label, laid out
-  once and drawn by every backend
+  once and drawn by every backend, with the letters sloped and the rest
+  upright as TeX sets them
+- `fontweight=` and `fontstyle=` on `title`, `suptitle`, `xlabel`,
+  `ylabel`, `text` and `annotate`: real bold and oblique faces, not a
+  smeared or sheared regular one
 - Categorical axes: `plot`, `bar` and `barh` take a list of names in place
   of the numbers, and place them at 0, 1, 2, ... with the names as ticks
 - 49 matplotlib colormaps, plus the qualitative `tab10`, `tab20` and

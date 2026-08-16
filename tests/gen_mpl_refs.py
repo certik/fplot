@@ -76,6 +76,14 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "axes_facecolor",
+    "marker_detail",
+    "text_options",
+    "font_faces",
+    "grid_options",
+    "axes_handles2",
+    "zorder",
+    "nan_gap",
     "patches_path",
     "cmap_discrete",
     "hist_stacked",
@@ -853,6 +861,91 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 90 a background colour for one axes only
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].plot(x, y)
+    axs[0].set_facecolor("#eeeeee")
+    axs[0].grid(True, color="white")
+    axs[1].plot(x, y)
+    save(fig, "axes_facecolor")
+
+    # 89 marker and line detail
+    fig, ax = setup_fig()
+    ax.plot(x, y, marker="o", markevery=8, markerfacecolor="white",
+            markeredgecolor="tab:red", markersize=7.0)
+    ax.plot(x, y - 1.0, color="tab:green", dashes=[8.0, 2.0, 2.0, 2.0])
+    ax.plot(x[:8], y[:8] + 1.0, color="tab:purple", drawstyle="steps-post")
+    save(fig, "marker_detail")
+
+    # 88 text options: rotation, vertical alignment, a box and two lines
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.text(1.0, 0.6, "rotated", rotation=30.0)
+    ax.text(4.0, 0.6, "top", va="top", ha="center")
+    ax.text(4.0, -0.6, "boxed", ha="center", va="center",
+            bbox=dict(boxstyle="square,pad=0.3", facecolor="yellow",
+                      edgecolor="black"))
+    ax.text(1.0, -0.4, "two\nlines", va="top")
+    fig.text(0.02, 0.02, "figure corner", fontsize=8.0)
+    save(fig, "text_options")
+
+    # 87 bold and italic
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.set_title("bold title", fontweight="bold")
+    ax.set_xlabel("italic x", fontstyle="italic")
+    ax.set_ylabel("bold italic y", fontweight="bold", fontstyle="italic")
+    ax.text(2.0, 0.5, "emphasis", fontstyle="italic")
+    ax.text(2.0, -0.5, "strong", fontweight="bold")
+    save(fig, "font_faces")
+
+    # 86 the grid: which ticks it follows and what it looks like
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].plot(x, y)
+    axs[0].grid(True, which="both", color="0.7", linestyle=":", linewidth=0.6)
+    axs[0].minorticks_on()
+    axs[0].set_title("both")
+    axs[1].plot(x, y)
+    axs[1].grid(True, axis="y", color="tab:blue", linestyle="--", alpha=0.4)
+    axs[1].set_title("y only")
+    save(fig, "grid_options")
+
+    # 85 the same calls, reached through an axes handle
+    fig, axs = plt.subplots(2, 2, figsize=(6.4, 4.8))
+    axs[0, 0].boxplot(dist1)
+    axs[0, 0].set_title("box")
+    axs[0, 1].violinplot(dist2)
+    axs[0, 1].set_title("violin")
+    axs[1, 0].semilogy(x + 1.0, np.exp(x))
+    axs[1, 0].minorticks_on()
+    axs[1, 1].pie([3.0, 1.0, 2.0])
+    axs[1, 1].set_title("pie")
+    save(fig, "axes_handles2")
+
+    # 84 what is drawn over what
+    fig, ax = setup_fig()
+    zx = np.arange(1.0, 7.0)
+    zh = np.array([3.0, 5.0, 2.0, 7.0, 4.0, 6.0])
+    ax.bar(zx, zh, color="tab:blue")
+    ax.fill_between(zx, zh * 0.5, color="tab:green", alpha=0.7, zorder=3)
+    ax.plot(zx, zh, "r-", lw=2.0)
+    ax.grid(True)
+    ax.set_title("layers")
+    save(fig, "zorder")
+
+    # 83 missing data: the line breaks at it and the axes do not stretch
+    fig, ax = setup_fig()
+    xgap = np.arange(1, 41, dtype=float)
+    ygap = np.sin(0.2 * xgap)
+    yband = ygap - 0.4
+    ygap[11:15] = np.nan
+    yband[29:32] = np.nan
+    ax.fill_between(xgap, ygap, yband, color="tab:orange", alpha=0.5)
+    ax.plot(xgap, ygap, "b-o", label="with a gap")
+    ax.legend(loc="upper right")
+    ax.set_title("missing data")
+    save(fig, "nan_gap")
 
     # 82 an arrow patch and a path of cubic curves
     fig, ax = setup_fig()

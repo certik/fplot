@@ -36,6 +36,7 @@ program test_plots
     character(len=1), parameter :: mark_codes(n_marks) = &
         ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
     integer :: i, j, k
+    real(dp) :: xgap(40), ygap(40), yband(40), qnan, zero
     integer, parameter :: n3 = 31, nl3 = 100
     real(dp), parameter :: PI_T = 3.14159265358979323846_dp
     real(dp) :: s3x(n3), s3y(n3), s3z(n3, n3)
@@ -845,6 +846,101 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 90) a background colour for one axes only
+    call clf()
+    call subplots(1, 2, axs)
+    call axs(1, 1)%plot(x, y)
+    call axs(1, 1)%set_facecolor("#eeeeee")
+    call axs(1, 1)%grid(.true., color="white")
+    call axs(1, 2)%plot(x, y)
+    call save_all("axes_facecolor")
+
+! 89) marker and line detail
+    call clf()
+    call plot(x, y, marker="o", markevery=8, markerfacecolor="white", &
+              markeredgecolor="tab:red", markersize=7.0_dp)
+    call plot(x, y - 1.0_dp, color="tab:green", dashes=[8.0_dp, 2.0_dp, 2.0_dp, 2.0_dp])
+    call plot(x(1:8), y(1:8) + 1.0_dp, color="tab:purple", drawstyle="steps-post")
+    call save_all("marker_detail")
+
+! 88) text options: rotation, vertical alignment, a box and two lines
+    call clf()
+    call plot(x, y)
+    call text(1.0_dp, 0.6_dp, "rotated", rotation=30.0_dp)
+    call text(4.0_dp, 0.6_dp, "top", va="top", ha="center")
+    call text(4.0_dp, -0.6_dp, "boxed", ha="center", va="center", &
+              bbox_facecolor="yellow", bbox_edgecolor="black")
+    call text(1.0_dp, -0.4_dp, "two"//achar(10)//"lines", va="top")
+    call figtext(0.02_dp, 0.02_dp, "figure corner", fontsize=8.0_dp)
+    call save_all("text_options")
+
+! 87) bold and italic
+    call clf()
+    call plot(x, y)
+    call title("bold title", fontweight="bold")
+    call xlabel("italic x", fontstyle="italic")
+    call ylabel("bold italic y", fontweight="bold", fontstyle="italic")
+    call text(2.0_dp, 0.5_dp, "emphasis", fontstyle="italic")
+    call text(2.0_dp, -0.5_dp, "strong", fontweight="bold")
+    call save_all("font_faces")
+
+! 86) the grid: which ticks it follows and what it looks like
+    call clf()
+    call subplot(1, 2, 1)
+    call plot(x, y)
+    call grid(.true., which="both", color="0.7", linestyle=":", lw=0.6_dp)
+    call minorticks_on()
+    call title("both")
+    call subplot(1, 2, 2)
+    call plot(x, y)
+    call grid(.true., axis="y", color="tab:blue", linestyle="--", alpha=0.4_dp)
+    call title("y only")
+    call save_all("grid_options")
+
+! 85) the same calls, reached through an axes handle rather than the
+! current axes
+    call clf()
+    call subplots(2, 2, axs)
+    call axs(1, 1)%boxplot(dist1)
+    call axs(1, 1)%set_title("box")
+    call axs(1, 2)%violinplot(dist2)
+    call axs(1, 2)%set_title("violin")
+    call axs(2, 1)%semilogy(x + 1.0_dp, exp(x))
+    call axs(2, 1)%minorticks_on()
+    call axs(2, 2)%pie([3.0_dp, 1.0_dp, 2.0_dp])
+    call axs(2, 2)%set_title("pie")
+    call save_all("axes_handles2")
+
+! 84) what is drawn over what: the grid rules across the bars but not
+! across the line, and the band is lifted over both
+    call clf()
+    call bar(xb, hb, color="tab:blue")
+    call fill_between(xb, hb*0.5_dp, color="tab:green", alpha=0.7_dp)
+    call set_zorder(3.0_dp)
+    call plot(xb, hb, "r-", lw=2.0_dp)
+    call grid(.true.)
+    call title("layers")
+    call save_all("zorder")
+
+! 83) missing data: the line breaks at it and the axes do not stretch
+    call clf()
+    ! A quiet NaN without leaning on ieee_arithmetic, which not every
+    ! compiler this has to build with provides.
+    zero = 0.0_dp
+    qnan = zero / zero
+    do i = 1, 40
+        xgap(i) = real(i, dp)
+        ygap(i) = sin(0.2_dp * real(i, dp))
+        yband(i) = ygap(i) - 0.4_dp
+    end do
+    ygap(12:15) = qnan
+    yband(30:32) = qnan
+    call fill_between(xgap, ygap, yband, color="tab:orange", alpha=0.5_dp)
+    call plot(xgap, ygap, "b-o", label="with a gap")
+    call legend(loc="upper right")
+    call title("missing data")
+    call save_all("nan_gap")
 
 ! 82) an arrow patch and a path of cubic curves
     call clf()

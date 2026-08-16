@@ -64,6 +64,17 @@ module fplot_backend_eps
         556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, &
         334, 260, 334, 584]
 
+    ! The same for Helvetica-Bold; oblique shares the regular widths.
+    integer, parameter :: HELVB_W(32:126) = [ &
+        278, 333, 474, 556, 556, 889, 722, 278, 333, 333, 389, 584, 278, &
+        333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, &
+        333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667, 611, &
+        778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, &
+        611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556, 278, &
+        556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, &
+        611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, &
+        389, 280, 389, 584]
+
 contains
 
     subroutine put(self, s)
@@ -99,16 +110,39 @@ contains
         t = trim(s)
     end function int_str
 
-    pure function text_width(s, size) result(w)
+    ! The base-thirty-five name of the face the font asks for.
+    pure function face_name(font) result(t)
+        type(font_t), intent(in) :: font
+        character(len=:), allocatable :: t
+        logical :: b, o
+        b = font%weight == WEIGHT_BOLD
+        o = font%slant == SLANT_ITALIC
+        if (b .and. o) then
+            t = "Helvetica-BoldOblique"
+        else if (b) then
+            t = "Helvetica-Bold"
+        else if (o) then
+            t = "Helvetica-Oblique"
+        else
+            t = "Helvetica"
+        end if
+    end function face_name
+
+    pure function text_width(s, size, bold) result(w)
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: size
+        logical, intent(in) :: bold
         real(dp) :: w
         integer :: i, c
         w = 0.0_dp
         do i = 1, len(s)
             c = iachar(s(i:i))
             if (c >= 32 .and. c <= 126) then
-                w = w + real(HELV_W(c), dp)
+                if (bold) then
+                    w = w + real(HELVB_W(c), dp)
+                else
+                    w = w + real(HELV_W(c), dp)
+                end if
             else
                 w = w + 500.0_dp
             end if
@@ -334,7 +368,7 @@ contains
 
         ! SVG asks the viewer to align the string; PostScript places a fixed
         ! origin, so the offset has to be measured here.
-        w = text_width(trim(s), font%size)
+        w = text_width(trim(s), font%size, font%weight == WEIGHT_BOLD)
         dx = 0.0_dp
         select case (anchor)
         case (ANCHOR_MIDDLE); dx = -0.5_dp*w
@@ -357,7 +391,7 @@ contains
         call put(self, "1 -1 scale"//new_line("a"))
         call put_num(self, angle)
         call put(self, "rotate"//new_line("a"))
-        call put(self, "/Helvetica findfont "//num_str(font%size) &
+        call put(self, "/"//face_name(font)//" findfont "//num_str(font%size) &
                  //" scalefont setfont"//new_line("a"))
         call put_num(self, dx)
         call put_num(self, -dy)
