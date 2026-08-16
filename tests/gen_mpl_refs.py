@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "trisurf",
     "tricontourf",
     "tricontour",
     "tripcolor",
@@ -902,6 +903,17 @@ def main() -> None:
             tpy.append(j + 0.35 * np.cos(5.0 * k))
             tpz.append(tpx[-1] * tpy[-1])
     tx, ty, tz = np.array(tpx), np.array(tpy), np.array(tpz)
+
+    # 122 a surface over scattered points
+    ks = np.arange(1, 61)
+    usx = 3.0 * np.sin(2.0 * ks)
+    usy = 3.0 * np.cos(3.0 * ks)
+    usz = np.sin(usx) * np.cos(usy)
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a = fig.add_subplot(projection="3d")
+    a.plot_trisurf(usx, usy, usz, cmap="viridis")
+    a.set_title("trisurf")
+    save(fig, "trisurf")
 
     kk = np.arange(1, 121)
     tx2 = 3.0 * (1.0 + np.sin(7.0 * kk))

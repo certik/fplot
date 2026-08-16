@@ -24,6 +24,8 @@ program test_plots
     real(dp) :: xs(ns), ys(ns)
     integer, parameter :: ntc = 120
     real(dp) :: tx2(ntc), ty2(ntc), tz2(ntc)
+    integer, parameter :: nts = 60
+    real(dp) :: usx(nts), usy(nts), usz(nts)
     integer, parameter :: ntp = 24
     real(dp) :: tx(ntp), ty(ntp), tz(ntp)
     integer, parameter :: nlg = 60
@@ -861,6 +863,17 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+    ! 122) a surface over scattered points
+    call clf()
+    do k = 1, nts
+        usx(k) = 3.0_dp*sin(real(2*k, dp))
+        usy(k) = 3.0_dp*cos(real(3*k, dp))
+        usz(k) = sin(usx(k))*cos(usy(k))
+    end do
+    call plot_trisurf(usx, usy, usz, cmap="viridis")
+    call title("trisurf")
+    call save_all("trisurf")
 
 ! A denser scatter for the contours, matching what matplotlib is given.
     do k = 1, ntc

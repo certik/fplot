@@ -49,6 +49,7 @@ module fplot
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
+    public :: plot_trisurf
     public :: view_init, zlabel, zlim
     public :: subplot, subplot2grid, subplot_mosaic, gridspec, suptitle
     public :: subplots_adjust, tight_layout, constrained_layout
@@ -175,6 +176,8 @@ module fplot
     ! AXLINE: an endless line through the two points in x(1:2), y(1:2). It
     ! is drawn to the edges of the axes and takes no part in the limits.
     integer, parameter :: SERIES_AXLINE = 21
+    ! TRISURF: points in x, y and z joined by the triangles in tri.
+    integer, parameter :: SERIES_TRISURF = 22
     ! The most points one streamline may have.
     integer, parameter :: MAX_STREAM_PTS = 20000
 
@@ -285,6 +288,7 @@ module fplot
         ! surface, in the row = y, column = x order the 2D grids use.
         real(dp), allocatable :: z(:)
         real(dp), allocatable :: zg(:, :)
+        integer, allocatable :: tri(:, :)
         character(len=128) :: label = ""
     end type series_t
 
@@ -631,6 +635,7 @@ module fplot
         procedure :: scatter3d => ax_scatter3d
         procedure :: plot_surface => ax_plot_surface
         procedure :: plot_wireframe => ax_plot_wireframe
+        procedure :: plot_trisurf => ax_plot_trisurf
         procedure :: view_init => ax_view_init
         procedure :: set_zlabel => ax_set_zlabel
         procedure :: set_zlim => ax_set_zlim
@@ -2308,6 +2313,15 @@ contains
         call ax_sca(self)
         call scatter3d(x, y, z, s, c, marker, label, alpha)
     end subroutine ax_scatter3d
+
+    subroutine ax_plot_trisurf(self, x, y, z, color, alpha, cmap)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        character(len=*), intent(in), optional :: color, cmap
+        real(dp), intent(in), optional :: alpha
+        call ax_sca(self)
+        call plot_trisurf(x, y, z, color, alpha, cmap)
+    end subroutine ax_plot_trisurf
 
     subroutine ax_plot_wireframe(self, x, y, z, color, alpha, lw)
         class(axes), intent(in) :: self
@@ -4598,6 +4612,40 @@ contains
         if (present(cmap)) ax(cur_i)%series(is)%scmap = cmap_from_str(cmap)
         if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
     end subroutine plot_surface
+
+    ! Scattered points in space, triangulated in the xy plane and drawn as
+    ! lit facets. matplotlib triangulates with Qhull and shades the result
+    ! exactly as it shades a surface, so this shares render_surface's light.
+    subroutine plot_trisurf(x, y, z, color, alpha, cmap)
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        character(len=*), intent(in), optional :: color, cmap
+        real(dp), intent(in), optional :: alpha
+        integer, allocatable :: tri(:, :)
+        integer :: is, n, nt
+
+        call axes3d()
+        n = min(size(x), min(size(y), size(z)))
+        if (n < 3) return
+        call delaunay(x(1:n), y(1:n), tri, nt)
+        if (nt < 1) return
+        call push_series(ax(cur_i), is)
+        ax(cur_i)%series(is)%kind = SERIES_TRISURF
+        ax(cur_i)%series(is)%n = n
+        allocate (ax(cur_i)%series(is)%x(n), ax(cur_i)%series(is)%y(n))
+        allocate (ax(cur_i)%series(is)%z(n))
+        allocate (ax(cur_i)%series(is)%tri(3, nt))
+        ax(cur_i)%series(is)%x = x(1:n)
+        ax(cur_i)%series(is)%y = y(1:n)
+        ax(cur_i)%series(is)%z = z(1:n)
+        ax(cur_i)%series(is)%tri = tri(:, 1:nt)
+        ax(cur_i)%series(is)%color = resolve_color(color)
+        if (len_trim(ax(cur_i)%series(is)%color) == 0) then
+            ax(cur_i)%series(is)%color = cycle_color(ax(cur_i)%color_cycle)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
+        end if
+        if (present(cmap)) ax(cur_i)%series(is)%scmap = cmap_from_str(cmap)
+        if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
+    end subroutine plot_trisurf
 
     ! The same grid, ruled rather than filled. matplotlib draws every line
     ! of the mesh whether it is in front or behind, and so does this.
@@ -10345,7 +10393,7 @@ contains
         have = .false.
         do i = 1, a%n_series
             select case (a%series(i)%kind)
-            case (SERIES_LINE3D, SERIES_SCATTER3D)
+            case (SERIES_LINE3D, SERIES_SCATTER3D, SERIES_TRISURF)
                 do k = 1, a%series(i)%n
                     lo(1) = min(lo(1), a%series(i)%x(k))
                     hi(1) = max(hi(1), a%series(i)%x(k))
@@ -10673,6 +10721,8 @@ contains
                 deallocate (px, py, pd, idx)
             case (SERIES_SURFACE)
                 call render_surface(b, a%series(i), M, bl, bt, side)
+            case (SERIES_TRISURF)
+                call render_trisurf(b, a%series(i), M, bl, bt, side)
             end select
         end do
     end subroutine render_series3d
@@ -10683,18 +10733,13 @@ contains
         class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: M(4, 4), bl, bt, side
-        ! LightSource(azdeg=225, altdeg=19.4712), as a direction.
-        real(dp), parameter :: AZ = (90.0_dp - 225.0_dp)*PI/180.0_dp
-        real(dp), parameter :: ALT = 19.4712_dp*PI/180.0_dp
-        real(dp) :: dir(3)
         real(dp), allocatable :: fx(:, :), fy(:, :), depth(:)
         integer, allocatable :: idx(:)
-        real(dp) :: cx(4), cy(4), cz(4), ux, uy, uz, v1(3), v2(3), nrm(3), nl, shade
+        real(dp) :: cx(4), cy(4), cz(4), ux, uy, uz
         real(dp) :: zlo, zhi, t
         integer :: nx, ny, nf, f, i, j, c, rgb(3)
         character(len=7) :: col
 
-        dir = [cos(AZ)*cos(ALT), sin(AZ)*cos(ALT), sin(ALT)]
         nx = size(s%x)
         ny = size(s%y)
         nf = (nx - 1)*(ny - 1)
@@ -10735,14 +10780,7 @@ contains
                 cx = [s%x(i), s%x(i + 1), s%x(i + 1), s%x(i)]
                 cy = [s%y(j), s%y(j), s%y(j + 1), s%y(j + 1)]
                 cz = [s%zg(j, i), s%zg(j, i + 1), s%zg(j + 1, i + 1), s%zg(j + 1, i)]
-                v1 = [cx(1) - cx(2), cy(1) - cy(2), cz(1) - cz(2)]
-                v2 = [cx(2) - cx(3), cy(2) - cy(3), cz(2) - cz(3)]
-                nrm = [v1(2)*v2(3) - v1(3)*v2(2), v1(3)*v2(1) - v1(1)*v2(3), &
-                       v1(1)*v2(2) - v1(2)*v2(1)]
-                nl = sqrt(sum(nrm**2))
-                shade = 0.0_dp
-                if (nl > 0.0_dp) shade = dot_product(nrm/nl, dir)
-                depth(f) = 0.3_dp + 0.7_dp*(shade + 1.0_dp)/2.0_dp
+                depth(f) = facet_light(cx, cy, cz)
             end do
         end do
 
@@ -10767,6 +10805,70 @@ contains
         end do
         deallocate (fx, fy, depth, idx)
     end subroutine render_surface
+
+    ! One lit facet per triangle, painted back to front. The lighting is
+    ! the surface's, so the two agree where they overlap.
+    subroutine render_trisurf(b, s, M, bl, bt, side)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: M(4, 4), bl, bt, side
+        real(dp), allocatable :: px(:), py(:), pz(:), depth(:)
+        integer, allocatable :: idx(:)
+        real(dp) :: tx(3), ty(3), zlo, zhi, t, shade
+        integer :: n, nt, i, k, v(3), rgb(3)
+        character(len=7) :: col
+
+        n = s%n
+        nt = size(s%tri, 2)
+        if (nt < 1) return
+        allocate (px(n), py(n), pz(n), depth(nt), idx(nt))
+        do i = 1, n
+            call dev3(M, bl, bt, side, s%x(i), s%y(i), s%z(i), px(i), py(i), pz(i))
+        end do
+        do k = 1, nt
+            depth(k) = sum(pz(s%tri(:, k)))/3.0_dp
+        end do
+        call order_far_first(depth, nt, idx)
+
+        rgb = hex_rgb(s%color)
+        zlo = minval(s%z)
+        zhi = maxval(s%z)
+        do k = 1, nt
+            v = s%tri(:, idx(k))
+            tx = px(v)
+            ty = py(v)
+            shade = facet_light(s%x(v), s%y(v), s%z(v))
+            if (s%scmap >= 0) then
+                t = 0.0_dp
+                if (zhi > zlo) t = (sum(s%z(v))/3.0_dp - zlo)/(zhi - zlo)
+                rgb = hex_rgb(cmap_color(s%scmap, t))
+            end if
+            col = "#"//hex_pair(nint(rgb(1)*shade))//hex_pair(nint(rgb(2)*shade)) &
+                  //hex_pair(nint(rgb(3)*shade))
+            call append_polygon(b, tx, ty, 3, col, s%alpha, .true.)
+        end do
+        deallocate (px, py, pz, depth, idx)
+    end subroutine render_trisurf
+
+    ! How brightly matplotlib's default light source lights a facet, as a
+    ! factor on its colour. The facet is given by its corners in data space.
+    pure function facet_light(cx, cy, cz) result(f)
+        real(dp), intent(in) :: cx(:), cy(:), cz(:)
+        ! LightSource(azdeg=225, altdeg=19.4712), as a direction.
+        real(dp), parameter :: AZ = (90.0_dp - 225.0_dp)*PI/180.0_dp
+        real(dp), parameter :: ALT = 19.4712_dp*PI/180.0_dp
+        real(dp) :: f, dir(3), v1(3), v2(3), nrm(3), nl, shade
+
+        dir = [cos(AZ)*cos(ALT), sin(AZ)*cos(ALT), sin(ALT)]
+        v1 = [cx(1) - cx(2), cy(1) - cy(2), cz(1) - cz(2)]
+        v2 = [cx(2) - cx(3), cy(2) - cy(3), cz(2) - cz(3)]
+        nrm = [v1(2)*v2(3) - v1(3)*v2(2), v1(3)*v2(1) - v1(1)*v2(3), &
+               v1(1)*v2(2) - v1(2)*v2(1)]
+        nl = sqrt(sum(nrm**2))
+        shade = 0.0_dp
+        if (nl > 0.0_dp) shade = dot_product(nrm/nl, dir)
+        f = 0.3_dp + 0.7_dp*(shade + 1.0_dp)/2.0_dp
+    end function facet_light
 
     ! Every line of the mesh, in front and behind alike: matplotlib hides
     ! nothing in a wireframe either.
