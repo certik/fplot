@@ -44,6 +44,7 @@ program test_plots
     character(len=8), parameter :: fruit(4) = &
         ["apple ", "banana", "cherry", "date  "]
     real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
+    real(dp) :: wts(nd)
     integer, parameter :: nzr = 8, nzc = 16
     real(dp) :: zimg(nzr, nzc), zlog(nzr, nzc)
     real(dp), parameter :: xedge(nzc + 1) = [ &
@@ -426,6 +427,7 @@ program test_plots
     do i = 1, nd
         dist1(i) = sin(real(i, dp)) + 0.3_dp * cos(2.7_dp * real(i, dp))
         dist2(i) = 1.0_dp + 2.0_dp * sin(0.7_dp * real(i, dp))**3
+        wts(i) = 0.5_dp + 0.02_dp * real(i, dp)
     end do
 
     ! 31) boxplot
@@ -843,6 +845,18 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 80) a stacked histogram, and one whose samples carry weights
+    call clf()
+    call subplot(1, 2, 1)
+    call hist(dist1, bin_edges=hedges, stacked=.true., label="one")
+    call hist(dist2, bin_edges=hedges, stacked=.true., label="two")
+    call legend()
+    call title("stacked")
+    call subplot(1, 2, 2)
+    call hist(dist1, bin_edges=hedges, weights=wts, color="tab:purple")
+    call title("weighted")
+    call save_all("hist_stacked")
 
 ! 79) a grid whose columns and rows are not equal
     call clf()

@@ -354,6 +354,8 @@ module fplot
         real(dp), allocatable :: tbl_w(:)
         real(dp) :: tbl_size = 10.0_dp
         character(len=16) :: tbl_loc = "bottom"
+        ! The running top of a stack of histograms, for hist(stacked=.true.).
+        real(dp), allocatable :: hstack(:)
         logical :: xroom_set = .false.
         real(dp) :: xroom(2) = 0.0_dp
         ! Whether that room is a sticky edge, taking no margin beyond it.
@@ -4198,17 +4200,17 @@ contains
 
     ! Histogram of x using `bins` equal-width bins over the data range.
     subroutine hist(x, bins, color, label, alpha, bin_edges, density, &
-                    cumulative, histtype)
+                    cumulative, histtype, weights, stacked)
         real(dp), intent(in) :: x(:)
         integer, intent(in), optional :: bins
         character(len=*), intent(in), optional :: color, label, histtype
-        real(dp), intent(in), optional :: alpha, bin_edges(:)
-        logical, intent(in), optional :: density, cumulative
+        real(dp), intent(in), optional :: alpha, bin_edges(:), weights(:)
+        logical, intent(in), optional :: density, cumulative, stacked
         integer :: nb, i, k, n, is
         real(dp) :: lo, hi, w, tot
         real(dp), allocatable :: edges(:), centers(:), counts(:), widths(:)
-        real(dp), allocatable :: sx(:), sy(:)
-        logical :: norm, cum
+        real(dp), allocatable :: sx(:), sy(:), base(:), sb(:)
+        logical :: norm, cum, stk
         character(len=16) :: ht
 
         n = size(x)
@@ -4217,6 +4219,8 @@ contains
         cum = .false.
         if (present(density)) norm = density
         if (present(cumulative)) cum = cumulative
+        stk = .false.
+        if (present(stacked)) stk = stacked
         ht = "bar"
         if (present(histtype)) ht = histtype
 
@@ -4251,7 +4255,11 @@ contains
         do i = 1, n
             if (x(i) < edges(1) .or. x(i) > edges(nb + 1)) cycle
             k = bin_of(x(i), edges, nb)
-            counts(k) = counts(k) + 1.0_dp
+            if (present(weights)) then
+                counts(k) = counts(k) + weights(min(i, size(weights)))
+            else
+                counts(k) = counts(k) + 1.0_dp
+            end if
         end do
 
         ! density normalises by the total area, so the bars integrate to one
@@ -4267,24 +4275,41 @@ contains
         end if
 
         call ensure_fig()
+        ! A stacked histogram starts where the last one in these axes ended.
+        allocate (base(nb))
+        base = 0.0_dp
+        if (stk) then
+            if (allocated(ax(cur_i)%hstack)) then
+                if (size(ax(cur_i)%hstack) == nb) base = ax(cur_i)%hstack
+                deallocate (ax(cur_i)%hstack)
+            end if
+            allocate (ax(cur_i)%hstack(nb))
+            ax(cur_i)%hstack = base + counts
+        else if (allocated(ax(cur_i)%hstack)) then
+            deallocate (ax(cur_i)%hstack)
+        end if
+
         select case (trim(ht))
         case ("step", "stepfilled")
             ! The outline of the same bars: up at every left edge, across
             ! the top, and back down to the baseline at both ends.
-            allocate (sx(2*nb + 2), sy(2*nb + 2))
+            allocate (sx(2*nb + 2), sy(2*nb + 2), sb(2*nb + 2))
             sx(1) = edges(1)
-            sy(1) = 0.0_dp
+            sy(1) = base(1)
+            sb(1) = base(1)
             do i = 1, nb
                 sx(2*i) = edges(i)
-                sy(2*i) = counts(i)
+                sy(2*i) = base(i) + counts(i)
+                sb(2*i) = base(i)
                 sx(2*i + 1) = edges(i + 1)
-                sy(2*i + 1) = counts(i)
+                sy(2*i + 1) = base(i) + counts(i)
+                sb(2*i + 1) = base(i)
             end do
             sx(2*nb + 2) = edges(nb + 1)
-            sy(2*nb + 2) = 0.0_dp
+            sy(2*nb + 2) = base(nb)
+            sb(2*nb + 2) = base(nb)
             if (trim(ht) == "stepfilled") then
-                call fill_between(sx, sy, spread(0.0_dp, 1, 2*nb + 2), color, &
-                                  label, alpha)
+                call fill_between(sx, sy, sb, color, label, alpha)
             else
                 is = new_shape_series(SERIES_LINE, sx, sy, color, label, alpha)
             end if
@@ -4297,6 +4322,10 @@ contains
                 ax(cur_i)%series(is)%width = widths(1)
                 allocate (ax(cur_i)%series(is)%bwidth(nb))
                 ax(cur_i)%series(is)%bwidth = widths
+                if (stk) then
+                    allocate (ax(cur_i)%series(is)%y2(nb))
+                    ax(cur_i)%series(is)%y2 = base
+                end if
             end if
         end select
     end subroutine hist

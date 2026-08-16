@@ -75,6 +75,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "hist_stacked",
     "grid_ratios",
     "formatters",
     "offset_text",
@@ -474,6 +475,8 @@ def main() -> None:
     k = np.arange(1, 41, dtype=float)
     dist1 = np.sin(k) + 0.3 * np.cos(2.7 * k)
     dist2 = 1.0 + 2.0 * np.sin(0.7 * k) ** 3
+    wts = 0.5 + 0.02 * k
+    hedges = [-3.0, -1.0, 0.0, 1.5, 3.0]
 
     fig, ax = setup_fig()
     ax.boxplot([dist1, dist2])
@@ -847,6 +850,17 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 80 a stacked histogram, and one whose samples carry weights
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a1 = fig.add_subplot(1, 2, 1)
+    a1.hist([dist1, dist2], bins=hedges, stacked=True, label=["one", "two"])
+    a1.legend()
+    a1.set_title("stacked")
+    a2 = fig.add_subplot(1, 2, 2)
+    a2.hist(dist1, bins=hedges, weights=wts, color="tab:purple")
+    a2.set_title("weighted")
+    save(fig, "hist_stacked")
 
     # 79 a grid whose columns and rows are not equal
     fig = plt.figure(figsize=(6.4, 4.8))
