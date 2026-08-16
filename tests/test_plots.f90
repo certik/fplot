@@ -850,6 +850,25 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 96) a wireframe and a colormapped surface
+    call clf()
+    do i = 1, n3
+        s3x(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/real(n3 - 1, dp)
+        s3y(i) = s3x(i)
+    end do
+    do i = 1, n3
+        do j = 1, n3
+            s3z(i, j) = sin(sqrt(s3x(j)**2 + s3y(i)**2))
+        end do
+    end do
+    call subplot(1, 2, 1)
+    call plot_wireframe(s3x, s3y, s3z, color="tab:blue")
+    call title("wireframe")
+    call subplot(1, 2, 2)
+    call plot_surface(s3x, s3y, s3z, cmap="viridis")
+    call title("colormapped")
+    call save_all("surface3d_extra")
+
 ! 95) fractions, roots and greek
     call clf()
     call plot(x, y)
