@@ -847,6 +847,16 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 87) bold and italic
+    call clf()
+    call plot(x, y)
+    call title("bold title", fontweight="bold")
+    call xlabel("italic x", fontstyle="italic")
+    call ylabel("bold italic y", fontweight="bold", fontstyle="italic")
+    call text(2.0_dp, 0.5_dp, "emphasis", fontstyle="italic")
+    call text(2.0_dp, -0.5_dp, "strong", fontweight="bold")
+    call save_all("font_faces")
+
 ! 86) the grid: which ticks it follows and what it looks like
     call clf()
     call subplot(1, 2, 1)

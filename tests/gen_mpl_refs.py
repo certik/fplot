@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "font_faces",
     "grid_options",
     "axes_handles2",
     "zorder",
@@ -857,6 +858,16 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 87 bold and italic
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.set_title("bold title", fontweight="bold")
+    ax.set_xlabel("italic x", fontstyle="italic")
+    ax.set_ylabel("bold italic y", fontweight="bold", fontstyle="italic")
+    ax.text(2.0, 0.5, "emphasis", fontstyle="italic")
+    ax.text(2.0, -0.5, "strong", fontweight="bold")
+    save(fig, "font_faces")
 
     # 86 the grid: which ticks it follows and what it looks like
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))

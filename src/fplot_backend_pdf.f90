@@ -90,6 +90,18 @@ module fplot_backend_pdf
         556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, &
         334, 260, 334, 584]
 
+    ! The same for Helvetica-Bold, which is a wider face; oblique shares the
+    ! regular widths, as the AFM says it does.
+    integer, parameter :: HELVB_W(32:126) = [ &
+        278, 333, 474, 556, 556, 889, 722, 278, 333, 333, 389, 584, 278, &
+        333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, &
+        333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667, 611, &
+        778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, &
+        611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556, 278, &
+        556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, &
+        611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, &
+        389, 280, 389, 584]
+
 contains
 
     subroutine put(self, s)
@@ -125,17 +137,40 @@ contains
         t = trim(s)
     end function int_str
 
+    ! Which of the four Helvetica faces the font asks for, as the /Fn name
+    ! the resource dictionary gives it.
+    pure integer function font_face(font)
+        type(font_t), intent(in) :: font
+        logical :: b, o
+        b = font%weight == WEIGHT_BOLD
+        o = font%slant == SLANT_ITALIC
+        if (b .and. o) then
+            font_face = 4
+        else if (b) then
+            font_face = 2
+        else if (o) then
+            font_face = 3
+        else
+            font_face = 1
+        end if
+    end function font_face
+
     ! Width of a string in points, from the Helvetica table.
-    pure function text_width(s, size) result(w)
+    pure function text_width(s, size, bold) result(w)
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: size
+        logical, intent(in) :: bold
         real(dp) :: w
         integer :: i, c
         w = 0.0_dp
         do i = 1, len(s)
             c = iachar(s(i:i))
             if (c >= 32 .and. c <= 126) then
-                w = w + real(HELV_W(c), dp)
+                if (bold) then
+                    w = w + real(HELVB_W(c), dp)
+                else
+                    w = w + real(HELV_W(c), dp)
+                end if
             else
                 w = w + 500.0_dp
             end if
@@ -386,7 +421,7 @@ contains
 
         ! SVG asks the viewer to align the string; PDF places a fixed origin,
         ! so the offset has to be measured here.
-        w = text_width(trim(s), font%size)
+        w = text_width(trim(s), font%size, font%weight == WEIGHT_BOLD)
         dx = 0.0_dp
         select case (anchor)
         case (ANCHOR_MIDDLE); dx = -0.5_dp*w
@@ -401,7 +436,8 @@ contains
 
         call begin_paint(self, paint)
         call put(self, "BT"//new_line("a"))
-        call put(self, "/F1 "//num_str(font%size)//" Tf"//new_line("a"))
+        call put(self, "/F"//int_str(font_face(font))//" " &
+                 //num_str(font%size)//" Tf"//new_line("a"))
         ! The page flip would leave text mirrored, so the text matrix flips
         ! back; the rotation is folded into the same matrix.
         rad = angle*acos(-1.0_dp)/180.0_dp
@@ -479,6 +515,18 @@ contains
         call put(self, "Q"//new_line("a"))
     end subroutine pdf_draw_image
 
+    ! The base-fourteen name of each face.
+    pure function base_font(i) result(t)
+        integer, intent(in) :: i
+        character(len=:), allocatable :: t
+        select case (i)
+        case (2); t = "Helvetica-Bold"
+        case (3); t = "Helvetica-Oblique"
+        case (4); t = "Helvetica-BoldOblique"
+        case default; t = "Helvetica"
+        end select
+    end function base_font
+
     ! Assemble the file. Objects have to be byte-counted as they are written
     ! because the trailing xref table records where each one starts.
     subroutine pdf_close_canvas(self)
@@ -486,7 +534,7 @@ contains
         type(svg_builder) :: f
         character(len=:), allocatable :: content, res, gs, xo
         integer :: off(MAX_OBJ), nobj, i, pos, xref_pos
-        integer :: img_obj(MAX_IMG), mask_obj(MAX_IMG)
+        integer :: img_obj(MAX_IMG), mask_obj(MAX_IMG), font_obj(4)
         character(len=1) :: eol
 
         eol = new_line("a")
@@ -500,9 +548,15 @@ contains
                  //num_str(self%alpha_stroke(i))//" >> "
         end do
 
-        ! Images follow the five fixed objects, one object each and a second
-        ! for a soft mask where one is needed.
+        ! The bold and oblique faces are objects of their own, and the images
+        ! follow them, one object each and a second for a soft mask where one
+        ! is needed.
         nobj = 5
+        font_obj(1) = 5
+        do i = 2, 4
+            nobj = nobj + 1
+            font_obj(i) = nobj
+        end do
         xo = ""
         do i = 1, self%n_img
             nobj = nobj + 1
@@ -515,7 +569,8 @@ contains
             xo = xo//"/Im"//int_str(i)//" "//int_str(img_obj(i))//" 0 R "
         end do
 
-        res = "<< /Font << /F1 5 0 R >>"
+        res = "<< /Font << /F1 5 0 R /F2 "//int_str(font_obj(2))//" 0 R /F3 " &
+              //int_str(font_obj(3))//" 0 R /F4 "//int_str(font_obj(4))//" 0 R >>"
         if (len(gs) > 0) res = res//" /ExtGState << "//gs//">>"
         if (len(xo) > 0) res = res//" /XObject << "//xo//">>"
         res = res//" >>"
@@ -547,10 +602,13 @@ contains
         call emit(f, pos, content)
         call emit(f, pos, "endstream"//eol//"endobj"//eol)
 
-        off(5) = pos
-        call emit(f, pos, "5 0 obj"//eol//"<< /Type /Font /Subtype /Type1 " &
-                  //"/BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"//eol &
-                  //"endobj"//eol)
+        do i = 1, 4
+            off(font_obj(i)) = pos
+            call emit(f, pos, int_str(font_obj(i))//" 0 obj" &
+                      //eol//"<< /Type /Font /Subtype /Type1 /BaseFont /" &
+                      //base_font(i)//" /Encoding /WinAnsiEncoding >>"//eol &
+                      //"endobj"//eol)
+        end do
 
         do i = 1, self%n_img
             off(img_obj(i)) = pos

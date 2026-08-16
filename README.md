@@ -111,7 +111,11 @@ call suptitle("figure title")
   same number of ticks for the space available, and one decimal count
   shared by the whole axis
 - Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$` in any label, laid out
-  once and drawn by every backend
+  once and drawn by every backend, with the letters sloped and the rest
+  upright as TeX sets them
+- `fontweight=` and `fontstyle=` on `title`, `suptitle`, `xlabel`,
+  `ylabel`, `text` and `annotate`: real bold and oblique faces, not a
+  smeared or sheared regular one
 - Categorical axes: `plot`, `bar` and `barh` take a list of names in place
   of the numbers, and place them at 0, 1, 2, ... with the names as ticks
 - 49 matplotlib colormaps, plus the qualitative `tab10`, `tab20` and

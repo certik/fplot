@@ -241,6 +241,7 @@ module fplot
         real(dp) :: fontsize = 10.0_dp
         character(len=7) :: color = "#000000"
         character(len=8) :: ha = "left"
+        integer :: weight = WEIGHT_NORMAL, slant = SLANT_ROMAN
         character(len=128) :: s = ""
     end type text_t
 
@@ -332,6 +333,10 @@ module fplot
         real(dp) :: xtick_size = TICK_FONT, ytick_size = TICK_FONT
         real(dp) :: title_size = TITLE_FONT
         real(dp) :: xlabel_size = LABEL_FONT, ylabel_size = LABEL_FONT
+        ! Face of the title and the two axis labels.
+        integer :: title_w = WEIGHT_NORMAL, title_sl = SLANT_ROMAN
+        integer :: xlabel_w = WEIGHT_NORMAL, xlabel_sl = SLANT_ROMAN
+        integer :: ylabel_w = WEIGHT_NORMAL, ylabel_sl = SLANT_ROMAN
         real(dp) :: legend_size = LEGEND_FONT
         integer :: legend_ncol = 1
         logical :: legend_frame = .true.
@@ -552,6 +557,8 @@ module fplot
     real(dp), save :: def_title = TITLE_FONT, def_label = LABEL_FONT
     real(dp), save :: def_tick = TICK_FONT, def_legend = LEGEND_FONT
     real(dp), save :: fig_suptitle_size = SUPTITLE_FONT
+    integer, save :: fig_suptitle_w = WEIGHT_NORMAL
+    integer, save :: fig_suptitle_sl = SLANT_ROMAN
 
     ! ------------------------------------------------------------------
     ! Global defaults, matplotlib's rcParams. A style is nothing but a set
@@ -830,6 +837,8 @@ contains
         def_tick = TICK_FONT
         def_legend = LEGEND_FONT
         fig_suptitle_size = SUPTITLE_FONT
+        fig_suptitle_w = WEIGHT_NORMAL
+        fig_suptitle_sl = SLANT_ROMAN
         fig_initialized = .true.
     end subroutine clf
 
@@ -2182,48 +2191,53 @@ contains
         call axvline(x, color, linestyle, lw, label)
     end subroutine ax_axvline
 
-    subroutine ax_text(self, x, y, s, color, fontsize, ha)
+    subroutine ax_text(self, x, y, s, color, fontsize, ha, fontweight, fontstyle)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x, y
         character(len=*), intent(in) :: s
-        character(len=*), intent(in), optional :: color, ha
+        character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         real(dp), intent(in), optional :: fontsize
         call ax_sca(self)
-        call text(x, y, s, color, fontsize, ha)
+        call text(x, y, s, color, fontsize, ha, fontweight, fontstyle)
     end subroutine ax_text
 
-    subroutine ax_annotate(self, s, x, y, xtext, ytext, color, fontsize, ha)
+    subroutine ax_annotate(self, s, x, y, xtext, ytext, color, fontsize, ha, &
+                           fontweight, fontstyle)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: x, y
         real(dp), intent(in), optional :: xtext, ytext, fontsize
-        character(len=*), intent(in), optional :: color, ha
+        character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         call ax_sca(self)
-        call annotate(s, x, y, xtext, ytext, color, fontsize, ha)
+        call annotate(s, x, y, xtext, ytext, color, fontsize, ha, &
+                      fontweight, fontstyle)
     end subroutine ax_annotate
 
-    subroutine ax_set_title(self, s, fontsize)
+    subroutine ax_set_title(self, s, fontsize, fontweight, fontstyle)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
+        character(len=*), intent(in), optional :: fontweight, fontstyle
         call ax_sca(self)
-        call title(s, fontsize)
+        call title(s, fontsize, fontweight, fontstyle)
     end subroutine ax_set_title
 
-    subroutine ax_set_xlabel(self, s, fontsize)
+    subroutine ax_set_xlabel(self, s, fontsize, fontweight, fontstyle)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
+        character(len=*), intent(in), optional :: fontweight, fontstyle
         call ax_sca(self)
-        call xlabel(s, fontsize)
+        call xlabel(s, fontsize, fontweight, fontstyle)
     end subroutine ax_set_xlabel
 
-    subroutine ax_set_ylabel(self, s, fontsize)
+    subroutine ax_set_ylabel(self, s, fontsize, fontweight, fontstyle)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
+        character(len=*), intent(in), optional :: fontweight, fontstyle
         call ax_sca(self)
-        call ylabel(s, fontsize)
+        call ylabel(s, fontsize, fontweight, fontstyle)
     end subroutine ax_set_ylabel
 
     subroutine ax_set_xlim(self, xmin, xmax)
@@ -2338,37 +2352,64 @@ contains
         t%idx = cur_i
     end function ax_twiny
 
-    subroutine suptitle(s, fontsize)
+    subroutine suptitle(s, fontsize, fontweight, fontstyle)
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
+        character(len=*), intent(in), optional :: fontweight, fontstyle
         call ensure_fig()
         fig_suptitle = s
         if (present(fontsize)) fig_suptitle_size = fontsize
+        if (present(fontweight)) fig_suptitle_w = weight_from_str(fontweight)
+        if (present(fontstyle)) fig_suptitle_sl = slant_from_str(fontstyle)
     end subroutine suptitle
 
-    subroutine title(s, fontsize)
+    subroutine title(s, fontsize, fontweight, fontstyle)
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
+        character(len=*), intent(in), optional :: fontweight, fontstyle
         call ensure_fig()
         ax(cur_i)%title = s
         if (present(fontsize)) ax(cur_i)%title_size = fontsize
+        if (present(fontweight)) ax(cur_i)%title_w = weight_from_str(fontweight)
+        if (present(fontstyle)) ax(cur_i)%title_sl = slant_from_str(fontstyle)
     end subroutine title
 
-    subroutine xlabel(s, fontsize)
+    subroutine xlabel(s, fontsize, fontweight, fontstyle)
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
+        character(len=*), intent(in), optional :: fontweight, fontstyle
         call ensure_fig()
         ax(cur_i)%xlabel = s
         if (present(fontsize)) ax(cur_i)%xlabel_size = fontsize
+        if (present(fontweight)) ax(cur_i)%xlabel_w = weight_from_str(fontweight)
+        if (present(fontstyle)) ax(cur_i)%xlabel_sl = slant_from_str(fontstyle)
     end subroutine xlabel
 
-    subroutine ylabel(s, fontsize)
+    subroutine ylabel(s, fontsize, fontweight, fontstyle)
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
+        character(len=*), intent(in), optional :: fontweight, fontstyle
         call ensure_fig()
         ax(cur_i)%ylabel = s
         if (present(fontsize)) ax(cur_i)%ylabel_size = fontsize
+        if (present(fontweight)) ax(cur_i)%ylabel_w = weight_from_str(fontweight)
+        if (present(fontstyle)) ax(cur_i)%ylabel_sl = slant_from_str(fontstyle)
     end subroutine ylabel
+
+    ! matplotlib's spellings for the two faces it can pick without a font
+    ! file of its own.
+    pure integer function weight_from_str(s)
+        character(len=*), intent(in) :: s
+        weight_from_str = WEIGHT_NORMAL
+        if (s == "bold" .or. s == "heavy" .or. s == "black") &
+            weight_from_str = WEIGHT_BOLD
+    end function weight_from_str
+
+    pure integer function slant_from_str(s)
+        character(len=*), intent(in) :: s
+        slant_from_str = SLANT_ROMAN
+        if (s == "italic" .or. s == "oblique") slant_from_str = SLANT_ITALIC
+    end function slant_from_str
 
     ! One place to set text sizes. size= sets everything at once, which is the
     ! common request; the individual arguments override it. Applies to the
@@ -5016,20 +5057,22 @@ contains
     end function linestyle_from_str
 
     ! Text at a point in data coordinates.
-    subroutine text(x, y, s, color, fontsize, ha)
+    subroutine text(x, y, s, color, fontsize, ha, fontweight, fontstyle)
         real(dp), intent(in) :: x, y
         character(len=*), intent(in) :: s
-        character(len=*), intent(in), optional :: color, ha
+        character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         real(dp), intent(in), optional :: fontsize
-        call add_text(x, y, s, color, fontsize, ha, .false., 0.0_dp, 0.0_dp)
+        call add_text(x, y, s, color, fontsize, ha, .false., 0.0_dp, 0.0_dp, &
+                      fontweight, fontstyle)
     end subroutine text
 
     ! Text at (xtext, ytext) with an arrow pointing at (x, y).
-    subroutine annotate(s, x, y, xtext, ytext, color, fontsize, ha)
+    subroutine annotate(s, x, y, xtext, ytext, color, fontsize, ha, &
+                        fontweight, fontstyle)
         character(len=*), intent(in) :: s
         real(dp), intent(in) :: x, y
         real(dp), intent(in), optional :: xtext, ytext, fontsize
-        character(len=*), intent(in), optional :: color, ha
+        character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         real(dp) :: xt, yt
         logical :: arrow
 
@@ -5039,13 +5082,15 @@ contains
         if (present(xtext)) xt = xtext
         if (present(ytext)) yt = ytext
         ! The label sits at the text position; the arrow runs back to (x, y).
-        call add_text(xt, yt, s, color, fontsize, ha, arrow, x, y)
+        call add_text(xt, yt, s, color, fontsize, ha, arrow, x, y, &
+                      fontweight, fontstyle)
     end subroutine annotate
 
-    subroutine add_text(x, y, s, color, fontsize, ha, arrow, xarr, yarr)
+    subroutine add_text(x, y, s, color, fontsize, ha, arrow, xarr, yarr, &
+                        fontweight, fontstyle)
         real(dp), intent(in) :: x, y, xarr, yarr
         character(len=*), intent(in) :: s
-        character(len=*), intent(in), optional :: color, ha
+        character(len=*), intent(in), optional :: color, ha, fontweight, fontstyle
         real(dp), intent(in), optional :: fontsize
         logical, intent(in) :: arrow
         integer :: it
@@ -5057,6 +5102,10 @@ contains
         ax(cur_i)%texts(it)%y = y
         ax(cur_i)%texts(it)%s = s
         ax(cur_i)%texts(it)%has_arrow = arrow
+        if (present(fontweight)) &
+            ax(cur_i)%texts(it)%weight = weight_from_str(fontweight)
+        if (present(fontstyle)) &
+            ax(cur_i)%texts(it)%slant = slant_from_str(fontstyle)
         ax(cur_i)%texts(it)%xtail = xarr
         ax(cur_i)%texts(it)%ytail = yarr
         ax(cur_i)%texts(it)%fontsize = 10.0_dp
@@ -5851,11 +5900,12 @@ contains
     ! Text element. anchor is a matplotlib horizontal alignment
     ! (left/center/right) or an SVG anchor (start/middle/end). rot is a
     ! matplotlib rotation, counterclockwise in degrees.
-    subroutine append_text(b, x, y, s, anchor, fontsize, color, rot)
+    subroutine append_text(b, x, y, s, anchor, fontsize, color, rot, weight, slant)
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x, y, fontsize
         character(len=*), intent(in) :: s, anchor, color
         real(dp), intent(in), optional :: rot
+        integer, intent(in), optional :: weight, slant
         type(font_t) :: f
         integer :: an
         real(dp) :: ang
@@ -5866,6 +5916,8 @@ contains
         case default; an = ANCHOR_MIDDLE
         end select
         f%size = fontsize
+        if (present(weight)) f%weight = weight
+        if (present(slant)) f%slant = slant
         ang = 0.0_dp
         ! The API turns angles clockwise, matplotlib counterclockwise.
         if (present(rot)) ang = -rot
@@ -5904,6 +5956,8 @@ contains
         rf = f
         do i = 1, nr
             rf%size = runs(i)%size
+            rf%slant = SLANT_ROMAN
+            if (runs(i)%italic) rf%slant = SLANT_ITALIC
             call b%draw_text(x + (x0 + runs(i)%dx)*ca - runs(i)%dy*sa, &
                              y + (x0 + runs(i)%dx)*sa + runs(i)%dy*ca, &
                              runs(i)%s(1:runs(i)%n), rf, p, ANCHOR_START, &
@@ -8482,7 +8536,8 @@ contains
             end if
             call append_text(b, px, py + 3.5_dp, trim(a%texts(i)%s), &
                              trim(a%texts(i)%ha), a%texts(i)%fontsize, &
-                             trim(a%texts(i)%color))
+                             trim(a%texts(i)%color), &
+                             weight=a%texts(i)%weight, slant=a%texts(i)%slant)
         end do
 
         call clear_clip()
@@ -8578,7 +8633,8 @@ contains
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_b + xtick_gap(a) + 0.24_dp * a%xtick_size + 1.84_dp &
                              + 0.76_dp * a%xlabel_size, trim(a%xlabel), &
-                             "center", a%xlabel_size, rc_text_color)
+                             "center", a%xlabel_size, rc_text_color, &
+                             weight=a%xlabel_w, slant=a%xlabel_sl)
         end if
 
         if (len_trim(a%ylabel) > 0) then
@@ -8587,14 +8643,16 @@ contains
             mid = y_edge + y_out * ylabel_out(a)
             call append_text(b, mid, 0.5_dp*(ax_t + ax_b), trim(a%ylabel), &
                              "center", a%ylabel_size, rc_text_color, &
-                             merge(-90.0_dp, 90.0_dp, a%y_right))
+                             merge(-90.0_dp, 90.0_dp, a%y_right), &
+                             weight=a%ylabel_w, slant=a%ylabel_sl)
         end if
 
         ! title
         if (len_trim(a%title) > 0) then
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_t - 0.5_dp * a%title_size, trim(a%title), &
-                             "center", a%title_size, rc_text_color)
+                             "center", a%title_size, rc_text_color, &
+                             weight=a%title_w, slant=a%title_sl)
         end if
 
 
@@ -8752,7 +8810,8 @@ contains
         if (len_trim(fig_suptitle) > 0) then
             call append_text(b, 0.5_dp*W, (1.0_dp - SUPTITLE_Y)*H + 4.2_dp, &
                              trim(fig_suptitle), "center", fig_suptitle_size, &
-                             rc_text_color)
+                             rc_text_color, weight=fig_suptitle_w, &
+                             slant=fig_suptitle_sl)
         end if
 
         call b%close_canvas()
