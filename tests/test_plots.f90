@@ -40,9 +40,11 @@ program test_plots
     real(dp), parameter :: PI_T = 3.14159265358979323846_dp
     real(dp) :: s3x(n3), s3y(n3), s3z(n3, n3)
     real(dp) :: t3(nl3), l3x(nl3), l3y(nl3), l3z(nl3)
+    real(dp) :: big(n), bigy(n)
     character(len=8), parameter :: fruit(4) = &
         ["apple ", "banana", "cherry", "date  "]
     real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
+    real(dp) :: wts(nd)
     integer, parameter :: nzr = 8, nzc = 16
     real(dp) :: zimg(nzr, nzc), zlog(nzr, nzc)
     real(dp), parameter :: xedge(nzc + 1) = [ &
@@ -425,6 +427,7 @@ program test_plots
     do i = 1, nd
         dist1(i) = sin(real(i, dp)) + 0.3_dp * cos(2.7_dp * real(i, dp))
         dist2(i) = 1.0_dp + 2.0_dp * sin(0.7_dp * real(i, dp))**3
+        wts(i) = 0.5_dp + 0.02_dp * real(i, dp)
     end do
 
     ! 31) boxplot
@@ -842,6 +845,82 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 82) an arrow patch and a path of cubic curves
+    call clf()
+    call xlim(0.0_dp, 1.0_dp)
+    call ylim(0.0_dp, 1.2_dp)
+    call add_arrow(0.1_dp, 0.1_dp, 0.6_dp, 0.4_dp, width=0.2_dp, &
+                   facecolor="tab:blue", edgecolor="k")
+    call add_path([0.1_dp, 0.3_dp, 0.6_dp, 0.9_dp], &
+                  [0.8_dp, 1.1_dp, 0.5_dp, 0.8_dp], "MC", &
+                  facecolor="tab:orange", edgecolor="k", lw=2.0_dp)
+    call title("an arrow and a path")
+    call save_all("patches_path")
+
+! 81) bands of a discrete norm, and the qualitative maps
+    call clf()
+    call subplot(1, 2, 1)
+    call imshow(zimg, cmap="viridis", &
+                boundaries=[-2.0_dp, -1.0_dp, 0.0_dp, 1.0_dp, 2.0_dp])
+    call colorbar()
+    call title("bands")
+    call subplot(1, 2, 2)
+    call imshow(zimg, cmap="tab20")
+    call title("tab20")
+    call save_all("cmap_discrete")
+
+! 80) a stacked histogram, and one whose samples carry weights
+    call clf()
+    call subplot(1, 2, 1)
+    call hist(dist1, bin_edges=hedges, stacked=.true., label="one")
+    call hist(dist2, bin_edges=hedges, stacked=.true., label="two")
+    call legend()
+    call title("stacked")
+    call subplot(1, 2, 2)
+    call hist(dist1, bin_edges=hedges, weights=wts, color="tab:purple")
+    call title("weighted")
+    call save_all("hist_stacked")
+
+! 79) a grid whose columns and rows are not equal
+    call clf()
+    call gridspec(width_ratios=[2.0_dp, 1.0_dp], height_ratios=[1.0_dp, 2.0_dp])
+    call subplot(2, 2, 1)
+    call plot(x, y, "b-")
+    call title("wide")
+    call subplot(2, 2, 2)
+    call plot(x, y2, "r-")
+    call title("narrow")
+    call subplot(2, 2, 3)
+    call plot(x, y2, "g-")
+    call subplot(2, 2, 4)
+    call plot(x, y, "k-")
+    call save_all("grid_ratios")
+
+! 78) named formatters and a locator: a percentage on y, thousands on x,
+!     and ticks every 250 units
+    call clf()
+    do i = 1, n
+        big(i) = 1000.0_dp*real(i - 1, dp)
+        bigy(i) = 50.0_dp + 40.0_dp*y(i)
+    end do
+    call plot(big, bigy)
+    call tick_format("y", "percent")
+    call tick_format("x", "comma")
+    call tick_locator("y", base=25.0_dp)
+    call title("formatters")
+    call save_all("formatters")
+
+! 77) a large y axis and an offset x axis: what the tick labels leave out
+!     is written once at the end of each axis
+    call clf()
+    do i = 1, n
+        big(i) = 1.0e5_dp + real(i - 1, dp)*3.0_dp/real(n - 1, dp)
+        bigy(i) = 2.0e6_dp*y(i)
+    end do
+    call plot(big, bigy)
+    call title("offset text")
+    call save_all("offset_text")
 
 ! 75) a 3D surface
     call clf()

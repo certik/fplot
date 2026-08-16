@@ -9,9 +9,11 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
+import matplotlib.ticker as mticker
+from matplotlib.colors import LogNorm, BoundaryNorm
 import matplotlib.dates as mdates
-from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon
+from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon, Arrow, PathPatch
+from matplotlib.path import Path as MPath
 import datetime
 import io
 
@@ -74,6 +76,12 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "patches_path",
+    "cmap_discrete",
+    "hist_stacked",
+    "grid_ratios",
+    "formatters",
+    "offset_text",
     "surface3d",
     "line3d",
     "scatter_cmap",
@@ -470,6 +478,8 @@ def main() -> None:
     k = np.arange(1, 41, dtype=float)
     dist1 = np.sin(k) + 0.3 * np.cos(2.7 * k)
     dist2 = 1.0 + 2.0 * np.sin(0.7 * k) ** 3
+    wts = 0.5 + 0.02 * k
+    hedges = [-3.0, -1.0, 0.0, 1.5, 3.0]
 
     fig, ax = setup_fig()
     ax.boxplot([dist1, dist2])
@@ -843,6 +853,65 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 82 an arrow patch and a path of cubic curves
+    fig, ax = setup_fig()
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.2)
+    ax.add_patch(Arrow(0.1, 0.1, 0.6, 0.4, width=0.2,
+                       facecolor="tab:blue", edgecolor="k"))
+    pp = MPath([(0.1, 0.8), (0.3, 1.1), (0.6, 0.5), (0.9, 0.8)],
+               [MPath.MOVETO, MPath.CURVE4, MPath.CURVE4, MPath.CURVE4])
+    ax.add_patch(PathPatch(pp, facecolor="tab:orange", edgecolor="k", lw=2.0))
+    ax.set_title("an arrow and a path")
+    save(fig, "patches_path")
+
+    # 81 bands of a discrete norm, and the qualitative maps
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a1 = fig.add_subplot(1, 2, 1)
+    bn = BoundaryNorm([-2.0, -1.0, 0.0, 1.0, 2.0], 256)
+    im = a1.imshow(zimg, cmap="viridis", norm=bn)
+    fig.colorbar(im, ax=a1)
+    a1.set_title("bands")
+    a2 = fig.add_subplot(1, 2, 2)
+    a2.imshow(zimg, cmap="tab20")
+    a2.set_title("tab20")
+    save(fig, "cmap_discrete")
+
+    # 80 a stacked histogram, and one whose samples carry weights
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a1 = fig.add_subplot(1, 2, 1)
+    a1.hist([dist1, dist2], bins=hedges, stacked=True, label=["one", "two"])
+    a1.legend()
+    a1.set_title("stacked")
+    a2 = fig.add_subplot(1, 2, 2)
+    a2.hist(dist1, bins=hedges, weights=wts, color="tab:purple")
+    a2.set_title("weighted")
+    save(fig, "hist_stacked")
+
+    # 79 a grid whose columns and rows are not equal
+    fig = plt.figure(figsize=(6.4, 4.8))
+    gs = fig.add_gridspec(2, 2, width_ratios=[2, 1], height_ratios=[1, 2])
+    a1 = fig.add_subplot(gs[0, 0]); a1.plot(x, y, "b-"); a1.set_title("wide")
+    a2 = fig.add_subplot(gs[0, 1]); a2.plot(x, y2, "r-"); a2.set_title("narrow")
+    a3 = fig.add_subplot(gs[1, 0]); a3.plot(x, y2, "g-")
+    a4 = fig.add_subplot(gs[1, 1]); a4.plot(x, y, "k-")
+    save(fig, "grid_ratios")
+
+    # 78 named formatters and a locator
+    fig, ax = setup_fig()
+    ax.plot(1000 * np.arange(len(x)), 50 + 40 * y)
+    ax.yaxis.set_major_formatter(mticker.PercentFormatter())
+    ax.xaxis.set_major_formatter(mticker.StrMethodFormatter("{x:,.0f}"))
+    ax.yaxis.set_major_locator(mticker.MultipleLocator(25))
+    ax.set_title("formatters")
+    save(fig, "formatters")
+
+    # 77 a large y axis and an offset x axis
+    fig, ax = setup_fig()
+    ax.plot(1e5 + np.linspace(0, 3, len(x)), 2e6 * y)
+    ax.set_title("offset text")
+    save(fig, "offset_text")
 
     # 75 a 3D surface
     fig = plt.figure(figsize=(6.4, 4.8))

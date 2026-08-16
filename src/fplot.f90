@@ -27,6 +27,7 @@ module fplot
     public :: matshow, eventplot, broken_barh, streamplot, table
     public :: add_axes, secondary_xaxis, secondary_yaxis
     public :: add_rectangle, add_circle, add_ellipse, add_polygon
+    public :: add_arrow, add_path
     public :: polar, set_polar
     public :: quiver
     public :: axhspan, axvspan, hlines, vlines, bar_label
@@ -34,19 +35,42 @@ module fplot
     public :: axis, set_aspect, tick_params, spines
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
+    public :: ticklabel_format, tick_format, tick_locator
     public :: imshow, colorbar, contour, contourf, clabel
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, view_init, zlabel, zlim
-    public :: subplot, subplot2grid, suptitle, subplots_adjust, tight_layout
+    public :: subplot, subplot2grid, gridspec, suptitle, subplots_adjust, tight_layout
     public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
     public :: set_fontsize
     public :: close, gcf
     public :: axes, subplots, sca
     public :: style_use, rc
+
+    ! How the ticks of an axis are written. FMT_AUTO is matplotlib's
+    ! ScalarFormatter, which is what an axis does unless it is told
+    ! otherwise; the rest are its named formatters.
+    ! Most rows or columns a figure's grid can be given a ratio for.
+    integer, parameter :: MAX_RATIO = 32
+
+    integer, parameter :: FMT_AUTO = 0
+    integer, parameter :: FMT_PERCENT = 1
+    integer, parameter :: FMT_COMMA = 2
+    integer, parameter :: FMT_FIXED = 3
+
+    ! What one axis agreed to write on its ticks: how many decimals, and
+    ! the offset and power of ten factored out of every label and written
+    ! once at the end of the axis instead.
+    type :: tickfmt_t
+        integer :: dec = 0
+        real(dp) :: off = 0.0_dp
+        integer :: oom = 0
+        integer :: style = FMT_AUTO
+        real(dp) :: whole = 100.0_dp
+    end type tickfmt_t
 
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
@@ -163,6 +187,9 @@ module fplot
         ! only when edgecolor names one, as in matplotlib, where a patch is
         ! filled and edgeless unless asked otherwise.
         logical :: patch_fill = .true.
+        ! A patch drawn from an arbitrary path carries its own verbs; a
+        ! plain polygon leaves this alone and every point is a line to.
+        integer, allocatable :: pverb(:)
         ! Most patches never ask for room of their own; the ones a plotting
         ! call makes for itself, such as broken_barh, do.
         logical :: patch_scales = .false.
@@ -255,6 +282,9 @@ module fplot
         ! How a value is placed on the colormap: linearly, or by its
         ! logarithm, matplotlib's LogNorm.
         logical :: img_log_norm = .false.
+        ! BoundaryNorm: the edges of the bands the data is sorted into. The
+        ! image then takes one flat color per band rather than a ramp.
+        real(dp), allocatable :: img_bounds(:)
         real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: img_origin_upper = .true.
         ! pcolormesh keeps the same samples in img, but with its own cell
@@ -266,6 +296,17 @@ module fplot
         ! An axis whose numbers are days since 1970-01-01, and so takes
         ! its ticks and labels from the calendar.
         logical :: x_date = .false., y_date = .false.
+        ! Formatter and locator chosen by the user. A style of FMT_AUTO, a
+        ! decimal count of -1, a base of zero and a bin count of zero all
+        ! mean "whatever matplotlib would have done".
+        integer :: xfmt_style = FMT_AUTO, yfmt_style = FMT_AUTO
+        integer :: xfmt_dec = -1, yfmt_dec = -1
+        real(dp) :: xfmt_whole = 100.0_dp, yfmt_whole = 100.0_dp
+        logical :: x_use_offset = .true., y_use_offset = .true.
+        integer :: x_scilo = -5, x_scihi = 6
+        integer :: y_scilo = -5, y_scihi = 6
+        real(dp) :: xtick_base = 0.0_dp, ytick_base = 0.0_dp
+        integer :: xtick_nbins = 0, ytick_nbins = 0
         logical :: has_mesh = .false.
         real(dp), allocatable :: mesh_x(:), mesh_y(:)
         ! Data units per point in y over the same in x. Zero means auto.
@@ -320,6 +361,8 @@ module fplot
         real(dp), allocatable :: tbl_w(:)
         real(dp) :: tbl_size = 10.0_dp
         character(len=16) :: tbl_loc = "bottom"
+        ! The running top of a stack of histograms, for hist(stacked=.true.).
+        real(dp), allocatable :: hstack(:)
         logical :: xroom_set = .false.
         real(dp) :: xroom(2) = 0.0_dp
         ! Whether that room is a sticky edge, taking no margin beyond it.
@@ -496,6 +539,10 @@ module fplot
     integer, save :: n_ax = 0
     integer, save :: cur_i = 0
     integer, save :: grid_m = 0, grid_n = 0
+    ! Relative column widths and row heights, GridSpec's width_ratios and
+    ! height_ratios. All ones, the default, is an even grid.
+    real(dp), save :: fig_wratio(MAX_RATIO) = 1.0_dp
+    real(dp), save :: fig_hratio(MAX_RATIO) = 1.0_dp
     ! A grid whose cells are filled in one at a time by subplot2grid,
     ! rather than all at once by subplot.
     logical, save :: grid_sparse = .false.
@@ -514,6 +561,7 @@ module fplot
         type(axes_t), allocatable :: ax(:)
         integer :: n_ax, cur_i, grid_m, grid_n
         logical :: sparse
+        real(dp) :: wratio(MAX_RATIO), hratio(MAX_RATIO)
     end type figure_t
     type(figure_t), allocatable, save :: figs(:)
     integer, save :: cur_fig = 0
@@ -563,6 +611,8 @@ contains
         figs(k)%grid_m = grid_m
         figs(k)%grid_n = grid_n
         figs(k)%sparse = grid_sparse
+        figs(k)%wratio = fig_wratio
+        figs(k)%hratio = fig_hratio
         if (allocated(figs(k)%ax)) deallocate (figs(k)%ax)
         ! Allocated explicitly rather than relying on reallocation on
         ! assignment, which is not on by default in every compiler.
@@ -583,6 +633,8 @@ contains
         fig_top = figs(k)%top
         fig_wspace = figs(k)%wspace
         fig_hspace = figs(k)%hspace
+        fig_wratio = figs(k)%wratio
+        fig_hratio = figs(k)%hratio
         fig_suptitle = figs(k)%suptitle
         def_title = figs(k)%d_title
         def_label = figs(k)%d_label
@@ -730,6 +782,8 @@ contains
         fig_top = MARGIN_TOP
         fig_wspace = WSPACE
         fig_hspace = HSPACE
+        fig_wratio = 1.0_dp
+        fig_hratio = 1.0_dp
         def_title = TITLE_FONT
         def_label = LABEL_FONT
         def_tick = TICK_FONT
@@ -915,19 +969,45 @@ contains
 
     ! Place the existing axes in the current margins. Called again whenever
     ! those margins move, so the axes objects themselves survive.
+    ! Where each column starts and how wide it is, in figure fractions.
+    ! The gap between cells is the same everywhere, as it is in matplotlib:
+    ! wspace and hspace are fractions of the average cell, not of each one,
+    ! so uneven ratios change the cells and leave the gaps alone.
+    subroutine grid_edges(nc, lo, hi, space, ratio, pos, len)
+        integer, intent(in) :: nc
+        real(dp), intent(in) :: lo, hi, space, ratio(MAX_RATIO)
+        real(dp), intent(out) :: pos(MAX_RATIO), len(MAX_RATIO)
+        real(dp) :: cell, sep, total, sumr, p
+        integer :: k
+
+        cell = (hi - lo)/(real(nc, dp) + space*real(nc - 1, dp))
+        sep = space*cell
+        total = cell*real(nc, dp)
+        sumr = 0.0_dp
+        do k = 1, nc
+            sumr = sumr + max(ratio(k), 0.0_dp)
+        end do
+        if (sumr <= 0.0_dp) sumr = real(nc, dp)
+        p = lo
+        do k = 1, nc
+            len(k) = total*max(ratio(k), 0.0_dp)/sumr
+            pos(k) = p
+            p = p + len(k) + sep
+        end do
+    end subroutine grid_edges
+
     subroutine layout_grid()
         integer :: i, r, c
-        real(dp) :: w, h, dx, dy
+        real(dp) :: xpos(MAX_RATIO), xlen(MAX_RATIO)
+        real(dp) :: ypos(MAX_RATIO), ylen(MAX_RATIO)
 
         if (grid_m < 1 .or. grid_n < 1) return
+        if (grid_m > MAX_RATIO .or. grid_n > MAX_RATIO) return
 
-        ! Cell size and cell pitch (cell plus gap), in figure fractions.
-        w = (fig_right - fig_left) / &
-            (real(grid_n, dp) + fig_wspace * real(grid_n - 1, dp))
-        h = (fig_top - fig_bottom) / &
-            (real(grid_m, dp) + fig_hspace * real(grid_m - 1, dp))
-        dx = w * (1.0_dp + fig_wspace)
-        dy = h * (1.0_dp + fig_hspace)
+        call grid_edges(grid_n, fig_left, fig_right, fig_wspace, fig_wratio, xpos, xlen)
+        ! Rows are laid out from the top, since that is how they are counted.
+        call grid_edges(grid_m, 1.0_dp - fig_top, 1.0_dp - fig_bottom, fig_hspace, &
+                        fig_hratio, ypos, ylen)
 
         do i = 1, n_ax
             if (ax(i)%fixed_pos .or. ax(i)%inset_of > 0) cycle
@@ -936,11 +1016,10 @@ contains
             if (r >= 1) cycle
             r = ax(i)%g_row          ! row from the top
             c = ax(i)%g_col          ! column from the left
-            ax(i)%left = fig_left + real(c, dp) * dx
-            ax(i)%right = ax(i)%left + w + real(ax(i)%g_colspan - 1, dp) * dx
-            ax(i)%bottom = fig_bottom + &
-                           real(grid_m - r - ax(i)%g_rowspan, dp) * dy
-            ax(i)%top = ax(i)%bottom + h + real(ax(i)%g_rowspan - 1, dp) * dy
+            ax(i)%left = xpos(c + 1)
+            ax(i)%right = xpos(c + ax(i)%g_colspan) + xlen(c + ax(i)%g_colspan)
+            ax(i)%top = 1.0_dp - ypos(r + 1)
+            ax(i)%bottom = 1.0_dp - (ypos(r + ax(i)%g_rowspan) + ylen(r + ax(i)%g_rowspan))
         end do
 
         do i = 1, n_ax
@@ -1178,10 +1257,12 @@ contains
         v = 0.0_dp
         call compute_limits(a, xmin, xmax, ymin, ymax)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        a%ysc, 9, a%y_date, t, nt, du)
+                        a%ysc, nbins_for(a%ytick_nbins, 0.0_dp, a%ytick_size, .false.), &
+                        a%y_date, t, nt, du, a%ytick_base)
         do i = 1, nt
             call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, &
-                            axis_decimals(t, nt, a%ysc), du, lbl, ln)
+                            axis_fmt(t, nt, a, .false., min(ymin, ymax), &
+                                     max(ymin, ymax)), du, lbl, ln)
             if (math_is(lbl(1:ln))) then
                 v = max(v, math_width(lbl(1:ln), a%ytick_size))
             else
@@ -1340,6 +1421,28 @@ contains
         call layout_grid()
         h%idx = cur_i
     end function add_secondary
+
+    ! GridSpec's width_ratios and height_ratios: the columns and rows of the
+    ! grid need not be equal. Call it before the subplots are made; the
+    ! ratios stay with the figure and the panels are laid out to them.
+    subroutine gridspec(width_ratios, height_ratios)
+        real(dp), intent(in), optional :: width_ratios(:), height_ratios(:)
+        integer :: k
+
+        call ensure_fig()
+        if (present(width_ratios)) then
+            fig_wratio = 1.0_dp
+            do k = 1, min(size(width_ratios), MAX_RATIO)
+                fig_wratio(k) = width_ratios(k)
+            end do
+        end if
+        if (present(height_ratios)) then
+            fig_hratio = 1.0_dp
+            do k = 1, min(size(height_ratios), MAX_RATIO)
+                fig_hratio(k) = height_ratios(k)
+            end do
+        end if
+    end subroutine gridspec
 
     function subplot2grid(shape, loc, rowspan, colspan) result(h)
         integer, intent(in) :: shape(2), loc(2)
@@ -1677,13 +1780,16 @@ contains
         call stem(x, y, color, label, alpha)
     end subroutine ax_stem
 
-    subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect, norm)
+    subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect, &
+                         norm, interpolation, boundaries)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: z(:, :)
         character(len=*), intent(in), optional :: cmap, origin, aspect, norm
-        real(dp), intent(in), optional :: vmin, vmax, extent(4)
+        character(len=*), intent(in), optional :: interpolation
+        real(dp), intent(in), optional :: vmin, vmax, extent(4), boundaries(:)
         call ax_sca(self)
-        call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm)
+        call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
+                    interpolation, boundaries)
     end subroutine ax_imshow
 
     subroutine ax_xaxis_date(self)
@@ -2043,6 +2149,131 @@ contains
             ax(cur_i)%legend_has_bbox = .true.
         end if
     end subroutine legend
+
+
+    ! ------------------------------------------------------------------
+    ! Formatters and locators. matplotlib reaches these through the axis
+    ! object (set_major_formatter, set_major_locator) and a pyplot
+    ! shortcut; there is one shortcut per job here instead, because a
+    ! formatter object of our own would be a class with one method and
+    ! nothing to say.
+    ! ------------------------------------------------------------------
+
+    ! matplotlib's ticklabel_format: whether an axis may factor an offset
+    ! or a power of ten out of its labels, and from where.
+    subroutine ticklabel_format(axis, style, useoffset, scilimits)
+        character(len=*), intent(in), optional :: axis, style
+        logical, intent(in), optional :: useoffset
+        integer, intent(in), optional :: scilimits(2)
+        logical :: dox, doy
+        integer :: lo, hi
+
+        call ensure_fig()
+        call which_axis(axis, dox, doy)
+        if (present(useoffset)) then
+            if (dox) ax(cur_i)%x_use_offset = useoffset
+            if (doy) ax(cur_i)%y_use_offset = useoffset
+        end if
+        lo = -5
+        hi = 6
+        if (present(style)) then
+            select case (lower(style))
+            case ("plain")
+                ! Never factor a power of ten out: no limit is ever met.
+                lo = -huge(1)/2
+                hi = huge(1)/2
+            case ("sci", "scientific")
+                ! Always factor one out, which is what (0, 0) means.
+                lo = 0
+                hi = 0
+            end select
+        end if
+        if (present(scilimits)) then
+            lo = scilimits(1)
+            hi = scilimits(2)
+        end if
+        if (present(style) .or. present(scilimits)) then
+            if (dox) then
+                ax(cur_i)%x_scilo = lo
+                ax(cur_i)%x_scihi = hi
+            end if
+            if (doy) then
+                ax(cur_i)%y_scilo = lo
+                ax(cur_i)%y_scihi = hi
+            end if
+        end if
+    end subroutine ticklabel_format
+
+    ! One of matplotlib's named formatters: "percent" is PercentFormatter,
+    ! "comma" is a StrMethodFormatter with a thousands separator, "fixed"
+    ! is a FormatStrFormatter with a set number of decimals, and "auto" is
+    ! the ScalarFormatter every axis starts with.
+    subroutine tick_format(axis, style, decimals, whole)
+        character(len=*), intent(in) :: style
+        character(len=*), intent(in), optional :: axis
+        integer, intent(in), optional :: decimals
+        real(dp), intent(in), optional :: whole
+        logical :: dox, doy
+        integer :: st, dec
+
+        call ensure_fig()
+        call which_axis(axis, dox, doy)
+        select case (lower(style))
+        case ("percent"); st = FMT_PERCENT
+        case ("comma", "thousands"); st = FMT_COMMA
+        case ("fixed"); st = FMT_FIXED
+        case default; st = FMT_AUTO
+        end select
+        dec = -1
+        if (present(decimals)) dec = decimals
+        ! A percentage with no decimals asked for is written whole, which
+        ! is what PercentFormatter defaults to.
+        if (st == FMT_PERCENT .and. dec < 0) dec = 0
+        if (dox) then
+            ax(cur_i)%xfmt_style = st
+            ax(cur_i)%xfmt_dec = dec
+            if (present(whole)) ax(cur_i)%xfmt_whole = whole
+        end if
+        if (doy) then
+            ax(cur_i)%yfmt_style = st
+            ax(cur_i)%yfmt_dec = dec
+            if (present(whole)) ax(cur_i)%yfmt_whole = whole
+        end if
+    end subroutine tick_format
+
+    ! base is MultipleLocator, nbins is MaxNLocator. Neither moves the
+    ! limits; they only decide where the ticks land inside them.
+    subroutine tick_locator(axis, base, nbins)
+        character(len=*), intent(in), optional :: axis
+        real(dp), intent(in), optional :: base
+        integer, intent(in), optional :: nbins
+        logical :: dox, doy
+
+        call ensure_fig()
+        call which_axis(axis, dox, doy)
+        if (present(base)) then
+            if (dox) ax(cur_i)%xtick_base = base
+            if (doy) ax(cur_i)%ytick_base = base
+        end if
+        if (present(nbins)) then
+            if (dox) ax(cur_i)%xtick_nbins = nbins
+            if (doy) ax(cur_i)%ytick_nbins = nbins
+        end if
+    end subroutine tick_locator
+
+    ! "x", "y" or "both", the way every matplotlib call that takes an axis
+    ! name spells it. Absent means both.
+    subroutine which_axis(axis, dox, doy)
+        character(len=*), intent(in), optional :: axis
+        logical, intent(out) :: dox, doy
+        dox = .true.
+        doy = .true.
+        if (.not. present(axis)) return
+        select case (lower(axis))
+        case ("x"); doy = .false.
+        case ("y"); dox = .false.
+        end select
+    end subroutine which_axis
 
     subroutine xticks(vals, labels)
         real(dp), intent(in) :: vals(:)
@@ -2413,10 +2644,11 @@ contains
     ! Draw z as an image. z is indexed (row, column) and, with the default
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
     ! a descending y axis exactly as matplotlib does.
-    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, interpolation)
+    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
+                      interpolation, boundaries)
         real(dp), intent(in) :: z(:, :)
         character(len=*), intent(in), optional :: cmap, origin, aspect, norm, interpolation
-        real(dp), intent(in), optional :: vmin, vmax, extent(4)
+        real(dp), intent(in), optional :: vmin, vmax, extent(4), boundaries(:)
         integer :: nr, nc
         real(dp) :: lo, hi
 
@@ -2441,6 +2673,14 @@ contains
         ax(cur_i)%img_log_norm = .false.
         if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
 
+        if (allocated(ax(cur_i)%img_bounds)) deallocate (ax(cur_i)%img_bounds)
+        if (present(boundaries)) then
+            if (size(boundaries) >= 2) then
+                allocate (ax(cur_i)%img_bounds(size(boundaries)))
+                ax(cur_i)%img_bounds = boundaries
+            end if
+        end if
+
         if (ax(cur_i)%img_log_norm) then
             ! A log scale cannot start at zero, so the smallest positive
             ! sample sets the bottom of the range.
@@ -2453,6 +2693,11 @@ contains
         end if
         if (present(vmin)) lo = vmin
         if (present(vmax)) hi = vmax
+        ! The bands say what the range is; anything outside them is clamped.
+        if (allocated(ax(cur_i)%img_bounds)) then
+            lo = ax(cur_i)%img_bounds(1)
+            hi = ax(cur_i)%img_bounds(size(ax(cur_i)%img_bounds))
+        end if
         if (hi <= lo) hi = lo + 1.0_dp
         ax(cur_i)%img_vmin = lo
         ax(cur_i)%img_vmax = hi
@@ -3596,6 +3841,82 @@ contains
         if (present(fill)) ax(cur_i)%series(is)%patch_fill = fill
     end subroutine add_polygon
 
+    ! matplotlib's Arrow patch: the same unit outline it uses, scaled to the
+    ! length of (dx, dy) and to `width` across, then turned to point along
+    ! the vector. It is built in data coordinates, as matplotlib builds it,
+    ! so an axes that is not square shears the arrow in the same way.
+    subroutine add_arrow(x, y, dx, dy, width, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: x, y, dx, dy
+        real(dp), intent(in), optional :: width, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        real(dp), parameter :: UX(7) = [0.0_dp, 0.0_dp, 0.8_dp, 0.8_dp, &
+                                        1.0_dp, 0.8_dp, 0.8_dp]
+        real(dp), parameter :: UY(7) = [0.1_dp, -0.1_dp, -0.1_dp, -0.3_dp, &
+                                        0.0_dp, 0.3_dp, 0.1_dp]
+        real(dp) :: w, ln, ct, st, ax_(7), ay(7), u, v
+        integer :: j
+
+        w = 1.0_dp
+        if (present(width)) w = width
+        ln = hypot(dx, dy)
+        if (ln <= 0.0_dp) return
+        ct = dx/ln
+        st = dy/ln
+        do j = 1, 7
+            u = UX(j)*ln
+            v = UY(j)*w
+            ax_(j) = x + ct*u - st*v
+            ay(j) = y + st*u + ct*v
+        end do
+        call add_polygon(ax_, ay, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine add_arrow
+
+    ! An arbitrary path, as matplotlib's PathPatch draws one. `codes` has a
+    ! letter per verb: M moves, L draws a line, C draws a cubic from the
+    ! next three points and Z closes back to the last move.
+    subroutine add_path(x, y, codes, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in) :: codes
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        integer :: is, j, np, nv
+        integer :: v(len_trim(codes))
+
+        nv = len_trim(codes)
+        np = 0
+        do j = 1, nv
+            select case (codes(j:j))
+            case ("M", "m")
+                v(j) = VERB_MOVE
+                np = np + 1
+            case ("L", "l")
+                v(j) = VERB_LINE
+                np = np + 1
+            case ("C", "c")
+                v(j) = VERB_CUBIC
+                np = np + 3
+            case ("Z", "z")
+                v(j) = VERB_CLOSE
+            case default
+                print *, "fplot: add_path: unknown code ", codes(j:j)
+                error stop
+            end select
+        end do
+        if (np < 2 .or. np > min(size(x), size(y))) then
+            print *, "fplot: add_path: codes need", np, "points, given", &
+                min(size(x), size(y))
+            error stop
+        end if
+
+        call add_polygon(x(1:np), y(1:np), facecolor, edgecolor, lw, alpha, fill)
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        allocate (ax(cur_i)%series(is)%pverb(nv))
+        ax(cur_i)%series(is)%pverb = v
+    end subroutine add_path
+
     ! A field of arrows, one per point, pointing along (u, v). Left to
     ! itself matplotlib sizes the arrows from the field: the shaft is a
     ! fixed fraction of the axes width and the scale is set so a vector of
@@ -3979,17 +4300,17 @@ contains
 
     ! Histogram of x using `bins` equal-width bins over the data range.
     subroutine hist(x, bins, color, label, alpha, bin_edges, density, &
-                    cumulative, histtype)
+                    cumulative, histtype, weights, stacked)
         real(dp), intent(in) :: x(:)
         integer, intent(in), optional :: bins
         character(len=*), intent(in), optional :: color, label, histtype
-        real(dp), intent(in), optional :: alpha, bin_edges(:)
-        logical, intent(in), optional :: density, cumulative
+        real(dp), intent(in), optional :: alpha, bin_edges(:), weights(:)
+        logical, intent(in), optional :: density, cumulative, stacked
         integer :: nb, i, k, n, is
         real(dp) :: lo, hi, w, tot
         real(dp), allocatable :: edges(:), centers(:), counts(:), widths(:)
-        real(dp), allocatable :: sx(:), sy(:)
-        logical :: norm, cum
+        real(dp), allocatable :: sx(:), sy(:), base(:), sb(:)
+        logical :: norm, cum, stk
         character(len=16) :: ht
 
         n = size(x)
@@ -3998,6 +4319,8 @@ contains
         cum = .false.
         if (present(density)) norm = density
         if (present(cumulative)) cum = cumulative
+        stk = .false.
+        if (present(stacked)) stk = stacked
         ht = "bar"
         if (present(histtype)) ht = histtype
 
@@ -4032,7 +4355,11 @@ contains
         do i = 1, n
             if (x(i) < edges(1) .or. x(i) > edges(nb + 1)) cycle
             k = bin_of(x(i), edges, nb)
-            counts(k) = counts(k) + 1.0_dp
+            if (present(weights)) then
+                counts(k) = counts(k) + weights(min(i, size(weights)))
+            else
+                counts(k) = counts(k) + 1.0_dp
+            end if
         end do
 
         ! density normalises by the total area, so the bars integrate to one
@@ -4048,24 +4375,41 @@ contains
         end if
 
         call ensure_fig()
+        ! A stacked histogram starts where the last one in these axes ended.
+        allocate (base(nb))
+        base = 0.0_dp
+        if (stk) then
+            if (allocated(ax(cur_i)%hstack)) then
+                if (size(ax(cur_i)%hstack) == nb) base = ax(cur_i)%hstack
+                deallocate (ax(cur_i)%hstack)
+            end if
+            allocate (ax(cur_i)%hstack(nb))
+            ax(cur_i)%hstack = base + counts
+        else if (allocated(ax(cur_i)%hstack)) then
+            deallocate (ax(cur_i)%hstack)
+        end if
+
         select case (trim(ht))
         case ("step", "stepfilled")
             ! The outline of the same bars: up at every left edge, across
             ! the top, and back down to the baseline at both ends.
-            allocate (sx(2*nb + 2), sy(2*nb + 2))
+            allocate (sx(2*nb + 2), sy(2*nb + 2), sb(2*nb + 2))
             sx(1) = edges(1)
-            sy(1) = 0.0_dp
+            sy(1) = base(1)
+            sb(1) = base(1)
             do i = 1, nb
                 sx(2*i) = edges(i)
-                sy(2*i) = counts(i)
+                sy(2*i) = base(i) + counts(i)
+                sb(2*i) = base(i)
                 sx(2*i + 1) = edges(i + 1)
-                sy(2*i + 1) = counts(i)
+                sy(2*i + 1) = base(i) + counts(i)
+                sb(2*i + 1) = base(i)
             end do
             sx(2*nb + 2) = edges(nb + 1)
-            sy(2*nb + 2) = 0.0_dp
+            sy(2*nb + 2) = base(nb)
+            sb(2*nb + 2) = base(nb)
             if (trim(ht) == "stepfilled") then
-                call fill_between(sx, sy, spread(0.0_dp, 1, 2*nb + 2), color, &
-                                  label, alpha)
+                call fill_between(sx, sy, sb, color, label, alpha)
             else
                 is = new_shape_series(SERIES_LINE, sx, sy, color, label, alpha)
             end if
@@ -4078,6 +4422,10 @@ contains
                 ax(cur_i)%series(is)%width = widths(1)
                 allocate (ax(cur_i)%series(is)%bwidth(nb))
                 ax(cur_i)%series(is)%bwidth = widths
+                if (stk) then
+                    allocate (ax(cur_i)%series(is)%y2(nb))
+                    ax(cur_i)%series(is)%y2 = base
+                end if
             end if
         end select
     end subroutine hist
@@ -5383,7 +5731,24 @@ contains
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
         real(dp) :: px(s%n + 1), py(s%n + 1)
+        type(paint_t) :: p
         integer :: j
+
+        if (allocated(s%pverb)) then
+            do j = 1, s%n
+                px(j) = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+                py(j) = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            end do
+            if (s%patch_fill) then
+                p = brush(trim(s%color), s%alpha)
+                call b%draw_path(px(1:s%n), py(1:s%n), s%pverb, size(s%pverb), p)
+            end if
+            if (len_trim(s%edgecolor) > 0) then
+                p = pen(trim(s%edgecolor), s%edgewidth, s%alpha)
+                call b%draw_path(px(1:s%n), py(1:s%n), s%pverb, size(s%pverb), p)
+            end if
+            return
+        end if
 
         if (s%n < 3) return
         do j = 1, s%n
@@ -5686,8 +6051,28 @@ contains
         end if
     end function tick_space
 
+    ! How many intervals to ask the locator for: what the user asked for
+    ! with MaxNLocator, else as many as the axis is long enough to label.
+    ! A length of zero is the layout pass, which has no geometry yet and
+    ! uses matplotlib's own default of nine.
+    pure function nbins_for(nbins, length, size, horizontal) result(n)
+        integer, intent(in) :: nbins
+        real(dp), intent(in) :: length, size
+        logical, intent(in) :: horizontal
+        integer :: n
+        if (nbins > 0) then
+            n = nbins
+        else if (length <= 0.0_dp) then
+            n = 9
+        else
+            n = tick_space(length, size, horizontal)
+        end if
+    end function nbins_for
+
+    ! base, when it is positive, is MultipleLocator: ticks every base
+    ! units rather than wherever the automatic locator would put them.
     subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, nbins, is_date, &
-                          t, nt, date_unit)
+                          t, nt, date_unit, base)
         integer, intent(in) :: n_user
         real(dp), intent(in) :: user_pos(MAX_TICKS), vmin, vmax
         type(scale_t), intent(in) :: sc
@@ -5696,8 +6081,15 @@ contains
         real(dp), intent(out) :: t(MAX_TICKS)
         integer, intent(out) :: nt
         integer, intent(out) :: date_unit
+        real(dp), intent(in), optional :: base
 
         date_unit = 0
+        if (present(base)) then
+            if (base > 0.0_dp .and. n_user == 0) then
+                call multiple_ticks(vmin, vmax, base, t, nt)
+                return
+            end if
+        end if
         if (n_user < 0) then
             nt = 0
         else if (n_user > 0) then
@@ -6464,19 +6856,36 @@ contains
         ! Slices are grown slightly so they abut without seams, so keep them
         ! inside the bar.
         call set_clip(bx, bt, bw, bh)
-        do i = 1, CBAR_SLICES
-            y1 = bb - real(i - 1, dp) * bh / real(CBAR_SLICES, dp)
-            y0 = bb - real(i, dp) * bh / real(CBAR_SLICES, dp)
-            t = (real(i, dp) - 0.5_dp) / real(CBAR_SLICES, dp)
-            call append_cell(b, bx, y0, bw, y1 - y0, cmap_color(a%img_cmap, t))
-        end do
+        if (allocated(a%img_bounds)) then
+            ! One block per band, as tall as the band is wide in the data.
+            lo = a%img_bounds(1)
+            hi = a%img_bounds(size(a%img_bounds))
+            do i = 1, size(a%img_bounds) - 1
+                y1 = bb - (a%img_bounds(i) - lo) / (hi - lo) * bh
+                y0 = bb - (a%img_bounds(i + 1) - lo) / (hi - lo) * bh
+                v = 0.5_dp * (a%img_bounds(i) + a%img_bounds(i + 1))
+                call append_cell(b, bx, y0, bw, y1 - y0, &
+                                 cmap_color(a%img_cmap, cmap_t(a, v)))
+            end do
+        else
+            do i = 1, CBAR_SLICES
+                y1 = bb - real(i - 1, dp) * bh / real(CBAR_SLICES, dp)
+                y0 = bb - real(i, dp) * bh / real(CBAR_SLICES, dp)
+                t = (real(i, dp) - 0.5_dp) / real(CBAR_SLICES, dp)
+                call append_cell(b, bx, y0, bw, y1 - y0, cmap_color(a%img_cmap, t))
+            end do
+        end if
         call clear_clip()
 
         call b%draw_rect(bx, bt, bw, bh, pen(rc_spine_color, rc_spine_lw))
 
         lo = a%img_vmin
         hi = a%img_vmax
-        if (a%img_log_norm) then
+        if (allocated(a%img_bounds)) then
+            ! A tick at every band edge, which is what the bands mean.
+            nt = min(MAX_TICKS, size(a%img_bounds))
+            cb_ticks(1:nt) = a%img_bounds(1:nt)
+        else if (a%img_log_norm) then
             call log_ticks(lo, hi, cb_ticks, nt)
         else
             call linear_ticks(lo, hi, tick_space(bh, a%ytick_size, .false.), &
@@ -6484,10 +6893,12 @@ contains
         end if
         dec = -1
         if (.not. a%img_log_norm) dec = tick_decimals(cb_ticks, nt)
+
         do i = 1, nt
             v = cb_ticks(i)
             if (v < lo .or. v > hi) cycle
-            py = bb - cmap_t(a, v) * bh
+            py = bb - (v - lo) / (hi - lo) * bh
+            if (a%img_log_norm) py = bb - cmap_t(a, v) * bh
             call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
             if (a%img_log_norm) then
                 call format_tick_to(v, .true., lbl, ln)
@@ -6518,8 +6929,27 @@ contains
         type(axes_t), intent(in) :: a
         real(dp), intent(in) :: v
         real(dp) :: t, lo, hi
+        integer :: i, nb
         lo = a%img_vmin
         hi = a%img_vmax
+        if (allocated(a%img_bounds)) then
+            ! BoundaryNorm: find the band, then take the color matplotlib
+            ! gives that band, which is band*(N-1)/(nband-1) of the map.
+            nb = size(a%img_bounds) - 1
+            i = 0
+            do while (i < nb)
+                if (v < a%img_bounds(i + 2)) exit
+                i = i + 1
+            end do
+            if (v < a%img_bounds(1)) i = 0
+            i = max(0, min(nb - 1, i))
+            if (nb <= 1) then
+                t = 0.0_dp
+            else
+                t = real(int(real(i, dp) * 255.0_dp / real(nb - 1, dp)), dp) / 255.0_dp
+            end if
+            return
+        end if
         if (a%img_log_norm) then
             ! Anything at or below zero has no logarithm, so it takes the
             ! bottom of the map, as matplotlib's LogNorm does.
@@ -6657,15 +7087,16 @@ contains
         call append_text(b, x, y, s, anchor, fontsize, rc_text_color, rot)
     end subroutine append_tick_text
 
-    ! dec is the decimal count the whole axis agreed on, or -1 when the
-    ! scale writes its own labels.
-    subroutine tick_label(labeled, lab, i, v, sc, dec, date_unit, out, n)
+    ! f carries what the whole axis agreed on: the decimal count, or -1
+    ! when the scale writes its own labels, and anything factored out.
+    subroutine tick_label(labeled, lab, i, v, sc, f, date_unit, out, n)
         logical, intent(in) :: labeled
         character(len=24), intent(in) :: lab(MAX_TICKS)
         integer, intent(in) :: i
         real(dp), intent(in) :: v
         type(scale_t), intent(in) :: sc
-        integer, intent(in) :: dec, date_unit
+        type(tickfmt_t), intent(in) :: f
+        integer, intent(in) :: date_unit
         character(len=*), intent(out) :: out
         integer, intent(out) :: n
         if (labeled) then
@@ -6676,7 +7107,14 @@ contains
         else if (sc%kind == SCALE_LOG) then
             call format_tick_to(v, .true., out, n)
         else
-            call format_tick_fixed(v, dec, out, n)
+            select case (f%style)
+            case (FMT_PERCENT)
+                call format_percent(v, f%whole, f%dec, out, n)
+            case (FMT_COMMA)
+                call format_grouped(v, f%dec, out, n)
+            case default
+                call format_tick_fixed((v - f%off)/10.0_dp**f%oom, f%dec, out, n)
+            end select
         end if
     end subroutine tick_label
 
@@ -6693,6 +7131,45 @@ contains
             d = tick_decimals(t, nt)
         end if
     end function axis_decimals
+
+    ! The same for an axis that may factor an offset or a power of ten out
+    ! of its labels. Only a linear axis does; a log or date axis writes its
+    ! own labels and has nothing to factor.
+    function axis_fmt(t, nt, a, is_x, vmin, vmax) result(f)
+        real(dp), intent(in) :: t(MAX_TICKS), vmin, vmax
+        integer, intent(in) :: nt
+        type(axes_t), intent(in) :: a
+        logical, intent(in) :: is_x
+        type(tickfmt_t) :: f
+        type(scale_t) :: sc
+
+        sc = a%ysc
+        if (is_x) sc = a%xsc
+        if (sc%kind /= SCALE_LINEAR) then
+            f%dec = -1
+            return
+        end if
+        if (is_x) then
+            f%style = a%xfmt_style
+            f%whole = a%xfmt_whole
+            call tick_offset(t, nt, vmin, vmax, f%off, f%oom, &
+                             a%x_use_offset, a%x_scilo, a%x_scihi)
+        else
+            f%style = a%yfmt_style
+            f%whole = a%yfmt_whole
+            call tick_offset(t, nt, vmin, vmax, f%off, f%oom, &
+                             a%y_use_offset, a%y_scilo, a%y_scihi)
+        end if
+        ! A named formatter writes the value itself, so nothing may be
+        ! taken out of it first.
+        if (f%style /= FMT_AUTO) then
+            f%off = 0.0_dp
+            f%oom = 0
+        end if
+        f%dec = tick_decimals_at(t, nt, f%off, f%oom)
+        if (is_x .and. a%xfmt_dec >= 0) f%dec = a%xfmt_dec
+        if (.not. is_x .and. a%yfmt_dec >= 0) f%dec = a%yfmt_dec
+    end function axis_fmt
 
     ! A polar axes. The box holds the largest circle that fits: the angle
     ! runs anticlockwise from the right and the radius from the middle out,
@@ -7260,6 +7737,7 @@ contains
         real(dp) :: x_edge, x_out, y_edge, y_out
         character(len=64) :: lbl
         character(len=64) :: tx, ty
+        type(tickfmt_t) :: xfmt, yfmt
         integer :: tn, tyn
         character(len=512) :: esc
         integer :: ln, en
@@ -7318,11 +7796,13 @@ contains
         ysc = a%ysc
 
         call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xsc, &
-                        tick_space(ax_w, a%xtick_size, .true.), a%x_date, &
-                        xticks, nxt, x_unit)
+                        nbins_for(a%xtick_nbins, ax_w, a%xtick_size, .true.), a%x_date, &
+                        xticks, nxt, x_unit, a%xtick_base)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        ysc, tick_space(ax_h, a%ytick_size, .false.), a%y_date, &
-                        yticks, nyt, y_unit)
+                        ysc, nbins_for(a%ytick_nbins, ax_h, a%ytick_size, .false.), &
+                        a%y_date, yticks, nyt, y_unit, a%ytick_base)
+        xfmt = axis_fmt(xticks, nxt, a, .true., xmin, xmax)
+        yfmt = axis_fmt(yticks, nyt, a, .false., min(ymin, ymax), max(ymin, ymax))
         if (a%minor_ticks) then
             call minor_positions(xticks, nxt, xmin, xmax, xsc, xminor, nxm)
             call minor_positions(yticks, nyt, ymin, ymax, ysc, yminor, nym)
@@ -7563,7 +8043,7 @@ contains
             call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, a%xtick_len)
             if (.not. a%xticklabels_off) then
                 call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, &
-                                axis_decimals(xticks, nxt, xsc), x_unit, lbl, ln)
+                                xfmt, x_unit, lbl, ln)
                 call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
                                       merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
                                       a%xtick_size, a%xtick_rot)
@@ -7589,7 +8069,7 @@ contains
             call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, a%ytick_len)
             if (.not. a%yticklabels_off) then
                 call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, &
-                                axis_decimals(yticks, nyt, ysc), y_unit, lbl, ln)
+                                yfmt, y_unit, lbl, ln)
                 call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, lbl(1:ln), &
                                       merge("left ", "right", a%y_right), &
                                       a%ytick_size, a%ytick_rot)
@@ -7600,6 +8080,24 @@ contains
             call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, &
                                 MINOR_FRAC * a%ytick_len)
         end do
+
+        ! What the labels left out, written once at the end of the axis:
+        ! matplotlib puts it past the far end of the x axis and above the
+        ! top of the y axis, three points clear of the tick labels.
+        if (nxt > 0 .and. .not. a%xticklabels_off) then
+            call format_offset_text(xfmt%off, xfmt%oom, lbl, ln)
+            if (ln > 0) &
+                call append_text(b, ax_r, ax_b + xtick_gap(a) + 0.24_dp*a%xtick_size &
+                                 + 3.0_dp + 0.76_dp*a%xtick_size, lbl(1:ln), "right", &
+                                 a%xtick_size, rc_text_color)
+        end if
+        if (nyt > 0 .and. .not. a%yticklabels_off) then
+            call format_offset_text(yfmt%off, yfmt%oom, lbl, ln)
+            if (ln > 0) &
+                call append_text(b, y_edge, ax_t - 3.0_dp, lbl(1:ln), &
+                                 merge("right", "left ", a%y_right), &
+                                 a%ytick_size, rc_text_color)
+        end if
 
         if (len_trim(a%xlabel) > 0) then
             call append_text(b, 0.5_dp * (ax_l + ax_r), &

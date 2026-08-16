@@ -9,7 +9,7 @@ module fplot_cmap
     private
 
     public :: CMAP_VIRIDIS, CMAP_PLASMA, CMAP_INFERNO, CMAP_MAGMA
-    public :: CMAP_GRAY, CMAP_COOLWARM, CMAP_REVERSED
+    public :: CMAP_GRAY, CMAP_COOLWARM, CMAP_REVERSED, CMAP_QUAL
     public :: cmap_from_str, cmap_color, cmap_rgb, cmap_name
 
     integer, parameter, public :: CMAP_N_ANCHOR = 65
@@ -18,6 +18,9 @@ module fplot_cmap
     ! A reversed map ("viridis_r") is the same table read backwards, so it
     ! is the same id with this flag added rather than a table of its own.
     integer, parameter :: CMAP_REVERSED = 1000
+
+    ! Ids at or above this are qualitative maps, held in QDATA below.
+    integer, parameter :: CMAP_QUAL = 500
 
     integer, parameter :: CMAP_VIRIDIS = 0
     integer, parameter :: CMAP_PLASMA = 1
@@ -876,10 +879,36 @@ module fplot_cmap
          239,  173,    0,  241,  182,    0,  243,  192,    0,  245,  202,    0, &
          247,  213,    0,  249,  223,    0,  251,  235,    0,  253,  246,    0, &
          255,  255,    0]
+    ! ------------------------------------------------------------------
+    ! Qualitative maps. These are lists of colors, not a ramp: matplotlib
+    ! picks the entry at int(t*N) and never blends two of them, so they
+    ! live in a table of their own rather than among the 65-anchor ramps.
+    ! ------------------------------------------------------------------
+    integer, parameter :: CMAP_QUAL_COUNT = 3
+    character(len=13), parameter :: QNAMES(CMAP_QUAL_COUNT) = [ &
+        "tab10        ", &
+        "tab20        ", &
+        "Set1         "]
+    integer, parameter :: QSIZE(CMAP_QUAL_COUNT) = [10, 20, 9]
+    ! Where each map starts in QDATA, in colors.
+    integer, parameter :: QOFF(CMAP_QUAL_COUNT) = [0, 10, 30]
+    integer, parameter :: QDATA(3 * 39) = [ &
+          31,  119,  180,  255,  127,   14,   44,  160,   44,  214,   39,   40, &
+         148,  103,  189,  140,   86,   75,  227,  119,  194,  127,  127,  127, &
+         188,  189,   34,   23,  190,  207,   31,  119,  180,  174,  199,  232, &
+         255,  127,   14,  255,  187,  120,   44,  160,   44,  152,  223,  138, &
+         214,   39,   40,  255,  152,  150,  148,  103,  189,  197,  176,  213, &
+         140,   86,   75,  196,  156,  148,  227,  119,  194,  247,  182,  210, &
+         127,  127,  127,  199,  199,  199,  188,  189,   34,  219,  219,  141, &
+          23,  190,  207,  158,  218,  229,  228,   26,   28,   55,  126,  184, &
+          77,  175,   74,  152,   78,  163,  255,  127,    0,  255,  255,   51, &
+         166,   86,   40,  247,  129,  191,  153,  153,  153]
+
 contains
 
     ! matplotlib's name, with a "_r" suffix meaning the map read backwards.
     ! An unknown name falls back to viridis, matplotlib's default.
+
     pure function cmap_from_str(name) result(id)
         character(len=*), intent(in) :: name
         integer :: id, i, n
@@ -897,6 +926,15 @@ contains
         end if
 
         id = CMAP_VIRIDIS
+        do i = 1, CMAP_QUAL_COUNT
+            if (len_trim(QNAMES(i)) == n) then
+                if (c(1:n) == QNAMES(i)(1:n)) then
+                    id = CMAP_QUAL + i - 1
+                    if (rev) id = id + CMAP_REVERSED
+                    return
+                end if
+            end if
+        end do
         do i = 1, CMAP_COUNT
             if (len_trim(NAMES(i)) == n) then
                 if (c(1:n) == NAMES(i)(1:n)) then
@@ -913,7 +951,11 @@ contains
     pure function cmap_name(id) result(s)
         integer, intent(in) :: id
         character(len=32) :: s
-        s = NAMES(modulo(id, CMAP_REVERSED) + 1)
+        if (modulo(id, CMAP_REVERSED) >= CMAP_QUAL) then
+            s = QNAMES(modulo(id, CMAP_REVERSED) - CMAP_QUAL + 1)
+        else
+            s = NAMES(modulo(id, CMAP_REVERSED) + 1)
+        end if
         if (id >= CMAP_REVERSED) s = trim(s) // "_r"
     end function cmap_name
 
@@ -923,7 +965,7 @@ contains
         real(dp), intent(in) :: t
         integer, intent(out) :: r, g, b
         real(dp) :: u, f
-        integer :: i0, i1, m, base
+        integer :: i0, i1, m, base, nq, k
 
         m = id
         u = t
@@ -932,6 +974,23 @@ contains
         if (m >= CMAP_REVERSED) then
             m = m - CMAP_REVERSED
             u = 1.0_dp - u
+        end if
+        if (m >= CMAP_QUAL) then
+            ! A list of colors: matplotlib takes the int(t*N)th entry whole.
+            k = m - CMAP_QUAL
+            if (k < 0 .or. k >= CMAP_QUAL_COUNT) k = 0
+            nq = QSIZE(k + 1)
+            ! Reversing a list reverses the entries, which is not the same
+            ! as indexing with 1-t at the boundary between two of them.
+            if (id >= CMAP_REVERSED) u = 1.0_dp - u
+            i0 = int(max(0.0_dp, min(1.0_dp, u)) * real(nq, dp))
+            i0 = max(0, min(nq - 1, i0))
+            if (id >= CMAP_REVERSED) i0 = nq - 1 - i0
+            base = 3 * (QOFF(k + 1) + i0)
+            r = QDATA(base + 1)
+            g = QDATA(base + 2)
+            b = QDATA(base + 3)
+            return
         end if
         if (m < 0 .or. m >= CMAP_COUNT) m = CMAP_VIRIDIS
         base = 3 * CMAP_N_ANCHOR * m

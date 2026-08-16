@@ -27,7 +27,7 @@ call title("bottom")
 call suptitle("figure title")
 ```
 
-## Features (MVP)
+## Features
 
 - `plot`, `scatter`, `bar`, `hist`, `fill_between`, `errorbar`
 - `scatter` also takes per-point `sizes=` and color-mapped `cvals=`
@@ -51,6 +51,11 @@ call suptitle("figure title")
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
 - `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
   `xticks` / `yticks` with optional labels, `minorticks_on`
+- Formatters and locators: `tick_format(axis, "percent"/"comma"/"fixed")`,
+  `tick_locator(axis, base=, nbins=)` and `ticklabel_format(style=,
+  useoffset=, scilimits=)`. An axis whose labels would otherwise repeat
+  themselves factors the shared offset and power of ten out into a single
+  label at its end, as matplotlib's ScalarFormatter does
 - Font sizes: `fontsize=` on `title` / `xlabel` / `ylabel` / `suptitle`, and
   `set_fontsize(size=, title=, labels=, ticks=, legend=)` to set them globally
 - `savefig(dpi=, bbox_inches="tight", pad_inches=)` to crop to the drawing
@@ -79,7 +84,8 @@ call suptitle("figure title")
   `zlabel` and `zlim`, drawn with mplot3d's camera, panes and lighting
 - Polar axes: `polar(theta, r)`, or `set_polar()` on an axes, with the
   angular grid, the degree labels and the radial labels along 22.5°
-- Patches: `add_rectangle`, `add_circle`, `add_ellipse` and `add_polygon`,
+- Patches: `add_rectangle`, `add_circle`, `add_ellipse`, `add_polygon`,
+  `add_arrow` and `add_path` for an arbitrary path of lines and cubics,
   filled and outlined in data coordinates
 - `clabel` to write the level into each contour line, breaking the line
   at its straightest stretch to make room
@@ -88,6 +94,8 @@ call suptitle("figure title")
   have the ticks land on round dates and read as dates
 - `subplot2grid`: panels that span several cells of a grid, so a wide
   plot can sit over two narrow ones
+- `gridspec(width_ratios=, height_ratios=)`: columns and rows of unequal
+  size, for a wide panel beside a narrow one
 - `pcolormesh` and `pcolor`: a grid of cells with edges of your own
   choosing, which is what an unevenly sampled field needs
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
@@ -97,11 +105,15 @@ call suptitle("figure title")
   once and drawn by every backend
 - Categorical axes: `plot`, `bar` and `barh` take a list of names in place
   of the numbers, and place them at 0, 1, 2, ... with the names as ticks
-- 49 matplotlib colormaps, any of them reversed with a `_r` suffix, and
-  `imshow(norm="log")` for a logarithmic color scale
+- 49 matplotlib colormaps, plus the qualitative `tab10`, `tab20` and
+  `Set1`, any of them reversed with a `_r` suffix
+- `imshow(norm="log")` for a logarithmic color scale, and
+  `imshow(boundaries=)` for matplotlib's `BoundaryNorm`: one flat color
+  per band, and a colorbar of blocks to match
 - `errorbar` with `xerr=` and asymmetric `yerr_lo=`/`yerr_hi=` arms
 - `fill_between(where=)` to shade only where a condition holds
-- `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled")`
+- `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled",
+  weights=, stacked=)`
 - `axhspan`/`axvspan` shaded bands and `hlines`/`vlines` line runs
 - `style_use("ggplot")` and friends (`seaborn`, `fivethirtyeight`,
   `dark_background`, `grayscale`, `default`), or `rc(figsize=, dpi=,
@@ -166,6 +178,23 @@ call display_data("image/svg+xml", render_svg())
 
 `show()` always writes `fplot_show.svg` (works with Flang and LFortran offline).
 
-## Comparison note
+## Fidelity to matplotlib
 
-Output is **visually** similar to matplotlib, not bit-identical SVG. Matplotlib embeds DejaVu glyph outlines and rich metadata; fplot uses SVG `<text>` and simpler geometry.
+fplot is measured against matplotlib rather than described as similar to it:
+every feature has a case in `tests/test_plots.f90` and a matplotlib reference
+in `tests/gen_mpl_refs.py`, and the comparisons above put a number on the
+difference. As of this writing, over 75 cases:
+
+| format | cases | mean difference |
+| --- | --- | --- |
+| PNG | 75 | 1.55/255 |
+| PDF | 74 | 1.99/255 |
+| EPS | 75 | 3.61/255 |
+| GIF | 20 frames | 0.60/255 |
+
+What is left is mostly antialiasing along edges, and text: fplot draws with
+its own compiled-in DejaVu Sans metrics and glyph outlines, so a stem lands
+on the same pixel column as matplotlib's but not always with the same
+coverage. The SVG is not matplotlib's SVG byte for byte, and is not meant to
+be: matplotlib writes every glyph as a path and attaches its own metadata,
+while fplot writes `<text>` and leaves the glyphs to the viewer.
