@@ -243,6 +243,9 @@ five comparisons.
 
 ```
 src/           library modules
+               fplot_state.f90   shared types and the figure state
+               fplot_artist.f90  drawing primitives (strokes, fills, markers)
+               fplot.f90         the plotting API and the renderers
 examples/      demo.f90
 tests/         Fortran test plots, matplotlib refs, compare scripts
 scripts/       build_flang.sh, build_lfortran.sh

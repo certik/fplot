@@ -25,7 +25,6 @@ module fplot_state
     implicit none
     public
 
-
     ! How the ticks of an axis are written. FMT_AUTO is matplotlib's
     ! ScalarFormatter, which is what an axis does unless it is told
     ! otherwise; the rest are its named formatters.
