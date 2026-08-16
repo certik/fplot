@@ -10,7 +10,12 @@ module fplot
     use fplot_render
     use fplot_backend_svg
     use fplot_backend_pdf
+    use fplot_backend_eps
+    use fplot_gif, only: gif_encode
+    use fplot_proj3d
     use fplot_backend_png
+    use fplot_mathtext
+    use fplot_dates
     implicit none
     private
 
@@ -18,18 +23,30 @@ module fplot
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: set_xscale, set_yscale
     public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
+    public :: pcolormesh, pcolor, hist2d, hexbin
+    public :: matshow, eventplot, broken_barh, streamplot, table
+    public :: add_axes, secondary_xaxis, secondary_yaxis
+    public :: add_rectangle, add_circle, add_ellipse, add_polygon
+    public :: polar, set_polar
+    public :: quiver
+    public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
     public :: axis, set_aspect, tick_params, spines
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
-    public :: imshow, colorbar, contour, contourf
+    public :: imshow, colorbar, contour, contourf, clabel
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
-    public :: render_svg, render_pdf, render_png
-    public :: subplot, suptitle, subplots_adjust, tight_layout
+    public :: render_svg, render_pdf, render_png, render_eps
+    public :: add_frame, save_animation
+    public :: axes3d, plot3d, scatter3d, plot_surface, view_init, zlabel, zlim
+    public :: subplot, subplot2grid, suptitle, subplots_adjust, tight_layout
+    public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
     public :: set_fontsize
     public :: close, gcf
+    public :: axes, subplots, sca
+    public :: style_use, rc
 
     ! Initial slot count for the per-axes series and text arrays; both grow
     ! on demand, so this is only the allocation granularity.
@@ -78,6 +95,9 @@ module fplot
     real(dp), parameter :: DIGIT_W = 0.636_dp
     ! Height of a one-line label including its leading, in font sizes.
     real(dp), parameter :: LABEL_BOX = 1.45_dp
+    ! matplotlib's axes.labelpad, the gap between the tick labels and the
+    ! axis label.
+    real(dp), parameter :: LABEL_PAD = 4.0_dp
     real(dp), parameter :: PI = 3.141592653589793_dp
 
     ! What a series draws. LINE covers plot/scatter/semilog*; the rest are
@@ -93,14 +113,64 @@ module fplot
     integer, parameter :: SERIES_PIE = 8
     integer, parameter :: SERIES_BOX = 9
     integer, parameter :: SERIES_VIOLIN = 10
+    ! HLINES/VLINES: y (x) holds the position of each line and x, y2 its two
+    ! ends. HSPAN/VSPAN: two points, one pair in data coordinates and the
+    ! other in axes fractions.
+    integer, parameter :: SERIES_HLINES = 11
+    integer, parameter :: SERIES_VLINES = 12
+    integer, parameter :: SERIES_HSPAN = 13
+    integer, parameter :: SERIES_VSPAN = 14
+    ! PATCH: a closed ring of vertices, filled and outlined.
+    integer, parameter :: SERIES_PATCH = 16
+    ! QUIVER: x, y hold the tails and qu, qv the vectors.
+    integer, parameter :: SERIES_QUIVER = 15
+    ! ARROWHEAD: x, y hold the tips and qu, qv the direction. Drawn at a
+    ! fixed size in points, which is what streamplot wants.
+    integer, parameter :: SERIES_ARROWHEAD = 17
+    ! 3D: LINE3D and SCATTER3D carry a z alongside x and y; SURFACE carries
+    ! a grid, drawn as one quadrilateral per cell.
+    integer, parameter :: SERIES_LINE3D = 18
+    integer, parameter :: SERIES_SCATTER3D = 19
+    integer, parameter :: SERIES_SURFACE = 20
+    ! The most points one streamline may have.
+    integer, parameter :: MAX_STREAM_PTS = 20000
+
+    ! Working state for streamplot: the field in grid coordinates, and the
+    ! coarse mask that keeps the streamlines apart by refusing a second one
+    ! through any cell.
+    type :: stream_t
+        integer :: nx = 0, ny = 0
+        real(dp), allocatable :: u(:, :), v(:, :), sp(:, :)
+        integer :: mnx = 30, mny = 30
+        integer, allocatable :: mask(:, :)
+        real(dp) :: g2mx = 1.0_dp, g2my = 1.0_dp
+        real(dp) :: m2gx = 1.0_dp, m2gy = 1.0_dp
+        integer :: cx = -1, cy = -1
+        integer :: nclaim = 0
+        integer, allocatable :: claim(:, :)
+    end type stream_t
 
     type :: series_t
         integer :: kind = SERIES_LINE
         integer :: n = 0
         real(dp), allocatable :: x(:)
         real(dp), allocatable :: y(:)
-        ! FILL: lower edge. ERRORBAR: symmetric y error.
+        ! FILL: lower edge. BAR: the baseline it is stacked on.
         real(dp), allocatable :: y2(:)
+        ! ERRORBAR: the four arms, each already a distance from the point.
+        real(dp), allocatable :: eylo(:), eyhi(:), exlo(:), exhi(:)
+        ! PATCH: whether the ring is filled at all. Its outline is drawn
+        ! only when edgecolor names one, as in matplotlib, where a patch is
+        ! filled and edgeless unless asked otherwise.
+        logical :: patch_fill = .true.
+        ! Most patches never ask for room of their own; the ones a plotting
+        ! call makes for itself, such as broken_barh, do.
+        logical :: patch_scales = .false.
+        ! QUIVER: the vector at each point, and how it is drawn. A negative
+        ! scale or width means matplotlib's autoscale.
+        real(dp), allocatable :: qu(:), qv(:)
+        real(dp) :: qscale = -1.0_dp
+        real(dp) :: qwidth = -1.0_dp
         ! BOX/VIOLIN: the position on the category axis.
         real(dp) :: pos = 1.0_dp
         character(len=7) :: color = "#1f77b4"
@@ -112,7 +182,21 @@ module fplot
         real(dp), allocatable :: psize(:)
         character(len=7), allocatable :: pcolor(:)
         real(dp) :: width = 0.8_dp
+        ! Per-bar width, for a histogram with uneven bins.
+        real(dp), allocatable :: bwidth(:)
         real(dp) :: alpha = 1.0_dp
+        ! bar_label: written at draw time, when the bar top is known in
+        ! points and the padding can be honoured exactly.
+        logical :: bar_labels = .false.
+        real(dp) :: bar_pad = 3.0_dp
+        real(dp) :: bar_label_size = 10.0_dp
+        character(len=16) :: bar_fmt = ""
+        character(len=7) :: edgecolor = "#ffffff"
+        real(dp) :: edgewidth = 0.5_dp
+        ! 3D: the third coordinate of a line or scatter, and the grid of a
+        ! surface, in the row = y, column = x order the 2D grids use.
+        real(dp), allocatable :: z(:)
+        real(dp), allocatable :: zg(:, :)
         character(len=128) :: label = ""
     end type series_t
 
@@ -149,19 +233,41 @@ module fplot
         logical :: frame_off = .false.
         logical :: has_cont = .false.
         logical :: cont_filled = .false.
+        ! clabel: a level written into the line itself, the line broken to
+        ! make room for it.
+        logical :: cont_labels = .false.
+        real(dp) :: clab_size = 10.0_dp
         real(dp), allocatable :: cz(:, :)
         real(dp), allocatable :: clev(:)
         integer :: cont_cmap = CMAP_VIRIDIS
         real(dp) :: cont_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: has_img = .false.
+        ! imshow(interpolation=): "nearest", the default, hands the samples
+        ! over as they are; "bilinear" resamples them at the size the image
+        ! is drawn.
+        logical :: img_bilinear = .false.
         ! Set by imshow, and by a scatter that maps c values, so that
         ! colorbar() has a range and colormap to draw.
         logical :: has_cmap_src = .false.
         real(dp), allocatable :: img(:, :)
         integer :: img_cmap = CMAP_VIRIDIS
         real(dp) :: img_vmin = 0.0_dp, img_vmax = 1.0_dp
+        ! How a value is placed on the colormap: linearly, or by its
+        ! logarithm, matplotlib's LogNorm.
+        logical :: img_log_norm = .false.
         real(dp) :: img_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
         logical :: img_origin_upper = .true.
+        ! pcolormesh keeps the same samples in img, but with its own cell
+        ! edges instead of an evenly divided extent.
+        ! Where the axes sits in the figure's grid, zero based, and how
+        ! many cells it spans. A plain subplot spans one of each.
+        integer :: g_row = 0, g_col = 0
+        integer :: g_rowspan = 1, g_colspan = 1
+        ! An axis whose numbers are days since 1970-01-01, and so takes
+        ! its ticks and labels from the calendar.
+        logical :: x_date = .false., y_date = .false.
+        logical :: has_mesh = .false.
+        real(dp), allocatable :: mesh_x(:), mesh_y(:)
         ! Data units per point in y over the same in x. Zero means auto.
         ! adjustable="box" shrinks the axes to suit; "datalim" widens the
         ! limits instead, which is what matplotlib's axis("equal") does.
@@ -183,7 +289,48 @@ module fplot
         ! one's own ticks and label go on. A twin also lets the axes beneath
         ! it show through, so it draws no background.
         integer :: share_x = 0, share_y = 0
+        ! An axes placed by hand rather than in the grid. An inset keeps
+        ! its rectangle in the fractions of the axes it sits in, so it
+        ! follows that axes when the layout moves.
+        ! A polar axes: x is the angle in radians and y the radius, and the
+        ! box holds a circle rather than a rectangle.
+        logical :: polar = .false.
+        logical :: fixed_pos = .false.
+        integer :: inset_of = 0
+        real(dp) :: inset_rect(4) = [0.0_dp, 0.0_dp, 1.0_dp, 1.0_dp]
+        ! A secondary axis carries the limits of the axes it belongs to,
+        ! through v -> sec_scale*v + sec_offset.
+        integer :: sec_of = 0
+        logical :: sec_is_x = .true.
+        real(dp) :: sec_scale = 1.0_dp, sec_offset = 0.0_dp
+        ! Shared axes (subplots(sharex=)). Unlike a twin, which borrows the
+        ! other axes' limits wholesale, a share group takes the union of what
+        ! all its members hold, so every panel shows the same span. link_x is
+        ! the index of the axes the group is named after.
+        integer :: link_x = 0, link_y = 0
+        logical :: xticklabels_off = .false., yticklabels_off = .false.
         logical :: y_right = .false., x_top = .false.
+        ! Room a plotting call asks for beyond what it draws. eventplot
+        ! keeps a whole line length clear above and below its strokes.
+        logical :: yroom_set = .false.
+        real(dp) :: yroom(2) = 0.0_dp
+        ! A table of text below (or above) the axes.
+        logical :: has_table = .false.
+        character(len=32), allocatable :: tbl_cells(:, :), tbl_col(:), tbl_row(:)
+        real(dp), allocatable :: tbl_w(:)
+        real(dp) :: tbl_size = 10.0_dp
+        character(len=16) :: tbl_loc = "bottom"
+        logical :: xroom_set = .false.
+        real(dp) :: xroom(2) = 0.0_dp
+        ! Whether that room is a sticky edge, taking no margin beyond it.
+        logical :: room_sticks = .false.
+        ! A 3D axes. The camera angles are matplotlib's defaults and the z
+        ! limits behave like the other two, except that z takes no margin.
+        logical :: is3d = .false.
+        real(dp) :: elev = 30.0_dp, azim = -60.0_dp
+        logical :: zlim_set = .false.
+        real(dp) :: zmin_user = 0.0_dp, zmax_user = 1.0_dp
+        character(len=256) :: zlabel = ""
         logical :: xaxis_off = .false., yaxis_off = .false.
         logical :: patch_off = .false.
         real(dp) :: aspect = 0.0_dp
@@ -204,6 +351,95 @@ module fplot
         real(dp) :: bottom = MARGIN_BOTTOM, top = MARGIN_TOP
     end type axes_t
 
+    ! A handle to one axes of the current figure, so that a script can say
+    ! ax%plot(...) instead of selecting an axes and then drawing into it.
+    !
+    ! It holds an index, not a copy: fplot is stateful, and every binding is
+    ! "make this the current axes, then call the module procedure of the same
+    ! name". That keeps one implementation of each plot type rather than two,
+    ! and means the two styles can be mixed freely. Anything without a
+    ! binding is still reachable by making the axes current with sca.
+    type :: axes
+        integer :: idx = 0
+    contains
+        procedure :: sca => ax_sca
+        procedure :: inset_axes => ax_inset_axes
+        procedure :: secondary_xaxis => ax_secondary_xaxis
+        procedure :: secondary_yaxis => ax_secondary_yaxis
+        procedure, private :: ax_plot, ax_plot_cat
+        generic :: plot => ax_plot, ax_plot_cat
+        procedure :: scatter => ax_scatter
+        procedure, private :: ax_bar, ax_bar_cat, ax_barh, ax_barh_cat
+        generic :: bar => ax_bar, ax_bar_cat
+        generic :: barh => ax_barh, ax_barh_cat
+        procedure :: bar_label => ax_bar_label
+        procedure :: hist => ax_hist
+        procedure :: fill_between => ax_fill_between
+        procedure :: errorbar => ax_errorbar
+        procedure :: step => ax_step
+        procedure :: stem => ax_stem
+        procedure :: quiver => ax_quiver
+        procedure :: set_polar => ax_set_polar
+        procedure :: add_rectangle => ax_add_rectangle
+        procedure :: add_circle => ax_add_circle
+        procedure :: add_ellipse => ax_add_ellipse
+        procedure :: add_polygon => ax_add_polygon
+        procedure :: imshow => ax_imshow
+        procedure :: xaxis_date => ax_xaxis_date
+        procedure :: yaxis_date => ax_yaxis_date
+        procedure :: pcolormesh => ax_pcolormesh
+        procedure :: pcolor => ax_pcolormesh
+        procedure :: clabel => ax_clabel
+        procedure :: contour => ax_contour
+        procedure :: contourf => ax_contourf
+        procedure :: colorbar => ax_colorbar
+        procedure :: axhline => ax_axhline
+        procedure :: axvline => ax_axvline
+        procedure :: axhspan => ax_axhspan
+        procedure :: axvspan => ax_axvspan
+        procedure :: hlines => ax_hlines
+        procedure :: vlines => ax_vlines
+        procedure :: text => ax_text
+        procedure :: annotate => ax_annotate
+        procedure :: set_title => ax_set_title
+        procedure :: set_xlabel => ax_set_xlabel
+        procedure :: set_ylabel => ax_set_ylabel
+        procedure :: set_xlim => ax_set_xlim
+        procedure :: set_ylim => ax_set_ylim
+        procedure :: set_xscale => ax_set_xscale
+        procedure :: set_yscale => ax_set_yscale
+        procedure :: set_xticks => ax_set_xticks
+        procedure :: set_yticks => ax_set_yticks
+        procedure :: set_aspect => ax_set_aspect
+        procedure :: grid => ax_grid
+        procedure :: legend => ax_legend
+        procedure :: tick_params => ax_tick_params
+        procedure :: spines => ax_spines
+        procedure :: axis => ax_axis
+        procedure :: twinx => ax_twinx
+        procedure :: twiny => ax_twiny
+    end type axes
+
+    ! subplots(m, n, axs) fills a grid; the rank of axs decides whether the
+    ! panels come back shaped or in a row, and a lone axes needs no counts.
+    ! Categories instead of numbers on an axis: the same call with a list
+    ! of names, which are placed at 0, 1, 2, ... and become the tick labels.
+    interface bar
+        module procedure bar_num, bar_cat
+    end interface bar
+
+    interface barh
+        module procedure barh_num, barh_cat
+    end interface barh
+
+    interface plot
+        module procedure plot_num, plot_cat
+    end interface plot
+
+    interface subplots
+        module procedure subplots_grid, subplots_row, subplots_one
+    end interface subplots
+
     ! Figure state (pylab current figure)
     real(dp), save :: fig_w_in = FIG_W_DEFAULT
     real(dp), save :: fig_h_in = FIG_H_DEFAULT
@@ -216,6 +452,16 @@ module fplot
     real(dp), save :: fig_bottom = MARGIN_BOTTOM, fig_top = MARGIN_TOP
     real(dp), save :: fig_wspace = WSPACE, fig_hspace = HSPACE
     character(len=256), save :: fig_suptitle = ""
+    ! Animation frames, packed RGB, all frames end to end. Kept as bytes
+    ! rather than as figures because a figure cannot be replayed: the caller
+    ! redraws and calls add_frame, exactly as a matplotlib update function
+    ! redraws and returns.
+    character(len=:), allocatable, save :: anim_pix
+    integer, save :: anim_n = 0, anim_w = 0, anim_h = 0
+    ! Filled length of anim_pix. The reel is grown by doubling and written
+    ! into in place: appending with // would build a temporary as large as
+    ! the whole animation on every frame.
+    integer, save :: anim_len = 0
     ! Font sizes for anything not set on an individual axes. New axes take
     ! their sizes from here, so set_fontsize before or after plotting behaves
     ! the same way.
@@ -223,12 +469,36 @@ module fplot
     real(dp), save :: def_tick = TICK_FONT, def_legend = LEGEND_FONT
     real(dp), save :: fig_suptitle_size = SUPTITLE_FONT
 
+    ! ------------------------------------------------------------------
+    ! Global defaults, matplotlib's rcParams. A style is nothing but a set
+    ! of these: everything below is consulted while drawing or copied into
+    ! an axes as it is made, so style_use before the first plot call is what
+    ! a user expects it to be.
+    ! ------------------------------------------------------------------
+    integer, parameter :: MAX_CYCLE = 12
+    integer, save :: rc_n_cycle = 0      ! zero means the built-in tab10
+    character(len=7), save :: rc_cycle(MAX_CYCLE) = "#000000"
+    character(len=7), save :: rc_fig_face = "#ffffff"
+    character(len=7), save :: rc_axes_face = "#ffffff"
+    character(len=7), save :: rc_grid_color = "#b0b0b0"
+    character(len=7), save :: rc_text_color = "#000000"
+    character(len=7), save :: rc_spine_color = "#000000"
+    real(dp), save :: rc_grid_lw = 0.8_dp
+    real(dp), save :: rc_spine_lw = 0.8_dp
+    character(len=7), save :: rc_legend_face = "#ffffff"
+    character(len=7), save :: rc_legend_edge = "#cccccc"
+    real(dp), save :: rc_lw = default_linewidth
+    logical, save :: rc_grid = .false.
+
     ! Clipping region currently in force. See set_clip.
     type(clip_t), save :: g_clip
     type(axes_t), allocatable, save :: ax(:)
     integer, save :: n_ax = 0
     integer, save :: cur_i = 0
     integer, save :: grid_m = 0, grid_n = 0
+    ! A grid whose cells are filled in one at a time by subplot2grid,
+    ! rather than all at once by subplot.
+    logical, save :: grid_sparse = .false.
     logical, save :: fig_initialized = .false.
 
     ! A parked figure. Holds exactly the module state above, so switching
@@ -243,6 +513,7 @@ module fplot
         real(dp) :: d_title, d_label, d_tick, d_legend, suptitle_size
         type(axes_t), allocatable :: ax(:)
         integer :: n_ax, cur_i, grid_m, grid_n
+        logical :: sparse
     end type figure_t
     type(figure_t), allocatable, save :: figs(:)
     integer, save :: cur_fig = 0
@@ -291,6 +562,7 @@ contains
         figs(k)%cur_i = cur_i
         figs(k)%grid_m = grid_m
         figs(k)%grid_n = grid_n
+        figs(k)%sparse = grid_sparse
         if (allocated(figs(k)%ax)) deallocate (figs(k)%ax)
         ! Allocated explicitly rather than relying on reallocation on
         ! assignment, which is not on by default in every compiler.
@@ -321,6 +593,7 @@ contains
         cur_i = figs(k)%cur_i
         grid_m = figs(k)%grid_m
         grid_n = figs(k)%grid_n
+        grid_sparse = figs(k)%sparse
         if (allocated(ax)) deallocate (ax)
         if (allocated(figs(k)%ax)) then
             allocate (ax(size(figs(k)%ax)))
@@ -449,6 +722,7 @@ contains
         n_ax = 0
         grid_m = 0
         grid_n = 0
+        grid_sparse = .false.
         fig_suptitle = ""
         fig_left = MARGIN_LEFT
         fig_right = MARGIN_RIGHT
@@ -477,9 +751,12 @@ contains
         allocate (ax(n_ax))
         do i = 1, n_ax
             call apply_font_defaults(ax(i))
+            ax(i)%g_row = (i - 1) / n
+            ax(i)%g_col = mod(i - 1, n)
         end do
         grid_m = m
         grid_n = n
+        grid_sparse = .false.
         call layout_grid()
     end subroutine new_axes_grid
 
@@ -493,6 +770,7 @@ contains
 
     subroutine apply_font_defaults(a)
         type(axes_t), intent(inout) :: a
+        a%grid_on = rc_grid
         a%title_size = def_title
         a%xlabel_size = def_label
         a%ylabel_size = def_label
@@ -500,6 +778,140 @@ contains
         a%ytick_size = def_tick
         a%legend_size = def_legend
     end subroutine apply_font_defaults
+
+    ! The i-th color of the active cycle, wrapping. This is what "C0".."C9"
+    ! resolve to as well, so a style changes both at once.
+    pure function cycle_color(idx) result(col)
+        integer, intent(in) :: idx
+        character(len=7) :: col
+        integer :: i
+        if (rc_n_cycle <= 0) then
+            col = color_from_C(idx)
+        else
+            i = mod(idx, rc_n_cycle)
+            if (i < 0) i = i + rc_n_cycle
+            col = rc_cycle(i + 1)
+        end if
+    end function cycle_color
+
+    subroutine set_cycle(c)
+        character(len=7), intent(in) :: c(:)
+        rc_n_cycle = min(size(c), MAX_CYCLE)
+        rc_cycle(1:rc_n_cycle) = c(1:rc_n_cycle)
+    end subroutine set_cycle
+
+    ! matplotlib's style.use. Each style is just a block of rcParams, so
+    ! this sets the same globals a user could set one at a time with rc().
+    subroutine style_use(name)
+        character(len=*), intent(in) :: name
+
+        ! Start from the built-in defaults so styles do not accumulate.
+        rc_n_cycle = 0
+        rc_fig_face = "#ffffff"
+        rc_axes_face = "#ffffff"
+        rc_grid_color = "#b0b0b0"
+        rc_text_color = "#000000"
+        rc_spine_color = "#000000"
+        rc_grid_lw = 0.8_dp
+        rc_spine_lw = 0.8_dp
+        rc_legend_face = "#ffffff"
+        rc_legend_edge = "#cccccc"
+        rc_lw = default_linewidth
+        rc_grid = .false.
+        def_title = 12.0_dp
+        def_label = 10.0_dp
+        def_tick = 10.0_dp
+        def_legend = 10.0_dp
+
+        select case (lower(trim(name)))
+        case ("default", "classic")
+        case ("ggplot")
+            rc_axes_face = "#e5e5e5"
+            rc_legend_face = "#e5e5e5"
+            rc_grid_color = "#ffffff"
+            rc_grid_lw = 1.0_dp
+            rc_spine_color = "#ffffff"
+            rc_spine_lw = 1.0_dp
+            rc_text_color = "#555555"
+            rc_grid = .true.
+            def_title = 14.4_dp
+            def_label = 12.0_dp
+            call set_cycle(["#e24a33", "#348abd", "#988ed5", "#777777", &
+                            "#fbc15e", "#8eba42", "#ffb5b8"])
+        case ("seaborn", "seaborn-darkgrid")
+            rc_axes_face = "#eaeaf2"
+            rc_legend_face = "#eaeaf2"
+            rc_grid_color = "#ffffff"
+            rc_grid_lw = 1.0_dp
+            rc_spine_color = "#eaeaf2"
+            rc_text_color = "#262626"
+            rc_grid = .true.
+            call set_cycle(["#4c72b0", "#dd8452", "#55a868", "#c44e52", &
+                            "#8172b3", "#937860", "#da8bc3", "#8c8c8c", &
+                            "#ccb974", "#64b5cd"])
+        case ("fivethirtyeight")
+            rc_fig_face = "#f0f0f0"
+            rc_axes_face = "#f0f0f0"
+            rc_legend_face = "#f0f0f0"
+            rc_grid_color = "#cbcbcb"
+            rc_grid_lw = 1.0_dp
+            rc_spine_color = "#f0f0f0"
+            rc_text_color = "#555555"
+            rc_lw = 4.0_dp
+            rc_grid = .true.
+            call set_cycle(["#008fd5", "#fc4f30", "#e5ae38", "#6d904f", &
+                            "#8b8b8b", "#810f7c"])
+        case ("dark_background")
+            rc_fig_face = "#000000"
+            rc_axes_face = "#000000"
+            rc_legend_face = "#000000"
+            rc_legend_edge = "#ffffff"
+            rc_grid_color = "#555555"
+            rc_spine_color = "#ffffff"
+            rc_text_color = "#ffffff"
+            call set_cycle(["#8dd3c7", "#feffb3", "#bfbbd9", "#fa8174", &
+                            "#81b1d2", "#fdb462", "#b3de69", "#bc82bd", &
+                            "#ccebc4", "#ffed6f"])
+        case ("grayscale")
+            call set_cycle(["#000000", "#545454", "#7f7f7f", "#b0b0b0", &
+                            "#d4d4d4"])
+        case default
+            error stop "fplot: unknown style"
+        end select
+    end subroutine style_use
+
+    ! Individual rcParams, for the settings a user is most likely to want
+    ! without adopting a whole style.
+    subroutine rc(figsize, dpi, fontsize, linewidth, grid, facecolor, &
+                  axes_facecolor, grid_color, text_color, color_cycle)
+        real(dp), intent(in), optional :: figsize(2), dpi, fontsize, linewidth
+        logical, intent(in), optional :: grid
+        character(len=*), intent(in), optional :: facecolor, axes_facecolor
+        character(len=*), intent(in), optional :: grid_color, text_color
+        character(len=7), intent(in), optional :: color_cycle(:)
+
+        if (present(figsize)) then
+            fig_w_in = figsize(1)
+            fig_h_in = figsize(2)
+        end if
+        if (present(dpi)) fig_dpi = dpi
+        if (present(fontsize)) then
+            def_title = fontsize*1.2_dp
+            def_label = fontsize
+            def_tick = fontsize
+            def_legend = fontsize
+        end if
+        if (present(linewidth)) rc_lw = linewidth
+        if (present(grid)) rc_grid = grid
+        if (present(facecolor)) rc_fig_face = resolve_color(facecolor)
+        if (present(axes_facecolor)) rc_axes_face = resolve_color(axes_facecolor)
+        if (present(grid_color)) rc_grid_color = resolve_color(grid_color)
+        if (present(text_color)) then
+            rc_text_color = resolve_color(text_color)
+            rc_spine_color = rc_text_color
+        end if
+        if (present(color_cycle)) call set_cycle(color_cycle)
+    end subroutine rc
 
     ! Place the existing axes in the current margins. Called again whenever
     ! those margins move, so the axes objects themselves survive.
@@ -517,17 +929,30 @@ contains
         dx = w * (1.0_dp + fig_wspace)
         dy = h * (1.0_dp + fig_hspace)
 
-        do i = 1, min(n_ax, grid_m * grid_n)
-            r = (i - 1) / grid_n     ! row from the top
-            c = mod(i - 1, grid_n)   ! column from the left
+        do i = 1, n_ax
+            if (ax(i)%fixed_pos .or. ax(i)%inset_of > 0) cycle
+            ! Twins sit exactly on top of the axes they were made from.
+            r = max(ax(i)%share_x, ax(i)%share_y)
+            if (r >= 1) cycle
+            r = ax(i)%g_row          ! row from the top
+            c = ax(i)%g_col          ! column from the left
             ax(i)%left = fig_left + real(c, dp) * dx
-            ax(i)%right = ax(i)%left + w
-            ax(i)%bottom = fig_bottom + real(grid_m - 1 - r, dp) * dy
-            ax(i)%top = ax(i)%bottom + h
+            ax(i)%right = ax(i)%left + w + real(ax(i)%g_colspan - 1, dp) * dx
+            ax(i)%bottom = fig_bottom + &
+                           real(grid_m - r - ax(i)%g_rowspan, dp) * dy
+            ax(i)%top = ax(i)%bottom + h + real(ax(i)%g_rowspan - 1, dp) * dy
         end do
 
-        ! Twins sit exactly on top of the axes they were made from.
-        do i = grid_m * grid_n + 1, n_ax
+        do i = 1, n_ax
+            r = ax(i)%inset_of
+            if (r < 1) cycle
+            ax(i)%left = ax(r)%left + ax(i)%inset_rect(1)*(ax(r)%right - ax(r)%left)
+            ax(i)%bottom = ax(r)%bottom + ax(i)%inset_rect(2)*(ax(r)%top - ax(r)%bottom)
+            ax(i)%right = ax(i)%left + ax(i)%inset_rect(3)*(ax(r)%right - ax(r)%left)
+            ax(i)%top = ax(i)%bottom + ax(i)%inset_rect(4)*(ax(r)%top - ax(r)%bottom)
+        end do
+
+        do i = 1, n_ax
             r = max(ax(i)%share_x, ax(i)%share_y)
             if (r < 1) cycle
             ax(i)%left = ax(r)%left
@@ -616,13 +1041,16 @@ contains
         inner_l = 0.0_dp
         inner_b = 0.0_dp
         do i = 1, n_ax
+            ! An axes the caller placed itself is not the grid's business.
+            if (ax(i)%fixed_pos .or. ax(i)%inset_of > 0) cycle
             need_l = max(need_l, decor_left(ax(i)))
             need_b = max(need_b, decor_bottom(ax(i)))
             need_t = max(need_t, decor_top(ax(i)))
             ! Only axes away from the left column and the bottom row put
             ! decorations into the gaps between subplots.
-            if (mod(i - 1, grid_n) > 0) inner_l = max(inner_l, decor_left(ax(i)))
-            if ((i - 1) / grid_n < grid_m - 1) inner_b = max(inner_b, decor_bottom(ax(i)))
+            if (ax(i)%g_col > 0) inner_l = max(inner_l, decor_left(ax(i)))
+            if (ax(i)%g_row + ax(i)%g_rowspan < grid_m) &
+                inner_b = max(inner_b, decor_bottom(ax(i)))
         end do
         if (len_trim(fig_suptitle) > 0) need_t = need_t + LABEL_BOX * fig_suptitle_size
 
@@ -656,8 +1084,22 @@ contains
         type(axes_t), intent(in) :: a
         real(dp) :: v
         v = TICK_LEN + 2.0_dp + tick_label_width(a)
-        if (len_trim(a%ylabel) > 0) v = v + LABEL_BOX * a%ylabel_size
+        ! The label is drawn a fixed distance out, so with narrow tick
+        ! labels it reaches further than they do and it is what decides
+        ! how much room the axes needs on its left.
+        if (len_trim(a%ylabel) > 0) &
+            v = ylabel_out(a) + 0.24_dp * a%ylabel_size
     end function decor_left
+
+    ! Baseline of the y label, in points outside the axes. matplotlib
+    ! hangs it off the tick labels, so a plot whose ticks read 1 to 7
+    ! carries its label much closer in than one reading -1.00 to 1.00.
+    function ylabel_out(a) result(v)
+        type(axes_t), intent(in) :: a
+        real(dp) :: v
+        v = TICK_LEN + 2.0_dp + tick_label_width(a) + LABEL_PAD &
+            + 0.76_dp * a%ylabel_size
+    end function ylabel_out
 
     function decor_bottom(a) result(v)
         type(axes_t), intent(in) :: a
@@ -732,20 +1174,37 @@ contains
         real(dp) :: v, xmin, xmax, ymin, ymax
         real(dp) :: t(MAX_TICKS)
         character(len=64) :: lbl
-        integer :: nt, i, ln
+        integer :: nt, i, ln, du
         v = 0.0_dp
         call compute_limits(a, xmin, xmax, ymin, ymax)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        a%ysc, t, nt)
+                        a%ysc, 9, a%y_date, t, nt, du)
         do i = 1, nt
-            call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, lbl, ln)
-            v = max(v, real(ln, dp) * DIGIT_W * a%ytick_size)
+            call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, &
+                            axis_decimals(t, nt, a%ysc), du, lbl, ln)
+            if (math_is(lbl(1:ln))) then
+                v = max(v, math_width(lbl(1:ln), a%ytick_size))
+            else
+                v = max(v, real(ln, dp) * DIGIT_W * a%ytick_size)
+            end if
         end do
     end function tick_label_width
 
 
     ! Select the i-th axes (row-major) of an m x n grid, creating the grid
     ! if it differs from the current one.
+    ! Treat an axis as dates: its numbers are days since 1970-01-01, the
+    ! ticks land on round dates and the labels are written as dates.
+    subroutine xaxis_date()
+        call ensure_fig()
+        ax(cur_i)%x_date = .true.
+    end subroutine xaxis_date
+
+    subroutine yaxis_date()
+        call ensure_fig()
+        ax(cur_i)%y_date = .true.
+    end subroutine yaxis_date
+
     subroutine subplot(m, n, i)
         integer, intent(in) :: m, n, i
 
@@ -758,6 +1217,735 @@ contains
         if (grid_m /= m .or. grid_n /= n) call new_axes_grid(m, n)
         cur_i = i
     end subroutine subplot
+
+    ! One axes spanning several cells of a shape(1) x shape(2) grid, with
+    ! its top left corner at loc, counted from zero as matplotlib counts
+    ! it. Cells nobody asks for stay empty, which is how a wide panel over
+    ! two narrow ones is built.
+    ! Grow the axes array by one and make the new axes current.
+    subroutine push_axes()
+        type(axes_t), allocatable :: tmp(:)
+
+        call ensure_fig()
+        if (n_ax > 0) then
+            call move_alloc(ax, tmp)
+            allocate (ax(n_ax + 1))
+            ax(1:n_ax) = tmp
+        else
+            if (allocated(ax)) deallocate (ax)
+            allocate (ax(1))
+        end if
+        n_ax = n_ax + 1
+        cur_i = n_ax
+        call apply_font_defaults(ax(cur_i))
+    end subroutine push_axes
+
+    ! An axes at a rectangle of the figure the caller chose, [left, bottom,
+    ! width, height] in figure fractions. The grid never moves it.
+    function add_axes(rect) result(h)
+        real(dp), intent(in) :: rect(4)
+        type(axes) :: h
+
+        call push_axes()
+        ax(cur_i)%fixed_pos = .true.
+        ax(cur_i)%left = rect(1)
+        ax(cur_i)%bottom = rect(2)
+        ax(cur_i)%right = rect(1) + rect(3)
+        ax(cur_i)%top = rect(2) + rect(4)
+        h%idx = cur_i
+    end function add_axes
+
+    ! A small axes inside another one, its rectangle given in the fractions
+    ! of that axes, so it goes on fitting when the layout moves.
+    function ax_inset_axes(self, bounds) result(h)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: bounds(4)
+        type(axes) :: h
+        integer :: parent
+
+        parent = self%idx
+        call push_axes()
+        ax(cur_i)%inset_of = parent
+        ax(cur_i)%inset_rect = bounds
+        call layout_grid()
+        h%idx = cur_i
+    end function ax_inset_axes
+
+    function ax_secondary_xaxis(self, location, scale, offset) result(h)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        h = add_secondary(self%idx, .true., location, scale, offset)
+    end function ax_secondary_xaxis
+
+    function ax_secondary_yaxis(self, location, scale, offset) result(h)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        h = add_secondary(self%idx, .false., location, scale, offset)
+    end function ax_secondary_yaxis
+
+    function secondary_xaxis(location, scale, offset) result(h)
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        call ensure_fig()
+        h = add_secondary(cur_i, .true., location, scale, offset)
+    end function secondary_xaxis
+
+    function secondary_yaxis(location, scale, offset) result(h)
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        call ensure_fig()
+        h = add_secondary(cur_i, .false., location, scale, offset)
+    end function secondary_yaxis
+
+    ! A second axis along one edge, reading the same data in other units.
+    ! matplotlib takes a pair of functions; here the two units are related
+    ! by scale and offset, which is what a change of units amounts to.
+    function add_secondary(parent, is_x, location, scale, offset) result(h)
+        integer, intent(in) :: parent
+        logical, intent(in) :: is_x
+        character(len=*), intent(in), optional :: location
+        real(dp), intent(in), optional :: scale, offset
+        type(axes) :: h
+        character(len=8) :: loc
+
+        loc = "top"
+        if (.not. is_x) loc = "right"
+        if (present(location)) loc = location
+
+        call push_axes()
+        ! Sitting on the whole of its parent keeps the two axes registered
+        ! against each other however the layout moves afterwards.
+        ax(cur_i)%inset_of = parent
+        ax(cur_i)%inset_rect = [0.0_dp, 0.0_dp, 1.0_dp, 1.0_dp]
+        ax(cur_i)%patch_off = .true.
+        ax(cur_i)%sec_of = parent
+        ax(cur_i)%sec_is_x = is_x
+        if (present(scale)) ax(cur_i)%sec_scale = scale
+        if (present(offset)) ax(cur_i)%sec_offset = offset
+        if (is_x) then
+            ax(cur_i)%yaxis_off = .true.
+            ax(cur_i)%x_top = loc /= "bottom"
+            ax(cur_i)%xsc = ax(parent)%xsc
+        else
+            ax(cur_i)%xaxis_off = .true.
+            ax(cur_i)%y_right = loc /= "left"
+            ax(cur_i)%ysc = ax(parent)%ysc
+        end if
+        call layout_grid()
+        h%idx = cur_i
+    end function add_secondary
+
+    function subplot2grid(shape, loc, rowspan, colspan) result(h)
+        integer, intent(in) :: shape(2), loc(2)
+        integer, intent(in), optional :: rowspan, colspan
+        type(axes) :: h
+        type(axes_t), allocatable :: tmp(:)
+        integer :: rs, cs
+
+        rs = 1
+        cs = 1
+        if (present(rowspan)) rs = max(1, rowspan)
+        if (present(colspan)) cs = max(1, colspan)
+        if (shape(1) < 1 .or. shape(2) < 1) then
+            print *, "fplot: invalid subplot2grid shape:", shape
+            error stop
+        end if
+
+        call ensure_fig()
+        ! A grid of a different shape, or one that subplot filled in for
+        ! us, is not ours to add to.
+        if (.not. grid_sparse .or. grid_m /= shape(1) .or. grid_n /= shape(2)) then
+            if (allocated(ax)) deallocate (ax)
+            n_ax = 0
+            grid_m = shape(1)
+            grid_n = shape(2)
+            grid_sparse = .true.
+        end if
+
+        if (n_ax > 0) then
+            call move_alloc(ax, tmp)
+            allocate (ax(n_ax + 1))
+            ax(1:n_ax) = tmp
+        else
+            allocate (ax(1))
+        end if
+        n_ax = n_ax + 1
+        cur_i = n_ax
+        call apply_font_defaults(ax(cur_i))
+        ax(cur_i)%g_row = max(0, min(loc(1), grid_m - 1))
+        ax(cur_i)%g_col = max(0, min(loc(2), grid_n - 1))
+        ax(cur_i)%g_rowspan = min(rs, grid_m - ax(cur_i)%g_row)
+        ax(cur_i)%g_colspan = min(cs, grid_n - ax(cur_i)%g_col)
+        call layout_grid()
+        h%idx = cur_i
+    end function subplot2grid
+
+    ! ----------------------------------------------------------------------
+    ! Axes handles. subplots makes a new figure, as matplotlib's does, and
+    ! hands back one handle per panel.
+    ! ----------------------------------------------------------------------
+
+    subroutine subplots_grid(nrows, ncols, axs, sharex, sharey)
+        integer, intent(in) :: nrows, ncols
+        type(axes), allocatable, intent(out) :: axs(:, :)
+        logical, intent(in), optional :: sharex, sharey
+        integer :: r, c
+
+        call make_grid(nrows, ncols, sharex, sharey)
+        allocate (axs(nrows, ncols))
+        do r = 1, nrows
+            do c = 1, ncols
+                axs(r, c)%idx = (r - 1)*ncols + c
+            end do
+        end do
+    end subroutine subplots_grid
+
+    subroutine subplots_row(nrows, ncols, axs, sharex, sharey)
+        integer, intent(in) :: nrows, ncols
+        type(axes), allocatable, intent(out) :: axs(:)
+        logical, intent(in), optional :: sharex, sharey
+        integer :: i
+
+        call make_grid(nrows, ncols, sharex, sharey)
+        allocate (axs(nrows*ncols))
+        do i = 1, nrows*ncols
+            axs(i)%idx = i
+        end do
+    end subroutine subplots_row
+
+    subroutine subplots_one(ax_out)
+        type(axes), intent(out) :: ax_out
+
+        call make_grid(1, 1)
+        ax_out%idx = 1
+    end subroutine subplots_one
+
+    ! Sharing is expressed on the axes themselves: a group is named after its
+    ! first member, and only the outer panels keep their tick labels, which
+    ! is most of why anyone asks for it.
+    subroutine make_grid(m, n, sharex, sharey)
+        integer, intent(in) :: m, n
+        logical, intent(in), optional :: sharex, sharey
+        integer :: i, r, c
+        logical :: sx, sy
+
+        sx = .false.
+        sy = .false.
+        if (present(sharex)) sx = sharex
+        if (present(sharey)) sy = sharey
+
+        call figure()
+        if (m /= 1 .or. n /= 1) call new_axes_grid(m, n)
+        cur_i = 1
+
+        do i = 1, n_ax
+            r = (i - 1)/n + 1
+            c = i - (r - 1)*n
+            if (sx) then
+                ax(i)%link_x = 1
+                ax(i)%xticklabels_off = r < m
+            end if
+            if (sy) then
+                ax(i)%link_y = 1
+                ax(i)%yticklabels_off = c > 1
+            end if
+        end do
+    end subroutine make_grid
+
+    ! Make an axes current: the module-level spelling of matplotlib's sca,
+    ! and the way to reach anything that has no binding on the handle.
+    subroutine sca(a)
+        type(axes), intent(in) :: a
+
+        call ensure_fig()
+        if (a%idx >= 1 .and. a%idx <= n_ax) cur_i = a%idx
+    end subroutine sca
+
+    subroutine ax_sca(self)
+        class(axes), intent(in) :: self
+
+        call ensure_fig()
+        if (self%idx >= 1 .and. self%idx <= n_ax) cur_i = self%idx
+    end subroutine ax_sca
+
+    subroutine ax_plot(self, x, y, fmt, label, lw, color, marker, linestyle, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        call ax_sca(self)
+        call plot(x, y, fmt, label, lw, color, marker, linestyle, alpha)
+    end subroutine ax_plot
+
+    subroutine ax_plot_cat(self, cats, y, fmt, label, lw, color, marker, &
+                           linestyle, alpha)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        call ax_sca(self)
+        call plot(cats, y, fmt, label, lw, color, marker, linestyle, alpha)
+    end subroutine ax_plot_cat
+
+    subroutine ax_bar_cat(self, cats, height, width, color, label, alpha, &
+                          bottom, colors, edgecolor, linewidth)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: height(:)
+        real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call ax_sca(self)
+        call bar(cats, height, width, color, label, alpha, bottom, colors, &
+                 edgecolor, linewidth)
+    end subroutine ax_bar_cat
+
+    subroutine ax_barh_cat(self, cats, width, height, color, label, alpha, &
+                           left, colors, edgecolor, linewidth)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: width(:)
+        real(dp), intent(in), optional :: height, alpha, left(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call ax_sca(self)
+        call barh(cats, width, height, color, label, alpha, left, colors, &
+                  edgecolor, linewidth)
+    end subroutine ax_barh_cat
+
+    subroutine ax_scatter(self, x, y, s, c, marker, label, alpha, sizes, cvals, &
+                          cmap, vmin, vmax)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: s, alpha, vmin, vmax
+        real(dp), intent(in), optional :: sizes(:), cvals(:)
+        character(len=*), intent(in), optional :: c, marker, label, cmap
+        call ax_sca(self)
+        call scatter(x, y, s, c, marker, label, alpha, sizes, cvals, cmap, vmin, vmax)
+    end subroutine ax_scatter
+
+    subroutine ax_bar(self, x, height, width, color, label, alpha, bottom, &
+                      colors, edgecolor, linewidth)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), height(:)
+        real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call ax_sca(self)
+        call bar(x, height, width, color, label, alpha, bottom, colors, &
+                 edgecolor, linewidth)
+    end subroutine ax_bar
+
+    subroutine ax_barh(self, y, width, height, color, label, alpha, left, &
+                       colors, edgecolor, linewidth)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y(:), width(:)
+        real(dp), intent(in), optional :: height, alpha, left(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call ax_sca(self)
+        call barh(y, width, height, color, label, alpha, left, colors, &
+                  edgecolor, linewidth)
+    end subroutine ax_barh
+
+    subroutine ax_bar_label(self, fmt, padding, fontsize)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: fmt
+        real(dp), intent(in), optional :: padding, fontsize
+        call ax_sca(self)
+        call bar_label(fmt, padding, fontsize)
+    end subroutine ax_bar_label
+
+    subroutine ax_hist(self, x, bins, color, label, alpha, bin_edges, &
+                       density, cumulative, histtype)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:)
+        integer, intent(in), optional :: bins
+        character(len=*), intent(in), optional :: color, label, histtype
+        real(dp), intent(in), optional :: alpha, bin_edges(:)
+        logical, intent(in), optional :: density, cumulative
+        call ax_sca(self)
+        call hist(x, bins, color, label, alpha, bin_edges, density, &
+                  cumulative, histtype)
+    end subroutine ax_hist
+
+    subroutine ax_fill_between(self, x, y1, y2, color, label, alpha, where)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y1(:)
+        real(dp), intent(in), optional :: y2(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        logical, intent(in), optional :: where(:)
+        call ax_sca(self)
+        call fill_between(x, y1, y2, color, label, alpha, where)
+    end subroutine ax_fill_between
+
+    subroutine ax_errorbar(self, x, y, yerr, fmt, color, label, capsize, &
+                           marker, xerr, yerr_lo, yerr_hi, xerr_lo, xerr_hi)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: yerr(:), xerr(:)
+        real(dp), intent(in), optional :: yerr_lo(:), yerr_hi(:)
+        real(dp), intent(in), optional :: xerr_lo(:), xerr_hi(:)
+        character(len=*), intent(in), optional :: fmt, color, label, marker
+        real(dp), intent(in), optional :: capsize
+        call ax_sca(self)
+        call errorbar(x, y, yerr, fmt, color, label, capsize, marker, xerr, &
+                      yerr_lo, yerr_hi, xerr_lo, xerr_hi)
+    end subroutine ax_errorbar
+
+    subroutine ax_step(self, x, y, where, label, color, lw, linestyle, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: where, label, color, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        call ax_sca(self)
+        call step(x, y, where, label, color, lw, linestyle, alpha)
+    end subroutine ax_step
+
+    subroutine ax_set_polar(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call set_polar()
+    end subroutine ax_set_polar
+
+    subroutine ax_add_rectangle(self, xy, width, height, angle, facecolor, &
+                                edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xy(2), width, height
+        real(dp), intent(in), optional :: angle, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_rectangle(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_rectangle
+
+    subroutine ax_add_circle(self, xy, radius, facecolor, edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xy(2), radius
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_circle(xy, radius, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_circle
+
+    subroutine ax_add_ellipse(self, xy, width, height, angle, facecolor, &
+                              edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xy(2), width, height
+        real(dp), intent(in), optional :: angle, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_ellipse(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_ellipse
+
+    subroutine ax_add_polygon(self, x, y, facecolor, edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_polygon(x, y, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_polygon
+
+    subroutine ax_quiver(self, x, y, u, v, color, scale, width, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), u(:), v(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: scale, width
+
+        call ax_sca(self)
+        call quiver(x, y, u, v, color, scale, width, label)
+    end subroutine ax_quiver
+
+    subroutine ax_stem(self, x, y, color, label, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        call ax_sca(self)
+        call stem(x, y, color, label, alpha)
+    end subroutine ax_stem
+
+    subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect, norm)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z(:, :)
+        character(len=*), intent(in), optional :: cmap, origin, aspect, norm
+        real(dp), intent(in), optional :: vmin, vmax, extent(4)
+        call ax_sca(self)
+        call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm)
+    end subroutine ax_imshow
+
+    subroutine ax_xaxis_date(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call xaxis_date()
+    end subroutine ax_xaxis_date
+
+    subroutine ax_yaxis_date(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call yaxis_date()
+    end subroutine ax_yaxis_date
+
+    subroutine ax_pcolormesh(self, x, y, c, cmap, vmin, vmax, norm)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), c(:, :)
+        character(len=*), intent(in), optional :: cmap, norm
+        real(dp), intent(in), optional :: vmin, vmax
+        call ax_sca(self)
+        call pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+    end subroutine ax_pcolormesh
+
+    subroutine ax_clabel(self, fontsize)
+        class(axes), intent(in) :: self
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call clabel(fontsize)
+    end subroutine ax_clabel
+
+    subroutine ax_contour(self, z, levels, cmap, extent)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z(:, :)
+        real(dp), intent(in), optional :: levels(:), extent(4)
+        character(len=*), intent(in), optional :: cmap
+        call ax_sca(self)
+        call contour(z, levels, cmap, extent)
+    end subroutine ax_contour
+
+    subroutine ax_contourf(self, z, levels, cmap, extent)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z(:, :)
+        real(dp), intent(in), optional :: levels(:), extent(4)
+        character(len=*), intent(in), optional :: cmap
+        call ax_sca(self)
+        call contourf(z, levels, cmap, extent)
+    end subroutine ax_contourf
+
+    subroutine ax_colorbar(self, label)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: label
+        call ax_sca(self)
+        call colorbar(label)
+    end subroutine ax_colorbar
+
+    subroutine ax_axhline(self, y, color, linestyle, lw, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call axhline(y, color, linestyle, lw, label)
+    end subroutine ax_axhline
+
+    subroutine ax_axhspan(self, ymin, ymax, xmin, xmax, color, alpha, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: ymin, ymax
+        real(dp), intent(in), optional :: xmin, xmax, alpha
+        character(len=*), intent(in), optional :: color, label
+        call ax_sca(self)
+        call axhspan(ymin, ymax, xmin, xmax, color, alpha, label)
+    end subroutine ax_axhspan
+
+    subroutine ax_axvspan(self, xmin, xmax, ymin, ymax, color, alpha, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xmin, xmax
+        real(dp), intent(in), optional :: ymin, ymax, alpha
+        character(len=*), intent(in), optional :: color, label
+        call ax_sca(self)
+        call axvspan(xmin, xmax, ymin, ymax, color, alpha, label)
+    end subroutine ax_axvspan
+
+    subroutine ax_hlines(self, y, xmin, xmax, color, linestyle, lw, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y(:), xmin, xmax
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call hlines(y, xmin, xmax, color, linestyle, lw, label)
+    end subroutine ax_hlines
+
+    subroutine ax_vlines(self, x, ymin, ymax, color, linestyle, lw, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), ymin, ymax
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call vlines(x, ymin, ymax, color, linestyle, lw, label)
+    end subroutine ax_vlines
+
+    subroutine ax_axvline(self, x, color, linestyle, lw, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call axvline(x, color, linestyle, lw, label)
+    end subroutine ax_axvline
+
+    subroutine ax_text(self, x, y, s, color, fontsize, ha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x, y
+        character(len=*), intent(in) :: s
+        character(len=*), intent(in), optional :: color, ha
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call text(x, y, s, color, fontsize, ha)
+    end subroutine ax_text
+
+    subroutine ax_annotate(self, s, x, y, xtext, ytext, color, fontsize, ha)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: s
+        real(dp), intent(in) :: x, y
+        real(dp), intent(in), optional :: xtext, ytext, fontsize
+        character(len=*), intent(in), optional :: color, ha
+        call ax_sca(self)
+        call annotate(s, x, y, xtext, ytext, color, fontsize, ha)
+    end subroutine ax_annotate
+
+    subroutine ax_set_title(self, s, fontsize)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call title(s, fontsize)
+    end subroutine ax_set_title
+
+    subroutine ax_set_xlabel(self, s, fontsize)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call xlabel(s, fontsize)
+    end subroutine ax_set_xlabel
+
+    subroutine ax_set_ylabel(self, s, fontsize)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: s
+        real(dp), intent(in), optional :: fontsize
+        call ax_sca(self)
+        call ylabel(s, fontsize)
+    end subroutine ax_set_ylabel
+
+    subroutine ax_set_xlim(self, xmin, xmax)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xmin, xmax
+        call ax_sca(self)
+        call xlim(xmin, xmax)
+    end subroutine ax_set_xlim
+
+    subroutine ax_set_ylim(self, ymin, ymax)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: ymin, ymax
+        call ax_sca(self)
+        call ylim(ymin, ymax)
+    end subroutine ax_set_ylim
+
+    subroutine ax_set_xscale(self, name, linthresh, linscale)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: name
+        real(dp), intent(in), optional :: linthresh, linscale
+        call ax_sca(self)
+        call set_xscale(name, linthresh, linscale)
+    end subroutine ax_set_xscale
+
+    subroutine ax_set_yscale(self, name, linthresh, linscale)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: name
+        real(dp), intent(in), optional :: linthresh, linscale
+        call ax_sca(self)
+        call set_yscale(name, linthresh, linscale)
+    end subroutine ax_set_yscale
+
+    subroutine ax_set_xticks(self, vals, labels)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        call ax_sca(self)
+        call xticks(vals, labels)
+    end subroutine ax_set_xticks
+
+    subroutine ax_set_yticks(self, vals, labels)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: vals(:)
+        character(len=*), intent(in), optional :: labels(:)
+        call ax_sca(self)
+        call yticks(vals, labels)
+    end subroutine ax_set_yticks
+
+    subroutine ax_set_aspect(self, ratio, adjustable)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: ratio
+        character(len=*), intent(in), optional :: adjustable
+        call ax_sca(self)
+        call set_aspect(ratio, adjustable)
+    end subroutine ax_set_aspect
+
+    subroutine ax_grid(self, on)
+        class(axes), intent(in) :: self
+        logical, intent(in) :: on
+        call ax_sca(self)
+        call grid(on)
+    end subroutine ax_grid
+
+    subroutine ax_legend(self, loc, fontsize, ncol, frameon, title, bbox_to_anchor)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: loc, title
+        real(dp), intent(in), optional :: fontsize, bbox_to_anchor(2)
+        integer, intent(in), optional :: ncol
+        logical, intent(in), optional :: frameon
+        call ax_sca(self)
+        call legend(loc, fontsize, ncol, frameon, title, bbox_to_anchor)
+    end subroutine ax_legend
+
+    subroutine ax_tick_params(self, axis, direction, length, labelsize, rotation)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: axis, direction
+        real(dp), intent(in), optional :: length, labelsize, rotation
+        call ax_sca(self)
+        call tick_params(axis, direction, length, labelsize, rotation)
+    end subroutine ax_tick_params
+
+    subroutine ax_spines(self, left, right, bottom, top)
+        class(axes), intent(in) :: self
+        logical, intent(in), optional :: left, right, bottom, top
+        call ax_sca(self)
+        call spines(left, right, bottom, top)
+    end subroutine ax_spines
+
+    subroutine ax_axis(self, mode)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: mode
+        call ax_sca(self)
+        call axis(mode)
+    end subroutine ax_axis
+
+    ! A twin is a new axes, so it comes back as its own handle.
+    function ax_twinx(self) result(t)
+        class(axes), intent(in) :: self
+        type(axes) :: t
+        call ax_sca(self)
+        call twinx()
+        t%idx = cur_i
+    end function ax_twinx
+
+    function ax_twiny(self) result(t)
+        class(axes), intent(in) :: self
+        type(axes) :: t
+        call ax_sca(self)
+        call twiny()
+        t%idx = cur_i
+    end function ax_twiny
 
     subroutine suptitle(s, fontsize)
         character(len=*), intent(in) :: s
@@ -880,6 +2068,13 @@ contains
         logical, intent(out) :: labeled
         character(len=24), intent(out) :: lab(MAX_TICKS)
         integer :: i
+        ! An empty list means no ticks at all, which is not the same as
+        ! never having asked for any.
+        if (size(vals) == 0) then
+            n = -1
+            labeled = .false.
+            return
+        end if
         n = min(size(vals), MAX_TICKS)
         labeled = present(labels)
         do i = 1, n
@@ -909,13 +2104,23 @@ contains
         ax(cur_i)%ylim_set = .true.
     end subroutine ylim
 
-    subroutine plot(x, y, fmt, label, lw, color, marker, linestyle, alpha)
+    subroutine plot_num(x, y, fmt, label, lw, color, marker, linestyle, alpha)
         real(dp), intent(in) :: x(:), y(:)
         character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
         real(dp), intent(in), optional :: lw, alpha
         call ensure_fig()
         call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle, alpha)
-    end subroutine plot
+    end subroutine plot_num
+
+    subroutine plot_cat(cats, y, fmt, label, lw, color, marker, linestyle, alpha)
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: y(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        call plot_num(category_positions(size(cats)), y, fmt, label, lw, color, &
+                      marker, linestyle, alpha)
+        call xticks(category_positions(size(cats)), cats)
+    end subroutine plot_cat
 
     ! Marker-only plot. s is the marker area in points^2 (matplotlib's
     ! convention), so the marker size is its square root.
@@ -1102,7 +2307,7 @@ contains
         ax(cur_i)%series(is)%kind = kd
         ax(cur_i)%series(is)%marker = MARKER_NONE
         ax(cur_i)%series(is)%linestyle = LINE_SOLID
-        ax(cur_i)%series(is)%linewidth = default_linewidth
+        ax(cur_i)%series(is)%linewidth = rc_lw
         ax(cur_i)%series(is)%markersize = default_markersize
         ax(cur_i)%series(is)%label = ""
         if (present(label)) ax(cur_i)%series(is)%label = label
@@ -1111,7 +2316,7 @@ contains
         ax(cur_i)%series(is)%color = resolve_color(color, ca)
         if (ca >= 0.0_dp .and. .not. present(alpha)) ax(cur_i)%series(is)%alpha = ca
         if (len_trim(ax(cur_i)%series(is)%color) == 0) then
-            ax(cur_i)%series(is)%color = color_from_C(ax(cur_i)%color_cycle)
+            ax(cur_i)%series(is)%color = cycle_color(ax(cur_i)%color_cycle)
             ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
         end if
     end function new_shape_series
@@ -1154,7 +2359,7 @@ contains
             m = -1
             read (c(2:n), *, iostat=ios) m
             if (ios == 0 .and. m >= 0) then
-                col = color_from_C(m)
+                col = cycle_color(m)
                 return
             end if
         end if
@@ -1208,9 +2413,9 @@ contains
     ! Draw z as an image. z is indexed (row, column) and, with the default
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
     ! a descending y axis exactly as matplotlib does.
-    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect)
+    subroutine imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, interpolation)
         real(dp), intent(in) :: z(:, :)
-        character(len=*), intent(in), optional :: cmap, origin, aspect
+        character(len=*), intent(in), optional :: cmap, origin, aspect, norm, interpolation
         real(dp), intent(in), optional :: vmin, vmax, extent(4)
         integer :: nr, nc
         real(dp) :: lo, hi
@@ -1229,14 +2434,30 @@ contains
         ax(cur_i)%img_cmap = CMAP_VIRIDIS
         if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
 
-        lo = minval(z)
-        hi = maxval(z)
+        ax(cur_i)%img_bilinear = .false.
+        if (present(interpolation)) &
+            ax(cur_i)%img_bilinear = trim(interpolation) == "bilinear"
+
+        ax(cur_i)%img_log_norm = .false.
+        if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
+
+        if (ax(cur_i)%img_log_norm) then
+            ! A log scale cannot start at zero, so the smallest positive
+            ! sample sets the bottom of the range.
+            lo = huge(1.0_dp)
+            if (any(z > 0.0_dp)) lo = minval(z, mask=(z > 0.0_dp))
+            hi = maxval(z)
+        else
+            lo = minval(z)
+            hi = maxval(z)
+        end if
         if (present(vmin)) lo = vmin
         if (present(vmax)) hi = vmax
         if (hi <= lo) hi = lo + 1.0_dp
         ax(cur_i)%img_vmin = lo
         ax(cur_i)%img_vmax = hi
 
+        ax(cur_i)%has_mesh = .false.
         ax(cur_i)%img_origin_upper = .true.
         if (present(origin)) ax(cur_i)%img_origin_upper = trim(origin) /= "lower"
 
@@ -1254,12 +2475,867 @@ contains
         end if
     end subroutine imshow
 
+    ! matshow: an image of a matrix. The first row is at the top, the
+    ! cells are square and the column numbers run along the top, which is
+    ! how a matrix is written down.
+    subroutine matshow(z, cmap, vmin, vmax)
+        real(dp), intent(in) :: z(:, :)
+        character(len=*), intent(in), optional :: cmap
+        real(dp), intent(in), optional :: vmin, vmax
+
+        call imshow(z, cmap, vmin, vmax, aspect="equal")
+        ax(cur_i)%x_top = .true.
+    end subroutine matshow
+
+    ! A row of events, each drawn as a stroke across the line it sits on.
+    subroutine eventplot(positions, lineoffset, linelength, color, lw)
+        real(dp), intent(in) :: positions(:)
+        real(dp), intent(in), optional :: lineoffset, linelength, lw
+        character(len=*), intent(in), optional :: color
+        real(dp) :: off, len_
+
+        off = 1.0_dp
+        len_ = 1.0_dp
+        if (present(lineoffset)) off = lineoffset
+        if (present(linelength)) len_ = linelength
+        call vlines(positions, off - 0.5_dp*len_, off + 0.5_dp*len_, &
+                    color=color, lw=lw)
+        ! matplotlib keeps a whole line length of room either side of the
+        ! row, not the half it actually draws.
+        if (ax(cur_i)%yroom_set) then
+            ax(cur_i)%yroom = [min(ax(cur_i)%yroom(1), off - len_), &
+                               max(ax(cur_i)%yroom(2), off + len_)]
+        else
+            ax(cur_i)%yroom = [off - len_, off + len_]
+            ax(cur_i)%yroom_set = .true.
+        end if
+    end subroutine eventplot
+
+    ! Bars along one row: each range is a start and a width, and the row
+    ! is a bottom and a height.
+    subroutine broken_barh(xranges, yrange, color, alpha, edgecolor, lw)
+        real(dp), intent(in) :: xranges(:, :), yrange(2)
+        character(len=*), intent(in), optional :: color, edgecolor
+        real(dp), intent(in), optional :: alpha, lw
+        integer :: i, is
+
+        call ensure_fig()
+        do i = 1, size(xranges, 1)
+            call add_rectangle([xranges(i, 1), yrange(1)], xranges(i, 2), yrange(2), &
+                               facecolor=color, edgecolor=edgecolor, lw=lw, alpha=alpha)
+            is = ax(cur_i)%n_series
+            if (is > 0) ax(cur_i)%series(is)%patch_scales = .true.
+        end do
+    end subroutine broken_barh
+
+    ! A table of text, laid out the way matplotlib lays one out: every cell
+    ! the same height, a fixed fraction of the axes wide unless told
+    ! otherwise, and the whole block placed against an edge of the axes.
+    subroutine table(cell_text, col_labels, row_labels, col_widths, loc, fontsize)
+        character(len=*), intent(in) :: cell_text(:, :)
+        character(len=*), intent(in), optional :: col_labels(:), row_labels(:), loc
+        real(dp), intent(in), optional :: col_widths(:), fontsize
+        integer :: nr, nc, i, j
+
+        call ensure_fig()
+        nr = size(cell_text, 1)
+        nc = size(cell_text, 2)
+        if (nr < 1 .or. nc < 1) return
+
+        if (allocated(ax(cur_i)%tbl_cells)) deallocate (ax(cur_i)%tbl_cells)
+        allocate (ax(cur_i)%tbl_cells(nr, nc))
+        do i = 1, nr
+            do j = 1, nc
+                ax(cur_i)%tbl_cells(i, j) = cell_text(i, j)
+            end do
+        end do
+
+        if (allocated(ax(cur_i)%tbl_col)) deallocate (ax(cur_i)%tbl_col)
+        if (present(col_labels)) then
+            allocate (ax(cur_i)%tbl_col(nc))
+            do j = 1, min(nc, size(col_labels))
+                ax(cur_i)%tbl_col(j) = col_labels(j)
+            end do
+        end if
+
+        if (allocated(ax(cur_i)%tbl_row)) deallocate (ax(cur_i)%tbl_row)
+        if (present(row_labels)) then
+            allocate (ax(cur_i)%tbl_row(nr))
+            do i = 1, min(nr, size(row_labels))
+                ax(cur_i)%tbl_row(i) = row_labels(i)
+            end do
+        end if
+
+        if (allocated(ax(cur_i)%tbl_w)) deallocate (ax(cur_i)%tbl_w)
+        allocate (ax(cur_i)%tbl_w(nc))
+        ax(cur_i)%tbl_w = 1.0_dp/real(nc, dp)
+        if (present(col_widths)) then
+            do j = 1, min(nc, size(col_widths))
+                ax(cur_i)%tbl_w(j) = col_widths(j)
+            end do
+        end if
+
+        ax(cur_i)%tbl_size = 10.0_dp
+        if (present(fontsize)) ax(cur_i)%tbl_size = fontsize
+        ax(cur_i)%tbl_loc = "bottom"
+        if (present(loc)) ax(cur_i)%tbl_loc = loc
+        ax(cur_i)%has_table = .true.
+    end subroutine table
+
+    ! Streamlines of a vector field. This follows matplotlib closely: the
+    ! field is integrated with an adaptive Heun step in grid coordinates,
+    ! seeds spiral inwards from the corner of a 30x30 mask, and a line stops
+    ! as soon as it enters a cell another line already went through.
+    !
+    ! u and v are indexed (row, column), that is (y, x), as everywhere else.
+    subroutine streamplot(x, y, u, v, density, color, lw, arrowsize)
+        real(dp), intent(in) :: x(:), y(:), u(:, :), v(:, :)
+        real(dp), intent(in), optional :: density, lw, arrowsize
+        character(len=*), intent(in), optional :: color
+        type(stream_t) :: st
+        real(dp), parameter :: MINLENGTH = 0.1_dp
+        real(dp), allocatable :: xs(:), ys(:), tx(:), ty(:), ahx(:), ahy(:), ahu(:), ahv(:)
+        real(dp) :: dx, dy, x0, y0, dens, tot, sl, half, ca
+        integer :: nx, ny, i, j, np, is, na, k, nseed, sx, sy, sd(5)
+        character(len=32) :: col
+
+        call ensure_fig()
+        nx = size(x)
+        ny = size(y)
+        if (nx < 2 .or. ny < 2) return
+        if (size(u, 1) /= ny .or. size(u, 2) /= nx) return
+        if (size(v, 1) /= ny .or. size(v, 2) /= nx) return
+
+        dx = x(2) - x(1)
+        dy = y(2) - y(1)
+        x0 = x(1)
+        y0 = y(1)
+        dens = 1.0_dp
+        if (present(density)) dens = density
+
+        ! Velocities in grid coordinates, and the speed in axes coordinates,
+        ! which is what the arc length is measured in.
+        st%nx = nx
+        st%ny = ny
+        allocate (st%u(ny, nx), st%v(ny, nx), st%sp(ny, nx))
+        st%u = u/dx
+        st%v = v/dy
+        st%sp = sqrt((st%u/real(nx - 1, dp))**2 + (st%v/real(ny - 1, dp))**2)
+
+        st%mnx = int(30.0_dp*dens)
+        st%mny = int(30.0_dp*dens)
+        if (st%mnx < 1 .or. st%mny < 1) return
+        allocate (st%mask(st%mny, st%mnx), st%claim(2, st%mnx*st%mny))
+        st%mask = 0
+        st%g2mx = real(st%mnx - 1, dp)/real(nx - 1, dp)
+        st%g2my = real(st%mny - 1, dp)/real(ny - 1, dp)
+        ! Going back the other way through the reciprocal, not by dividing:
+        ! a seed on the far edge must land a hair outside the grid, exactly
+        ! as it does in matplotlib, or it starts a line that should not be.
+        st%m2gx = 1.0_dp/st%g2mx
+        st%m2gy = 1.0_dp/st%g2my
+
+        col = resolve_color(color, ca)
+        if (len_trim(col) == 0) then
+            col = cycle_color(ax(cur_i)%color_cycle)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
+        end if
+
+        allocate (xs(MAX_STREAM_PTS), ys(MAX_STREAM_PTS))
+        allocate (tx(MAX_STREAM_PTS), ty(MAX_STREAM_PTS))
+        nseed = st%mnx*st%mny
+        allocate (ahx(nseed), ahy(nseed), ahu(nseed), ahv(nseed))
+        na = 0
+
+        sx = 0
+        sy = 0
+        do i = 1, nseed
+            call stream_seed(st%mnx, st%mny, i, sx, sy, sd)
+            if (st%mask(sy + 1, sx + 1) /= 0) cycle
+            call stream_line(st, real(sx, dp)*st%m2gx, real(sy, dp)*st%m2gy, &
+                             xs, ys, np, tot)
+            if (np < 2 .or. tot <= MINLENGTH) cycle
+
+            do j = 1, np
+                tx(j) = x0 + xs(j)*dx
+                ty(j) = y0 + ys(j)*dy
+            end do
+            is = new_shape_series(SERIES_LINE, tx(1:np), ty(1:np), trim(col))
+            if (is < 1) cycle
+            if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
+
+            ! One arrowhead per line, at the halfway point along it.
+            sl = 0.0_dp
+            do j = 1, np - 1
+                sl = sl + hypot(tx(j + 1) - tx(j), ty(j + 1) - ty(j))
+            end do
+            half = 0.5_dp*sl
+            sl = 0.0_dp
+            k = np - 1
+            do j = 1, np - 1
+                sl = sl + hypot(tx(j + 1) - tx(j), ty(j + 1) - ty(j))
+                if (sl >= half) then
+                    k = j
+                    exit
+                end if
+            end do
+            na = na + 1
+            ! The tip sits where matplotlib puts the head of its arrow patch,
+            ! at the middle of the segment the halfway point falls in.
+            ahx(na) = 0.5_dp*(tx(k) + tx(k + 1))
+            ahy(na) = 0.5_dp*(ty(k) + ty(k + 1))
+            ahu(na) = tx(k + 1) - tx(k)
+            ahv(na) = ty(k + 1) - ty(k)
+        end do
+
+        if (na > 0) then
+            is = new_shape_series(SERIES_ARROWHEAD, ahx(1:na), ahy(1:na), trim(col))
+            if (is > 0) then
+                allocate (ax(cur_i)%series(is)%qu(na), ax(cur_i)%series(is)%qv(na))
+                ax(cur_i)%series(is)%qu = ahu(1:na)
+                ax(cur_i)%series(is)%qv = ahv(1:na)
+            end if
+        end if
+
+        ! matplotlib makes the edges of the field sticky, so the axes end
+        ! exactly on the grid with no margin.
+        ax(cur_i)%xroom = [x(1), x(nx)]
+        ax(cur_i)%xroom_set = .true.
+        if (ax(cur_i)%yroom_set) then
+            ax(cur_i)%yroom = [min(ax(cur_i)%yroom(1), y(1)), max(ax(cur_i)%yroom(2), y(ny))]
+        else
+            ax(cur_i)%yroom = [y(1), y(ny)]
+            ax(cur_i)%yroom_set = .true.
+        end if
+        ax(cur_i)%room_sticks = .true.
+    end subroutine streamplot
+
+    ! Seed points spiral inwards from the corner of the mask, which is what
+    ! gives the boundary streamlines first claim on the cells.
+    ! st holds the four closing edges and the direction of travel, so that
+    ! the walk keeps no state of its own.
+    subroutine stream_seed(nx, ny, i, x, y, sd)
+        integer, intent(in) :: nx, ny, i
+        integer, intent(inout) :: x, y, sd(5)
+        integer :: xfirst, yfirst, xlast, ylast, dirn
+
+        if (i == 1) then
+            sd = [0, 1, nx - 1, ny - 1, 0]
+            x = 0
+            y = 0
+            return
+        end if
+        xfirst = sd(1)
+        yfirst = sd(2)
+        xlast = sd(3)
+        ylast = sd(4)
+        dirn = sd(5)
+        select case (dirn)
+        case (0)
+            x = x + 1
+            if (x >= xlast) then
+                xlast = xlast - 1
+                dirn = 1
+            end if
+        case (1)
+            y = y + 1
+            if (y >= ylast) then
+                ylast = ylast - 1
+                dirn = 2
+            end if
+        case (2)
+            x = x - 1
+            if (x <= xfirst) then
+                xfirst = xfirst + 1
+                dirn = 3
+            end if
+        case default
+            y = y - 1
+            if (y <= yfirst) then
+                yfirst = yfirst + 1
+                dirn = 0
+            end if
+        end select
+        sd = [xfirst, yfirst, xlast, ylast, dirn]
+    end subroutine stream_seed
+
+    ! Bilinear lookup on the integer grid, with the position given in grid
+    ! coordinates running 0..n-1.
+    function stream_interp(a, xi, yi) result(r)
+        real(dp), intent(in) :: a(:, :), xi, yi
+        real(dp) :: r, xt, yt, a0, a1
+        integer :: ix, iy, ixn, iyn
+
+        ix = int(xi)
+        iy = int(yi)
+        ixn = min(ix + 1, size(a, 2) - 1)
+        iyn = min(iy + 1, size(a, 1) - 1)
+        xt = xi - real(ix, dp)
+        yt = yi - real(iy, dp)
+        a0 = a(iy + 1, ix + 1)*(1.0_dp - xt) + a(iy + 1, ixn + 1)*xt
+        a1 = a(iyn + 1, ix + 1)*(1.0_dp - xt) + a(iyn + 1, ixn + 1)*xt
+        r = a0*(1.0_dp - yt) + a1*yt
+    end function stream_interp
+
+    function stream_in_grid(st, xi, yi) result(r)
+        type(stream_t), intent(in) :: st
+        real(dp), intent(in) :: xi, yi
+        logical :: r
+        r = xi >= 0.0_dp .and. xi <= real(st%nx - 1, dp) .and. &
+            yi >= 0.0_dp .and. yi <= real(st%ny - 1, dp)
+    end function stream_in_grid
+
+    ! The direction of travel at a point, normalised so that a step in the
+    ! parameter is a step in arc length. code is 1 off the grid and 2 where
+    ! the field stalls.
+    subroutine stream_dir(st, xi, yi, dirn, dxi, dyi, code)
+        type(stream_t), intent(in) :: st
+        real(dp), intent(in) :: xi, yi
+        integer, intent(in) :: dirn
+        real(dp), intent(out) :: dxi, dyi
+        integer, intent(out) :: code
+        real(dp) :: ds_dt
+
+        dxi = 0.0_dp
+        dyi = 0.0_dp
+        code = 0
+        if (.not. stream_in_grid(st, xi, yi)) then
+            code = 1
+            return
+        end if
+        ds_dt = stream_interp(st%sp, xi, yi)
+        if (ds_dt == 0.0_dp) then
+            code = 2
+            return
+        end if
+        dxi = real(dirn, dp)*stream_interp(st%u, xi, yi)/ds_dt
+        dyi = real(dirn, dp)*stream_interp(st%v, xi, yi)/ds_dt
+    end subroutine stream_dir
+
+    ! Claim the mask cell a point falls in. ok comes back false when another
+    ! streamline already went through it.
+    subroutine stream_claim(st, xg, yg, ok)
+        type(stream_t), intent(inout) :: st
+        real(dp), intent(in) :: xg, yg
+        logical, intent(out) :: ok
+        integer :: mx, my
+
+        ok = .true.
+        mx = nint(xg*st%g2mx)
+        my = nint(yg*st%g2my)
+        if (mx == st%cx .and. my == st%cy) return
+        if (st%mask(my + 1, mx + 1) /= 0) then
+            ok = .false.
+            return
+        end if
+        st%nclaim = st%nclaim + 1
+        st%claim(1, st%nclaim) = mx
+        st%claim(2, st%nclaim) = my
+        st%mask(my + 1, mx + 1) = 1
+        st%cx = mx
+        st%cy = my
+    end subroutine stream_claim
+
+    ! A whole streamline through the seed: backwards from it, then forwards,
+    ! joined up. The cells claimed along the way are released again if the
+    ! line turns out to be too short to keep.
+    subroutine stream_line(st, x0, y0, xs, ys, np, tot)
+        type(stream_t), intent(inout) :: st
+        real(dp), intent(in) :: x0, y0
+        real(dp), intent(inout) :: xs(:), ys(:)
+        integer, intent(out) :: np
+        real(dp), intent(out) :: tot
+        real(dp), allocatable :: bx(:), by(:), fx(:), fy(:)
+        real(dp) :: sb, sf
+        integer :: nb, nf, j
+        logical :: ok
+
+        np = 0
+        tot = 0.0_dp
+        st%nclaim = 0
+        st%cx = -1
+        st%cy = -1
+        call stream_claim(st, x0, y0, ok)
+        if (.not. ok) return
+
+        allocate (bx(MAX_STREAM_PTS), by(MAX_STREAM_PTS))
+        allocate (fx(MAX_STREAM_PTS), fy(MAX_STREAM_PTS))
+        call stream_rk12(st, x0, y0, -1, bx, by, nb, sb)
+        st%cx = nint(x0*st%g2mx)
+        st%cy = nint(y0*st%g2my)
+        call stream_rk12(st, x0, y0, 1, fx, fy, nf, sf)
+        tot = sb + sf
+
+        do j = nb, 1, -1
+            np = np + 1
+            xs(np) = bx(j)
+            ys(np) = by(j)
+        end do
+        do j = 2, nf
+            np = np + 1
+            xs(np) = fx(j)
+            ys(np) = fy(j)
+        end do
+        if (tot <= 0.1_dp) then
+            do j = 1, st%nclaim
+                st%mask(st%claim(2, j) + 1, st%claim(1, j) + 1) = 0
+            end do
+        end if
+    end subroutine stream_line
+
+    ! Heun's method with an adaptive step: cheap, and small enough a step to
+    ! visit every mask cell on the way, which is what the mask needs.
+    subroutine stream_rk12(st, x0, y0, dirn, xs, ys, np, tot)
+        type(stream_t), intent(inout) :: st
+        real(dp), intent(in) :: x0, y0
+        integer, intent(in) :: dirn
+        real(dp), intent(inout) :: xs(:), ys(:)
+        integer, intent(out) :: np
+        real(dp), intent(out) :: tot
+        real(dp), parameter :: MAXERROR = 0.003_dp, MAXLENGTH = 4.0_dp
+        real(dp) :: maxds, ds, xi, yi, k1x, k1y, k2x, k2y, dx1, dy1, dx2, dy2, err
+        integer :: code
+        logical :: ok
+
+        maxds = min(1.0_dp/real(st%mnx, dp), 1.0_dp/real(st%mny, dp), 0.1_dp)
+        ds = maxds
+        tot = 0.0_dp
+        xi = x0
+        yi = y0
+        np = 0
+
+        do
+            if (.not. stream_in_grid(st, xi, yi)) then
+                if (np > 0) call stream_euler(st, xs, ys, np, dirn, tot)
+                exit
+            end if
+            if (np >= size(xs)) exit
+            np = np + 1
+            xs(np) = xi
+            ys(np) = yi
+
+            call stream_dir(st, xi, yi, dirn, k1x, k1y, code)
+            if (code == 1) then
+                call stream_euler(st, xs, ys, np, dirn, tot)
+                exit
+            else if (code == 2) then
+                exit
+            end if
+            call stream_dir(st, xi + ds*k1x, yi + ds*k1y, dirn, k2x, k2y, code)
+            if (code == 1) then
+                call stream_euler(st, xs, ys, np, dirn, tot)
+                exit
+            else if (code == 2) then
+                exit
+            end if
+
+            dx1 = ds*k1x
+            dy1 = ds*k1y
+            dx2 = ds*0.5_dp*(k1x + k2x)
+            dy2 = ds*0.5_dp*(k1y + k2y)
+            ! The error is measured in axes coordinates, so that it means the
+            ! same thing whatever the grid.
+            err = hypot((dx2 - dx1)/real(st%nx - 1, dp), (dy2 - dy1)/real(st%ny - 1, dp))
+
+            if (err < MAXERROR) then
+                xi = xi + dx2
+                yi = yi + dy2
+                ! Leaving the grid ends the line here: matplotlib only takes
+                ! the Euler step to the boundary when the trial point of the
+                ! step, not the step itself, falls outside.
+                if (.not. stream_in_grid(st, xi, yi)) exit
+                call stream_claim(st, xi, yi, ok)
+                if (.not. ok) exit
+                if (tot + ds > MAXLENGTH) exit
+                tot = tot + ds
+            end if
+
+            if (err == 0.0_dp) then
+                ds = maxds
+            else
+                ds = min(maxds, 0.85_dp*ds*sqrt(MAXERROR/err))
+            end if
+        end do
+    end subroutine stream_rk12
+
+    ! One plain Euler step out to the edge of the grid, so a line that leaves
+    ! the field ends on the boundary rather than short of it.
+    subroutine stream_euler(st, xs, ys, np, dirn, tot)
+        type(stream_t), intent(in) :: st
+        real(dp), intent(inout) :: xs(:), ys(:), tot
+        integer, intent(inout) :: np
+        integer, intent(in) :: dirn
+        real(dp) :: xi, yi, cx, cy, dsx, dsy, ds
+        integer :: code
+
+        if (np < 1 .or. np >= size(xs)) return
+        xi = xs(np)
+        yi = ys(np)
+        call stream_dir(st, xi, yi, dirn, cx, cy, code)
+        if (code /= 0) return
+        dsx = huge(1.0_dp)
+        dsy = huge(1.0_dp)
+        if (cx < 0.0_dp) then
+            dsx = xi/(-cx)
+        else if (cx > 0.0_dp) then
+            dsx = (real(st%nx - 1, dp) - xi)/cx
+        end if
+        if (cy < 0.0_dp) then
+            dsy = yi/(-cy)
+        else if (cy > 0.0_dp) then
+            dsy = (real(st%ny - 1, dp) - yi)/cy
+        end if
+        ds = min(dsx, dsy)
+        np = np + 1
+        xs(np) = xi + cx*ds
+        ys(np) = yi + cy*ds
+        tot = tot + ds
+    end subroutine stream_euler
+
+    ! A two dimensional histogram: count the points into a grid of cells
+    ! and hand the counts to pcolormesh, which is how matplotlib draws one.
+    subroutine hist2d(x, y, bins, cmap, vmin, vmax)
+        real(dp), intent(in) :: x(:), y(:)
+        integer, intent(in), optional :: bins(2)
+        character(len=*), intent(in), optional :: cmap
+        real(dp), intent(in), optional :: vmin, vmax
+        integer :: nb(2), n, i, jx, jy
+        real(dp) :: x0, x1, y0, y1
+        real(dp), allocatable :: xe(:), ye(:), h(:, :)
+
+        call ensure_fig()
+        n = min(size(x), size(y))
+        if (n < 1) return
+        nb = [10, 10]
+        if (present(bins)) nb = max(1, bins)
+
+        x0 = minval(x(1:n)); x1 = maxval(x(1:n))
+        y0 = minval(y(1:n)); y1 = maxval(y(1:n))
+        if (x1 <= x0) x1 = x0 + 1.0_dp
+        if (y1 <= y0) y1 = y0 + 1.0_dp
+
+        allocate (xe(nb(1) + 1), ye(nb(2) + 1), h(nb(2), nb(1)))
+        do i = 1, nb(1) + 1
+            xe(i) = x0 + (x1 - x0)*real(i - 1, dp)/real(nb(1), dp)
+        end do
+        do i = 1, nb(2) + 1
+            ye(i) = y0 + (y1 - y0)*real(i - 1, dp)/real(nb(2), dp)
+        end do
+
+        h = 0.0_dp
+        do i = 1, n
+            ! The last cell owns its right edge, as numpy's histogram does.
+            jx = min(nb(1), 1 + int((x(i) - x0)/(x1 - x0)*real(nb(1), dp)))
+            jy = min(nb(2), 1 + int((y(i) - y0)/(y1 - y0)*real(nb(2), dp)))
+            h(jy, jx) = h(jy, jx) + 1.0_dp
+        end do
+
+        call pcolormesh(xe, ye, h, cmap, vmin, vmax)
+    end subroutine hist2d
+
+    ! Hexagonal binning. matplotlib lays two rectangular grids over the
+    ! data, one offset half a cell from the other, and gives each point to
+    ! whichever centre is nearer: those centres are the hexagon centres,
+    ! and this is the same arithmetic.
+    subroutine hexbin(x, y, gridsize, cmap, mincnt)
+        real(dp), intent(in) :: x(:), y(:)
+        integer, intent(in), optional :: gridsize, mincnt
+        character(len=*), intent(in), optional :: cmap
+        integer :: nx, ny, nx1, ny1, nx2, ny2, n, i, j, k, ix1, iy1, ix2, iy2, mc
+        real(dp) :: x0, x1, y0, y1, sx, sy, ix, iy, d1, d2, pad, cmax, t, cxp, cyp
+        real(dp) :: hx(6), hy(6)
+        real(dp), allocatable :: c1(:, :), c2(:, :)
+
+        call ensure_fig()
+        n = min(size(x), size(y))
+        if (n < 1) return
+        nx = 100
+        if (present(gridsize)) nx = max(1, gridsize)
+        ny = int(real(nx, dp)/sqrt(3.0_dp))
+        ny = max(1, ny)
+        ! matplotlib draws every cell of the grid, empty ones included, at
+        ! the bottom of the colormap. mincnt raises that floor.
+        mc = 0
+        if (present(mincnt)) mc = mincnt
+
+        x0 = minval(x(1:n)); x1 = maxval(x(1:n))
+        y0 = minval(y(1:n)); y1 = maxval(y(1:n))
+        pad = 1.0e-9_dp*(x1 - x0)
+        x0 = x0 - pad; x1 = x1 + pad
+        if (x1 <= x0) x1 = x0 + 1.0_dp
+        if (y1 <= y0) y1 = y0 + 1.0_dp
+        sx = (x1 - x0)/real(nx, dp)
+        sy = (y1 - y0)/real(ny, dp)
+
+        nx1 = nx + 1; ny1 = ny + 1
+        nx2 = nx; ny2 = ny
+        allocate (c1(nx1, ny1), c2(nx2, ny2))
+        c1 = 0.0_dp
+        c2 = 0.0_dp
+
+        do i = 1, n
+            ix = (x(i) - x0)/sx
+            iy = (y(i) - y0)/sy
+            ix1 = nint(ix); iy1 = nint(iy)
+            ix2 = floor(ix); iy2 = floor(iy)
+            d1 = (ix - real(ix1, dp))**2 + 3.0_dp*(iy - real(iy1, dp))**2
+            d2 = (ix - real(ix2, dp) - 0.5_dp)**2 + 3.0_dp*(iy - real(iy2, dp) - 0.5_dp)**2
+            if (d1 < d2) then
+                if (ix1 >= 0 .and. ix1 < nx1 .and. iy1 >= 0 .and. iy1 < ny1) &
+                    c1(ix1 + 1, iy1 + 1) = c1(ix1 + 1, iy1 + 1) + 1.0_dp
+            else
+                if (ix2 >= 0 .and. ix2 < nx2 .and. iy2 >= 0 .and. iy2 < ny2) &
+                    c2(ix2 + 1, iy2 + 1) = c2(ix2 + 1, iy2 + 1) + 1.0_dp
+            end if
+        end do
+
+        cmax = max(maxval(c1), maxval(c2))
+        if (cmax <= 0.0_dp) return
+
+        ! The hexagon is a cell wide and two thirds of a cell tall at the
+        ! points, which is what makes the two grids interlock.
+        hx = 0.5_dp*sx*[1.0_dp, 1.0_dp, 0.0_dp, -1.0_dp, -1.0_dp, 0.0_dp]
+        hy = (sy/3.0_dp)*[-0.5_dp, 0.5_dp, 1.0_dp, 0.5_dp, -0.5_dp, -1.0_dp]
+
+        ax(cur_i)%img_cmap = CMAP_VIRIDIS
+        if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
+        ax(cur_i)%img_vmin = real(mc, dp)
+        ax(cur_i)%img_vmax = cmax
+        ax(cur_i)%has_cmap_src = .true.
+
+        do k = 1, 2
+            do i = 1, merge(nx1, nx2, k == 1)
+                do j = 1, merge(ny1, ny2, k == 1)
+                    if (k == 1) then
+                        if (c1(i, j) < real(mc, dp)) cycle
+                        t = (c1(i, j) - real(mc, dp))/max(cmax - real(mc, dp), 1.0_dp)
+                        cxp = x0 + real(i - 1, dp)*sx
+                        cyp = y0 + real(j - 1, dp)*sy
+                    else
+                        if (c2(i, j) < real(mc, dp)) cycle
+                        t = (c2(i, j) - real(mc, dp))/max(cmax - real(mc, dp), 1.0_dp)
+                        cxp = x0 + (real(i - 1, dp) + 0.5_dp)*sx
+                        cyp = y0 + (real(j - 1, dp) + 0.5_dp)*sy
+                    end if
+                    call add_polygon(cxp + hx, cyp + hy, &
+                                     facecolor=cmap_color(ax(cur_i)%img_cmap, t))
+                end do
+            end do
+        end do
+
+        ! Patches never ask for room of their own, so the axes is told what
+        ! the binning covered, margins and all.
+        call xlim(x0 - 0.05_dp*(x1 - x0), x1 + 0.05_dp*(x1 - x0))
+        call ylim(y0 - 0.05_dp*(y1 - y0), y1 + 0.05_dp*(y1 - y0))
+    end subroutine hexbin
+
+    ! A grid of coloured cells with edges of the caller's choosing. x and
+    ! y are the edges, one more than the samples along that direction; if
+    ! they are the same length as the samples they are taken as centres,
+    ! which is matplotlib's shading="nearest".
+    subroutine pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+        real(dp), intent(in) :: x(:), y(:), c(:, :)
+        character(len=*), intent(in), optional :: cmap, norm
+        real(dp), intent(in), optional :: vmin, vmax
+        integer :: nr, nc
+        real(dp) :: lo, hi
+
+        call ensure_fig()
+        nr = size(c, 1)
+        nc = size(c, 2)
+        if (nr < 1 .or. nc < 1) return
+        if (size(x) < nc .or. size(y) < nr) return
+
+        if (allocated(ax(cur_i)%img)) deallocate (ax(cur_i)%img)
+        allocate (ax(cur_i)%img(nr, nc))
+        ax(cur_i)%img = c
+        ax(cur_i)%has_img = .true.
+        ax(cur_i)%has_mesh = .true.
+        ax(cur_i)%has_cmap_src = .true.
+        ax(cur_i)%img_origin_upper = .false.
+
+        if (allocated(ax(cur_i)%mesh_x)) deallocate (ax(cur_i)%mesh_x)
+        if (allocated(ax(cur_i)%mesh_y)) deallocate (ax(cur_i)%mesh_y)
+        call cell_edges(x, nc, ax(cur_i)%mesh_x)
+        call cell_edges(y, nr, ax(cur_i)%mesh_y)
+
+        ax(cur_i)%img_cmap = CMAP_VIRIDIS
+        if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
+        ax(cur_i)%img_log_norm = .false.
+        if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
+
+        if (ax(cur_i)%img_log_norm) then
+            lo = huge(1.0_dp)
+            if (any(c > 0.0_dp)) lo = minval(c, mask=(c > 0.0_dp))
+            hi = maxval(c)
+        else
+            lo = minval(c)
+            hi = maxval(c)
+        end if
+        if (present(vmin)) lo = vmin
+        if (present(vmax)) hi = vmax
+        if (hi <= lo) hi = lo + 1.0_dp
+        ax(cur_i)%img_vmin = lo
+        ax(cur_i)%img_vmax = hi
+
+        ax(cur_i)%img_ext = [minval(ax(cur_i)%mesh_x), maxval(ax(cur_i)%mesh_x), &
+                             minval(ax(cur_i)%mesh_y), maxval(ax(cur_i)%mesh_y)]
+        ! A mesh does not force a square aspect, unlike an image.
+        ax(cur_i)%aspect = 0.0_dp
+    end subroutine pcolormesh
+
+    ! matplotlib's pcolor differs from pcolormesh only in how it is drawn,
+    ! and both come out of one cell loop here.
+    subroutine pcolor(x, y, c, cmap, vmin, vmax, norm)
+        real(dp), intent(in) :: x(:), y(:), c(:, :)
+        character(len=*), intent(in), optional :: cmap, norm
+        real(dp), intent(in), optional :: vmin, vmax
+        call pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+    end subroutine pcolor
+
+    ! n+1 edges from either the edges themselves or the n cell centres.
+    subroutine cell_edges(v, n, e)
+        real(dp), intent(in) :: v(:)
+        integer, intent(in) :: n
+        real(dp), allocatable, intent(out) :: e(:)
+        integer :: i
+
+        allocate (e(n + 1))
+        if (size(v) >= n + 1) then
+            e = v(1:n + 1)
+            return
+        end if
+        do i = 2, n
+            e(i) = 0.5_dp*(v(i - 1) + v(i))
+        end do
+        if (n == 1) then
+            e(1) = v(1) - 0.5_dp
+            e(2) = v(1) + 0.5_dp
+        else
+            e(1) = v(1) - 0.5_dp*(v(2) - v(1))
+            e(n + 1) = v(n) + 0.5_dp*(v(n) - v(n - 1))
+        end if
+    end subroutine cell_edges
+
+    ! ------------------------------------------------------------------
+    ! 3D axes. matplotlib picks the projection when the axes is created;
+    ! with one current axes the same thing is said by turning that axes
+    ! into a 3D one, and any of the 3D plotting calls does it implicitly.
+    ! ------------------------------------------------------------------
+
+    subroutine axes3d(elev, azim)
+        real(dp), intent(in), optional :: elev, azim
+
+        call ensure_fig()
+        ax(cur_i)%is3d = .true.
+        ! A 3D axes is gridded by default (rcParams axes3d.grid), unlike a
+        ! 2D one.
+        ax(cur_i)%grid_on = .true.
+        if (present(elev)) ax(cur_i)%elev = elev
+        if (present(azim)) ax(cur_i)%azim = azim
+    end subroutine axes3d
+
+    subroutine view_init(elev, azim)
+        real(dp), intent(in), optional :: elev, azim
+
+        call axes3d(elev, azim)
+    end subroutine view_init
+
+    subroutine zlabel(s)
+        character(len=*), intent(in) :: s
+
+        call ensure_fig()
+        ax(cur_i)%zlabel = s
+    end subroutine zlabel
+
+    subroutine zlim(lo, hi)
+        real(dp), intent(in) :: lo, hi
+
+        call ensure_fig()
+        ax(cur_i)%zlim_set = .true.
+        ax(cur_i)%zmin_user = lo
+        ax(cur_i)%zmax_user = hi
+    end subroutine zlim
+
+    subroutine plot3d(x, y, z, fmt, label, lw, color, marker, linestyle, alpha)
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        integer :: is, n
+
+        call axes3d()
+        call add_series(cur_i, x, y, fmt, label, lw, color, marker, linestyle, alpha)
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        n = min(ax(cur_i)%series(is)%n, size(z))
+        ax(cur_i)%series(is)%n = n
+        ax(cur_i)%series(is)%kind = SERIES_LINE3D
+        allocate (ax(cur_i)%series(is)%z(n))
+        ax(cur_i)%series(is)%z(1:n) = z(1:n)
+    end subroutine plot3d
+
+    subroutine scatter3d(x, y, z, s, c, marker, label, alpha)
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        real(dp), intent(in), optional :: s, alpha
+        character(len=*), intent(in), optional :: c, marker, label
+        integer :: is, n
+
+        call axes3d()
+        call scatter(x, y, s, c, marker, label, alpha)
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        n = min(ax(cur_i)%series(is)%n, size(z))
+        ax(cur_i)%series(is)%n = n
+        ax(cur_i)%series(is)%kind = SERIES_SCATTER3D
+        allocate (ax(cur_i)%series(is)%z(n))
+        ax(cur_i)%series(is)%z(1:n) = z(1:n)
+    end subroutine scatter3d
+
+    ! z is indexed (row, column) = (y, x), as the 2D grids are.
+    subroutine plot_surface(x, y, z, color, alpha)
+        real(dp), intent(in) :: x(:), y(:), z(:, :)
+        character(len=*), intent(in), optional :: color
+        real(dp), intent(in), optional :: alpha
+        integer :: is, nx, ny
+
+        call axes3d()
+        ny = size(z, 1)
+        nx = size(z, 2)
+        if (nx < 2 .or. ny < 2) return
+        if (size(x) < nx .or. size(y) < ny) return
+        call push_series(ax(cur_i), is)
+        ax(cur_i)%series(is)%kind = SERIES_SURFACE
+        ax(cur_i)%series(is)%n = 0
+        allocate (ax(cur_i)%series(is)%x(nx), ax(cur_i)%series(is)%y(ny))
+        allocate (ax(cur_i)%series(is)%zg(ny, nx))
+        ax(cur_i)%series(is)%x(1:nx) = x(1:nx)
+        ax(cur_i)%series(is)%y(1:ny) = y(1:ny)
+        ax(cur_i)%series(is)%zg = z(1:ny, 1:nx)
+        ax(cur_i)%series(is)%color = resolve_color(color)
+        if (len_trim(ax(cur_i)%series(is)%color) == 0) then
+            ax(cur_i)%series(is)%color = cycle_color(ax(cur_i)%color_cycle)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
+        end if
+        if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
+    end subroutine plot_surface
+
     subroutine contour(z, levels, cmap, extent)
         real(dp), intent(in) :: z(:, :)
         real(dp), intent(in), optional :: levels(:), extent(4)
         character(len=*), intent(in), optional :: cmap
         call add_contour(z, levels, cmap, extent, .false.)
     end subroutine contour
+
+    ! Write each level into its own contour line. There is nothing to
+    ! label until the lines are laid out in points, so this only records
+    ! the wish and the drawing code does the work.
+    subroutine clabel(fontsize)
+        real(dp), intent(in), optional :: fontsize
+
+        call ensure_fig()
+        ax(cur_i)%cont_labels = .true.
+        if (present(fontsize)) ax(cur_i)%clab_size = fontsize
+    end subroutine clabel
 
     subroutine contourf(z, levels, cmap, extent)
         real(dp), intent(in) :: z(:, :)
@@ -1376,17 +3452,32 @@ contains
     end subroutine step
 
     ! Horizontal bars: y locates each bar and width is its length.
-    subroutine barh(y, width, height, color, label, alpha)
+    subroutine barh_num(y, width, height, color, label, alpha, left, colors, &
+                        edgecolor, linewidth)
         real(dp), intent(in) :: y(:), width(:)
-        real(dp), intent(in), optional :: height, alpha
-        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: height, alpha, left(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
         integer :: is
 
         call ensure_fig()
         is = new_shape_series(SERIES_BARH, y, width, color, label, alpha)
         if (is < 1) return
         if (present(height)) ax(cur_i)%series(is)%width = height
-    end subroutine barh
+        call bar_options(is, left, colors, edgecolor, linewidth)
+    end subroutine barh_num
+
+    subroutine barh_cat(cats, width, height, color, label, alpha, left, &
+                        colors, edgecolor, linewidth)
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: width(:)
+        real(dp), intent(in), optional :: height, alpha, left(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call barh_num(category_positions(size(cats)), width, height, color, &
+                      label, alpha, left, colors, edgecolor, linewidth)
+        call yticks(category_positions(size(cats)), cats)
+    end subroutine barh_cat
 
     ! Markers on stalks rising from y = 0, with a baseline along the bottom.
     subroutine stem(x, y, color, label, alpha)
@@ -1400,6 +3491,138 @@ contains
         if (is < 1) return
         ax(cur_i)%series(is)%marker = MARKER_CIRCLE
     end subroutine stem
+
+    ! Turn the current axes into a polar one: angle along x, radius along y.
+    subroutine set_polar()
+        call ensure_fig()
+        ax(cur_i)%polar = .true.
+        ! A polar axes carries its grid unless the caller says otherwise,
+        ! which is how matplotlib draws one.
+        ax(cur_i)%grid_on = .true.
+    end subroutine set_polar
+
+    ! pylab's polar(): make the axes polar and plot on it in one call.
+    subroutine polar(theta, r, color, label, lw, linestyle, marker, alpha)
+        real(dp), intent(in) :: theta(:), r(:)
+        character(len=*), intent(in), optional :: color, label, linestyle, marker
+        real(dp), intent(in), optional :: lw, alpha
+
+        call ensure_fig()
+        call set_polar()
+        call plot(theta, r, color=color, label=label, lw=lw, &
+                  linestyle=linestyle, marker=marker, alpha=alpha)
+    end subroutine polar
+
+    ! ----------------------------------------------------------------------
+    ! Patches: plain shapes in data coordinates. Each one is kept as the
+    ! ring of points it comes down to, so a circle drawn on axes of
+    ! different scales leans exactly as matplotlib's does.
+    ! ----------------------------------------------------------------------
+
+    subroutine add_rectangle(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: xy(2), width, height
+        real(dp), intent(in), optional :: angle, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        real(dp) :: px(4), py(4), rx(4), ry(4), a, ca, sa
+        integer :: i
+
+        px = [0.0_dp, width, width, 0.0_dp]
+        py = [0.0_dp, 0.0_dp, height, height]
+        a = 0.0_dp
+        if (present(angle)) a = angle
+        ! A rectangle turns about the corner it is given, as matplotlib's does.
+        ca = cos(a*PI/180.0_dp)
+        sa = sin(a*PI/180.0_dp)
+        do i = 1, 4
+            rx(i) = xy(1) + px(i)*ca - py(i)*sa
+            ry(i) = xy(2) + px(i)*sa + py(i)*ca
+        end do
+        call add_polygon(rx, ry, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine add_rectangle
+
+    subroutine add_circle(xy, radius, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: xy(2), radius
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call add_ellipse(xy, 2.0_dp*radius, 2.0_dp*radius, 0.0_dp, &
+                         facecolor, edgecolor, lw, alpha, fill)
+    end subroutine add_circle
+
+    subroutine add_ellipse(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: xy(2), width, height
+        real(dp), intent(in), optional :: angle, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        integer, parameter :: N = 72
+        real(dp) :: px(N), py(N), t, cx, cy, a, ca, sa
+        integer :: i
+
+        a = 0.0_dp
+        if (present(angle)) a = angle
+        ca = cos(a*PI/180.0_dp)
+        sa = sin(a*PI/180.0_dp)
+        do i = 1, N
+            t = 2.0_dp*PI*real(i - 1, dp)/real(N, dp)
+            cx = 0.5_dp*width*cos(t)
+            cy = 0.5_dp*height*sin(t)
+            px(i) = xy(1) + cx*ca - cy*sa
+            py(i) = xy(2) + cx*sa + cy*ca
+        end do
+        call add_polygon(px, py, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine add_ellipse
+
+    subroutine add_polygon(x, y, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        integer :: is
+
+        call ensure_fig()
+        is = new_shape_series(SERIES_PATCH, x, y, facecolor, alpha=alpha)
+        if (is == 0) return
+        ! A patch does not take a turn of the color cycle: matplotlib gives
+        ! every one of them the same first color unless told otherwise.
+        if (.not. present(facecolor)) then
+            ax(cur_i)%series(is)%color = "#1f77b4"
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+        ax(cur_i)%series(is)%edgecolor = ""
+        if (present(edgecolor)) ax(cur_i)%series(is)%edgecolor = resolve_color(edgecolor)
+        ax(cur_i)%series(is)%edgewidth = 1.0_dp
+        if (present(lw)) ax(cur_i)%series(is)%edgewidth = lw
+        if (present(fill)) ax(cur_i)%series(is)%patch_fill = fill
+    end subroutine add_polygon
+
+    ! A field of arrows, one per point, pointing along (u, v). Left to
+    ! itself matplotlib sizes the arrows from the field: the shaft is a
+    ! fixed fraction of the axes width and the scale is set so a vector of
+    ! average length draws an arrow of a comfortable size.
+    subroutine quiver(x, y, u, v, color, scale, width, label)
+        real(dp), intent(in) :: x(:), y(:), u(:), v(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: scale, width
+        integer :: is, n
+
+        call ensure_fig()
+        n = min(size(x), size(y), size(u), size(v))
+        if (n <= 0) return
+        is = new_shape_series(SERIES_QUIVER, x(1:n), y(1:n), color, label)
+        if (is == 0) return
+        allocate (ax(cur_i)%series(is)%qu(n), ax(cur_i)%series(is)%qv(n))
+        ax(cur_i)%series(is)%qu(1:n) = u(1:n)
+        ax(cur_i)%series(is)%qv(1:n) = v(1:n)
+        ! Arrows are black unless asked otherwise; they do not take a turn
+        ! of the color cycle in matplotlib either.
+        if (.not. present(color)) then
+            ax(cur_i)%series(is)%color = "#000000"
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+        if (present(scale)) ax(cur_i)%series(is)%qscale = scale
+        if (present(width)) ax(cur_i)%series(is)%qwidth = width
+    end subroutine quiver
 
     ! Pie chart. matplotlib turns the axes into a unit square centred on the
     ! origin and hides the frame, so the wedges are plain data-space geometry.
@@ -1421,7 +3644,7 @@ contains
                 ax(cur_i)%series(is)%pcolor(i) = &
                     cmap_color(cmap_from_str(cmap), real(i - 1, dp) / real(max(n - 1, 1), dp))
             else
-                ax(cur_i)%series(is)%pcolor(i) = color_from_C(i - 1)
+                ax(cur_i)%series(is)%pcolor(i) = cycle_color(i - 1)
             end if
         end do
         if (present(labels)) then
@@ -1608,7 +3831,7 @@ contains
             if (kd == SERIES_BOX) then
                 ax(cur_i)%series(is)%color = "#000000"
             else
-                ax(cur_i)%series(is)%color = color_from_C(0)
+                ax(cur_i)%series(is)%color = cycle_color(0)
             end if
             ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
         end if
@@ -1660,82 +3883,307 @@ contains
     end subroutine colorbar
 
     ! Vertical bars of the given heights, centred on x and drawn from y = 0.
-    subroutine bar(x, height, width, color, label, alpha)
+    ! bottom stacks this series on top of another; colors gives every bar
+    ! its own color, as matplotlib's list-valued color does.
+    subroutine bar_num(x, height, width, color, label, alpha, bottom, colors, &
+                       edgecolor, linewidth)
         real(dp), intent(in) :: x(:), height(:)
-        real(dp), intent(in), optional :: width, alpha
-        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
         integer :: is
 
         call ensure_fig()
         is = new_shape_series(SERIES_BAR, x, height, color, label, alpha)
         if (is < 1) return
         if (present(width)) ax(cur_i)%series(is)%width = width
-    end subroutine bar
+        call bar_options(is, bottom, colors, edgecolor, linewidth)
+    end subroutine bar_num
+
+    subroutine bar_cat(cats, height, width, color, label, alpha, bottom, &
+                       colors, edgecolor, linewidth)
+        character(len=*), intent(in) :: cats(:)
+        real(dp), intent(in) :: height(:)
+        real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
+        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: colors(:)
+        call bar_num(category_positions(size(cats)), height, width, color, &
+                     label, alpha, bottom, colors, edgecolor, linewidth)
+        call xticks(category_positions(size(cats)), cats)
+    end subroutine bar_cat
+
+    ! Categories sit at 0, 1, 2, ..., as matplotlib places them.
+    pure function category_positions(n) result(v)
+        integer, intent(in) :: n
+        real(dp) :: v(n)
+        integer :: i
+        do i = 1, n
+            v(i) = real(i - 1, dp)
+        end do
+    end function category_positions
+
+    subroutine bar_options(is, base, colors, edgecolor, linewidth)
+        integer, intent(in) :: is
+        real(dp), intent(in), optional :: base(:), linewidth
+        character(len=*), intent(in), optional :: colors(:), edgecolor
+        integer :: n, j
+
+        n = ax(cur_i)%series(is)%n
+        if (present(base)) then
+            allocate (ax(cur_i)%series(is)%y2(n))
+            do j = 1, n
+                ax(cur_i)%series(is)%y2(j) = base(min(j, size(base)))
+            end do
+        end if
+        if (present(colors)) then
+            allocate (ax(cur_i)%series(is)%pcolor(n))
+            do j = 1, n
+                ax(cur_i)%series(is)%pcolor(j) = &
+                    resolve_color(colors(min(j, size(colors))))
+            end do
+        end if
+        if (present(edgecolor)) ax(cur_i)%series(is)%edgecolor = resolve_color(edgecolor)
+        if (present(linewidth)) ax(cur_i)%series(is)%edgewidth = linewidth
+    end subroutine bar_options
+
+    ! Label every bar of the most recent bar series with its value. fmt is a
+    ! Fortran edit descriptor such as "(f4.1)"; the default prints the value
+    ! as compactly as it can.
+    subroutine bar_label(fmt, padding, fontsize)
+        character(len=*), intent(in), optional :: fmt
+        real(dp), intent(in), optional :: padding, fontsize
+        integer :: i
+
+        call ensure_fig()
+        do i = ax(cur_i)%n_series, 1, -1
+            if (ax(cur_i)%series(i)%kind == SERIES_BAR .or. &
+                ax(cur_i)%series(i)%kind == SERIES_BARH) then
+                ax(cur_i)%series(i)%bar_labels = .true.
+                ax(cur_i)%series(i)%bar_label_size = def_tick
+                if (present(fmt)) ax(cur_i)%series(i)%bar_fmt = fmt
+                if (present(padding)) ax(cur_i)%series(i)%bar_pad = padding
+                if (present(fontsize)) ax(cur_i)%series(i)%bar_label_size = fontsize
+                return
+            end if
+        end do
+    end subroutine bar_label
+
+    ! Half the width of bar j, which uneven histogram bins make per-bar.
+    pure function bar_hw(s, j) result(v)
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp) :: v
+        v = 0.5_dp * s%width
+        if (allocated(s%bwidth)) v = 0.5_dp * s%bwidth(j)
+    end function bar_hw
 
     ! Histogram of x using `bins` equal-width bins over the data range.
-    subroutine hist(x, bins, color, label, alpha)
+    subroutine hist(x, bins, color, label, alpha, bin_edges, density, &
+                    cumulative, histtype)
         real(dp), intent(in) :: x(:)
         integer, intent(in), optional :: bins
-        character(len=*), intent(in), optional :: color, label
-        real(dp), intent(in), optional :: alpha
+        character(len=*), intent(in), optional :: color, label, histtype
+        real(dp), intent(in), optional :: alpha, bin_edges(:)
+        logical, intent(in), optional :: density, cumulative
         integer :: nb, i, k, n, is
-        real(dp) :: lo, hi, w
-        real(dp), allocatable :: centers(:), counts(:)
+        real(dp) :: lo, hi, w, tot
+        real(dp), allocatable :: edges(:), centers(:), counts(:), widths(:)
+        real(dp), allocatable :: sx(:), sy(:)
+        logical :: norm, cum
+        character(len=16) :: ht
 
         n = size(x)
         if (n <= 0) return
-        nb = 10
-        if (present(bins)) nb = bins
-        if (nb < 1) return
+        norm = .false.
+        cum = .false.
+        if (present(density)) norm = density
+        if (present(cumulative)) cum = cumulative
+        ht = "bar"
+        if (present(histtype)) ht = histtype
 
-        lo = minval(x)
-        hi = maxval(x)
-        if (hi <= lo) then
-            lo = lo - 0.5_dp
-            hi = hi + 0.5_dp
+        if (present(bin_edges)) then
+            nb = size(bin_edges) - 1
+            if (nb < 1) return
+            allocate (edges(nb + 1))
+            edges = bin_edges
+        else
+            nb = 10
+            if (present(bins)) nb = bins
+            if (nb < 1) return
+            lo = minval(x)
+            hi = maxval(x)
+            if (hi <= lo) then
+                lo = lo - 0.5_dp
+                hi = hi + 0.5_dp
+            end if
+            w = (hi - lo) / real(nb, dp)
+            allocate (edges(nb + 1))
+            do i = 1, nb + 1
+                edges(i) = lo + real(i - 1, dp) * w
+            end do
         end if
-        w = (hi - lo) / real(nb, dp)
 
-        allocate (centers(nb), counts(nb))
+        allocate (centers(nb), counts(nb), widths(nb))
         counts = 0.0_dp
         do i = 1, nb
-            centers(i) = lo + (real(i, dp) - 0.5_dp) * w
+            centers(i) = 0.5_dp * (edges(i) + edges(i + 1))
+            widths(i) = edges(i + 1) - edges(i)
         end do
         do i = 1, n
-            k = int((x(i) - lo) / w) + 1
-            if (k < 1) k = 1
-            if (k > nb) k = nb          ! the top edge belongs to the last bin
+            if (x(i) < edges(1) .or. x(i) > edges(nb + 1)) cycle
+            k = bin_of(x(i), edges, nb)
             counts(k) = counts(k) + 1.0_dp
         end do
 
+        ! density normalises by the total area, so the bars integrate to one
+        ! even when the bins are of different widths.
+        if (norm) then
+            tot = sum(counts)
+            if (tot > 0.0_dp) counts = counts / (tot * widths)
+        end if
+        if (cum) then
+            do i = 2, nb
+                counts(i) = counts(i) + counts(i - 1)
+            end do
+        end if
+
         call ensure_fig()
-        is = new_shape_series(SERIES_BAR, centers, counts, color, label, alpha)
-        if (is >= 1) ax(cur_i)%series(is)%width = w
+        select case (trim(ht))
+        case ("step", "stepfilled")
+            ! The outline of the same bars: up at every left edge, across
+            ! the top, and back down to the baseline at both ends.
+            allocate (sx(2*nb + 2), sy(2*nb + 2))
+            sx(1) = edges(1)
+            sy(1) = 0.0_dp
+            do i = 1, nb
+                sx(2*i) = edges(i)
+                sy(2*i) = counts(i)
+                sx(2*i + 1) = edges(i + 1)
+                sy(2*i + 1) = counts(i)
+            end do
+            sx(2*nb + 2) = edges(nb + 1)
+            sy(2*nb + 2) = 0.0_dp
+            if (trim(ht) == "stepfilled") then
+                call fill_between(sx, sy, spread(0.0_dp, 1, 2*nb + 2), color, &
+                                  label, alpha)
+            else
+                is = new_shape_series(SERIES_LINE, sx, sy, color, label, alpha)
+            end if
+        case default
+            is = new_shape_series(SERIES_BAR, centers, counts, color, label, alpha)
+            if (is >= 1) then
+                ! Histogram bars touch, so a contrasting edge would show up
+                ! as a seam between them.
+                ax(cur_i)%series(is)%edgecolor = ax(cur_i)%series(is)%color
+                ax(cur_i)%series(is)%width = widths(1)
+                allocate (ax(cur_i)%series(is)%bwidth(nb))
+                ax(cur_i)%series(is)%bwidth = widths
+            end if
+        end select
     end subroutine hist
 
+    ! The bin of v, with the top edge belonging to the last bin.
+    pure function bin_of(v, edges, nb) result(k)
+        real(dp), intent(in) :: v, edges(:)
+        integer, intent(in) :: nb
+        integer :: k
+        do k = 1, nb - 1
+            if (v < edges(k + 1)) return
+        end do
+        k = nb
+    end function bin_of
+
     ! Shade between y1 and y2 (default 0).
-    subroutine fill_between(x, y1, y2, color, label, alpha)
+    ! where selects the x range to shade. matplotlib fills each run of true
+    ! values as its own polygon, and so does this.
+    subroutine fill_between(x, y1, y2, color, label, alpha, where)
+        real(dp), intent(in) :: x(:), y1(:)
+        real(dp), intent(in), optional :: y2(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        logical, intent(in), optional :: where(:)
+        integer :: n, i, j, k
+        character(len=7) :: col
+        logical :: first
+
+        call ensure_fig()
+        n = min(size(x), size(y1))
+        if (n < 1) return
+        if (.not. present(where)) then
+            call add_fill(x(1:n), y1(1:n), y2, color, label, alpha)
+            return
+        end if
+
+        ! Every run after the first reuses the color of the first, and only
+        ! the first carries the label, so the group is one legend entry.
+        first = .true.
+        col = ""
+        i = 1
+        do while (i <= n)
+            if (.not. where(i)) then
+                i = i + 1
+                cycle
+            end if
+            j = i
+            do while (j < n)
+                if (.not. where(j + 1)) exit
+                j = j + 1
+            end do
+            if (first) then
+                call add_fill(x(i:j), y1(i:j), slice(y2, i, j), color, label, alpha)
+            else
+                call add_fill(x(i:j), y1(i:j), slice(y2, i, j), col, alpha=alpha)
+            end if
+            k = ax(cur_i)%n_series
+            if (first .and. k >= 1) then
+                ! The runs are one artist, so they take one cycle step and
+                ! one legend entry between them.
+                col = ax(cur_i)%series(k)%color
+                first = .false.
+            end if
+            i = j + 1
+        end do
+    end subroutine fill_between
+
+    ! y2(i:j) if it is there at all, which keeps the optional optional.
+    function slice(v, i, j) result(w)
+        real(dp), intent(in), optional :: v(:)
+        integer, intent(in) :: i, j
+        real(dp), allocatable :: w(:)
+        if (present(v)) then
+            allocate (w(max(0, j - i + 1)))
+            w = v(i:j)
+        else
+            allocate (w(0))
+        end if
+    end function slice
+
+    subroutine add_fill(x, y1, y2, color, label, alpha)
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
         character(len=*), intent(in), optional :: color, label
         real(dp), intent(in), optional :: alpha
         integer :: is, n
 
-        call ensure_fig()
         is = new_shape_series(SERIES_FILL, x, y1, color, label, alpha)
         if (is < 1) return
         n = ax(cur_i)%series(is)%n
         allocate (ax(cur_i)%series(is)%y2(n))
+        ax(cur_i)%series(is)%y2(1:n) = 0.0_dp
         if (present(y2)) then
-            ax(cur_i)%series(is)%y2(1:n) = y2(1:n)
-        else
-            ax(cur_i)%series(is)%y2(1:n) = 0.0_dp
+            if (size(y2) >= n) ax(cur_i)%series(is)%y2(1:n) = y2(1:n)
         end if
-    end subroutine fill_between
+    end subroutine add_fill
 
     ! Line plot with symmetric vertical error bars.
-    subroutine errorbar(x, y, yerr, fmt, color, label, capsize, marker)
-        real(dp), intent(in) :: x(:), y(:), yerr(:)
+    ! yerr/xerr are symmetric; the _lo/_hi pairs give an asymmetric error,
+    ! matplotlib's 2xN array written as two arrays.
+    subroutine errorbar(x, y, yerr, fmt, color, label, capsize, marker, &
+                        xerr, yerr_lo, yerr_hi, xerr_lo, xerr_hi)
+        real(dp), intent(in) :: x(:), y(:)
+        real(dp), intent(in), optional :: yerr(:), xerr(:)
+        real(dp), intent(in), optional :: yerr_lo(:), yerr_hi(:)
+        real(dp), intent(in), optional :: xerr_lo(:), xerr_hi(:)
         character(len=*), intent(in), optional :: fmt, color, label, marker
         real(dp), intent(in), optional :: capsize
         integer :: is, n, mk, ls
@@ -1745,8 +4193,10 @@ contains
         is = new_shape_series(SERIES_ERRORBAR, x, y, color, label)
         if (is < 1) return
         n = ax(cur_i)%series(is)%n
-        allocate (ax(cur_i)%series(is)%y2(n))
-        ax(cur_i)%series(is)%y2(1:n) = abs(yerr(1:n))
+        call set_arm(ax(cur_i)%series(is)%eylo, n, yerr, yerr_lo)
+        call set_arm(ax(cur_i)%series(is)%eyhi, n, yerr, yerr_hi)
+        call set_arm(ax(cur_i)%series(is)%exlo, n, xerr, xerr_lo)
+        call set_arm(ax(cur_i)%series(is)%exhi, n, xerr, xerr_hi)
 
         if (present(fmt)) then
             if (len_trim(fmt) > 0) then
@@ -1761,6 +4211,21 @@ contains
         ax(cur_i)%series(is)%width = 3.0_dp
         if (present(capsize)) ax(cur_i)%series(is)%width = capsize
     end subroutine errorbar
+
+    ! One arm of the error bars: the asymmetric value if it was given, else
+    ! the symmetric one, else nothing at all.
+    subroutine set_arm(arm, n, sym, side)
+        real(dp), allocatable, intent(out) :: arm(:)
+        integer, intent(in) :: n
+        real(dp), intent(in), optional :: sym(:), side(:)
+        if (present(side)) then
+            allocate (arm(n))
+            arm = abs(side(1:n))
+        else if (present(sym)) then
+            allocate (arm(n))
+            arm = abs(sym(1:n))
+        end if
+    end subroutine set_arm
 
     ! Reference line spanning the full axes.
     subroutine axhline(y, color, linestyle, lw, label)
@@ -1795,6 +4260,92 @@ contains
         if (present(linestyle)) ax(cur_i)%series(is)%linestyle = linestyle_from_str(linestyle)
         if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
     end subroutine add_ref_line
+
+    ! A run of horizontal lines, each from xmin to xmax in data coordinates.
+    subroutine hlines(y, xmin, xmax, color, linestyle, lw, label)
+        real(dp), intent(in) :: y(:), xmin, xmax
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call add_lines(SERIES_HLINES, y, xmin, xmax, color, linestyle, lw, label)
+    end subroutine hlines
+
+    subroutine vlines(x, ymin, ymax, color, linestyle, lw, label)
+        real(dp), intent(in) :: x(:), ymin, ymax
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call add_lines(SERIES_VLINES, x, ymin, ymax, color, linestyle, lw, label)
+    end subroutine vlines
+
+    subroutine add_lines(kd, v, lo, hi, color, linestyle, lw, label)
+        integer, intent(in) :: kd
+        real(dp), intent(in) :: v(:), lo, hi
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        integer :: is, n
+
+        call ensure_fig()
+        n = size(v)
+        if (n < 1) return
+        is = new_shape_series(kd, spread(lo, 1, n), v, color, label)
+        if (is < 1) return
+        allocate (ax(cur_i)%series(is)%y2(n))
+        ax(cur_i)%series(is)%y2 = hi
+        if (kd == SERIES_VLINES) then
+            ! x carries the positions and y the two ends for a vertical run.
+            ax(cur_i)%series(is)%x = v
+            ax(cur_i)%series(is)%y = lo
+        end if
+        if (.not. present(color)) then
+            ax(cur_i)%series(is)%color = "#000000"
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+        if (present(linestyle)) ax(cur_i)%series(is)%linestyle = linestyle_from_str(linestyle)
+        if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
+    end subroutine add_lines
+
+    ! A shaded band. The span runs the full width (height) of the axes unless
+    ! the cross-axis limits are given, and those are axes fractions, not data,
+    ! exactly as in matplotlib.
+    subroutine axhspan(ymin, ymax, xmin, xmax, color, alpha, label)
+        real(dp), intent(in) :: ymin, ymax
+        real(dp), intent(in), optional :: xmin, xmax, alpha
+        character(len=*), intent(in), optional :: color, label
+        call add_span(SERIES_HSPAN, ymin, ymax, xmin, xmax, color, alpha, label)
+    end subroutine axhspan
+
+    subroutine axvspan(xmin, xmax, ymin, ymax, color, alpha, label)
+        real(dp), intent(in) :: xmin, xmax
+        real(dp), intent(in), optional :: ymin, ymax, alpha
+        character(len=*), intent(in), optional :: color, label
+        call add_span(SERIES_VSPAN, xmin, xmax, ymin, ymax, color, alpha, label)
+    end subroutine axvspan
+
+    subroutine add_span(kd, lo, hi, flo, fhi, color, alpha, label)
+        integer, intent(in) :: kd
+        real(dp), intent(in) :: lo, hi
+        real(dp), intent(in), optional :: flo, fhi, alpha
+        character(len=*), intent(in), optional :: color, label
+        real(dp) :: f0, f1
+        integer :: is
+
+        call ensure_fig()
+        f0 = 0.0_dp
+        f1 = 1.0_dp
+        if (present(flo)) f0 = flo
+        if (present(fhi)) f1 = fhi
+        if (kd == SERIES_HSPAN) then
+            is = new_shape_series(kd, [f0, f1], [lo, hi], color, label, alpha)
+        else
+            is = new_shape_series(kd, [lo, hi], [f0, f1], color, label, alpha)
+        end if
+        if (is < 1) return
+        ! A patch takes matplotlib's default patch color rather than the next
+        ! color of the line cycle.
+        if (.not. present(color)) then
+            ax(cur_i)%series(is)%color = cycle_color(0)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+    end subroutine add_span
 
     pure function linestyle_from_str(s) result(ls)
         character(len=*), intent(in) :: s
@@ -1855,7 +4406,7 @@ contains
         ax(cur_i)%texts(it)%ytail = yarr
         ax(cur_i)%texts(it)%fontsize = 10.0_dp
         ax(cur_i)%texts(it)%ha = "left"
-        ax(cur_i)%texts(it)%color = "#000000"
+        ax(cur_i)%texts(it)%color = rc_text_color
         if (present(fontsize)) ax(cur_i)%texts(it)%fontsize = fontsize
         if (present(ha)) ax(cur_i)%texts(it)%ha = ha
         col = resolve_color(color)
@@ -1881,7 +4432,7 @@ contains
         ax(ia)%series(is)%x(1:n) = x(1:n)
         ax(ia)%series(is)%y(1:n) = y(1:n)
         ax(ia)%series(is)%n = n
-        ax(ia)%series(is)%linewidth = default_linewidth
+        ax(ia)%series(is)%linewidth = rc_lw
         ax(ia)%series(is)%markersize = default_markersize
         ax(ia)%series(is)%label = ""
         ax(ia)%series(is)%marker = MARKER_NONE
@@ -1935,7 +4486,7 @@ contains
         if (present(label)) ax(ia)%series(is)%label = label
 
         if (len_trim(ax(ia)%series(is)%color) == 0) then
-            ax(ia)%series(is)%color = color_from_C(ax(ia)%color_cycle)
+            ax(ia)%series(is)%color = cycle_color(ax(ia)%color_cycle)
             ax(ia)%color_cycle = ax(ia)%color_cycle + 1
         end if
 
@@ -1952,6 +4503,7 @@ contains
         real(dp), intent(out) :: xmin, xmax, ymin, ymax
         integer :: i, j
         real(dp) :: xv, yv, ylo, yhi, xlo, xhi, dx, dy, hw
+        real(dp) :: pxlo, pxhi, pylo, pyhi
         logical :: anyx, anyy, sticky_lo, sticky_hi, sx_lo, sx_hi
 
         anyx = .false.
@@ -1964,6 +4516,10 @@ contains
         xmax = -huge(1.0_dp)
         ymin = huge(1.0_dp)
         ymax = -huge(1.0_dp)
+        pxlo = huge(1.0_dp)
+        pxhi = -huge(1.0_dp)
+        pylo = huge(1.0_dp)
+        pyhi = -huge(1.0_dp)
 
         do i = 1, a%n_series
             ! Bars occupy a span in x; a hline/vline constrains one axis only.
@@ -1973,6 +4529,19 @@ contains
             ! A pie sets its own limits, and horizontal bars use the two axes
             ! the other way round, so neither fits the loop below.
             if (a%series(i)%kind == SERIES_PIE) cycle
+            ! A patch widens the limits but never asks for any of its own:
+            ! matplotlib leaves an axes holding nothing but patches at its
+            ! default square, and only stretches to them once something
+            ! else has autoscaled it.
+            if (a%series(i)%kind == SERIES_PATCH .and. .not. a%series(i)%patch_scales) then
+                do j = 1, a%series(i)%n
+                    pxlo = min(pxlo, a%series(i)%x(j))
+                    pxhi = max(pxhi, a%series(i)%x(j))
+                    pylo = min(pylo, a%series(i)%y(j))
+                    pyhi = max(pyhi, a%series(i)%y(j))
+                end do
+                cycle
+            end if
             if (a%series(i)%kind == SERIES_BOX .or. &
                 a%series(i)%kind == SERIES_VIOLIN) then
                 anyx = .true.
@@ -1995,13 +4564,48 @@ contains
                 end do
                 cycle
             end if
-            if (a%series(i)%kind == SERIES_BARH) then
-                hw = 0.5_dp * a%series(i)%width
+            ! A span constrains only its own axis; the other pair is a
+            ! fraction of the axes, which cannot ask for any data room.
+            if (a%series(i)%kind == SERIES_HSPAN) then
+                anyy = .true.
+                ymin = min(ymin, a%series(i)%y(1), a%series(i)%y(2))
+                ymax = max(ymax, a%series(i)%y(1), a%series(i)%y(2))
+                cycle
+            end if
+            if (a%series(i)%kind == SERIES_VSPAN) then
+                anyx = .true.
+                xmin = min(xmin, a%series(i)%x(1), a%series(i)%x(2))
+                xmax = max(xmax, a%series(i)%x(1), a%series(i)%x(2))
+                cycle
+            end if
+            if (a%series(i)%kind == SERIES_HLINES .or. &
+                a%series(i)%kind == SERIES_VLINES) then
                 do j = 1, a%series(i)%n
                     anyx = .true.
                     anyy = .true.
-                    xmin = min(xmin, 0.0_dp, a%series(i)%y(j))
-                    xmax = max(xmax, 0.0_dp, a%series(i)%y(j))
+                    xmin = min(xmin, a%series(i)%x(j))
+                    xmax = max(xmax, a%series(i)%x(j))
+                    ymin = min(ymin, a%series(i)%y(j))
+                    ymax = max(ymax, a%series(i)%y(j))
+                    if (a%series(i)%kind == SERIES_HLINES) then
+                        xmin = min(xmin, a%series(i)%y2(j))
+                        xmax = max(xmax, a%series(i)%y2(j))
+                    else
+                        ymin = min(ymin, a%series(i)%y2(j))
+                        ymax = max(ymax, a%series(i)%y2(j))
+                    end if
+                end do
+                cycle
+            end if
+            if (a%series(i)%kind == SERIES_BARH) then
+                do j = 1, a%series(i)%n
+                    hw = bar_hw(a%series(i), j)
+                    anyx = .true.
+                    anyy = .true.
+                    xmin = min(xmin, bar_base(a%series(i), j), &
+                               bar_base(a%series(i), j) + a%series(i)%y(j))
+                    xmax = max(xmax, bar_base(a%series(i), j), &
+                               bar_base(a%series(i), j) + a%series(i)%y(j))
                     ymin = min(ymin, a%series(i)%x(j) - hw)
                     ymax = max(ymax, a%series(i)%x(j) + hw)
                 end do
@@ -2012,11 +4616,18 @@ contains
 
             do j = 1, a%series(i)%n
                 if (a%series(i)%kind /= SERIES_HLINE) then
+                    if (a%series(i)%kind == SERIES_BAR) hw = bar_hw(a%series(i), j)
                     xv = a%series(i)%x(j)
-                    if (.not. (a%xsc%kind == SCALE_LOG .and. xv - hw <= 0.0_dp)) then
+                    xlo = xv - hw
+                    xhi = xv + hw
+                    if (a%series(i)%kind == SERIES_ERRORBAR) then
+                        xlo = xv - arm(a%series(i)%exlo, j)
+                        xhi = xv + arm(a%series(i)%exhi, j)
+                    end if
+                    if (.not. (a%xsc%kind == SCALE_LOG .and. xlo <= 0.0_dp)) then
                         anyx = .true.
-                        xmin = min(xmin, xv - hw)
-                        xmax = max(xmax, xv + hw)
+                        xmin = min(xmin, xlo)
+                        xmax = max(xmax, xhi)
                     end if
                 end if
 
@@ -2026,15 +4637,16 @@ contains
                     yhi = yv
                     select case (a%series(i)%kind)
                     case (SERIES_BAR)
-                        ! Bars are drawn from the y=0 baseline.
-                        ylo = min(0.0_dp, yv)
-                        yhi = max(0.0_dp, yv)
+                        ! Bars are drawn from the y=0 baseline, or from the
+                        ! series they were stacked on.
+                        ylo = min(bar_base(a%series(i), j), bar_base(a%series(i), j) + yv)
+                        yhi = max(bar_base(a%series(i), j), bar_base(a%series(i), j) + yv)
                     case (SERIES_FILL)
                         ylo = min(yv, a%series(i)%y2(j))
                         yhi = max(yv, a%series(i)%y2(j))
                     case (SERIES_ERRORBAR)
-                        ylo = yv - a%series(i)%y2(j)
-                        yhi = yv + a%series(i)%y2(j)
+                        ylo = yv - arm(a%series(i)%eylo, j)
+                        yhi = yv + arm(a%series(i)%eyhi, j)
                     end select
                     if (.not. (a%ysc%kind == SCALE_LOG .and. yhi <= 0.0_dp)) then
                         anyy = .true.
@@ -2070,26 +4682,57 @@ contains
             ymax = max(ymax, a%img_ext(4))
         end if
 
+        if (anyx .and. pxhi >= pxlo) then
+            xmin = min(xmin, pxlo)
+            xmax = max(xmax, pxhi)
+        end if
+        if (anyy .and. pyhi >= pylo) then
+            ymin = min(ymin, pylo)
+            ymax = max(ymax, pyhi)
+        end if
+        if (a%yroom_set) then
+            anyy = .true.
+            ymin = min(ymin, a%yroom(1))
+            ymax = max(ymax, a%yroom(2))
+            if (a%room_sticks) then
+                sticky_lo = .true.
+                sticky_hi = .true.
+            end if
+        end if
+        if (a%xroom_set) then
+            anyx = .true.
+            xmin = min(xmin, a%xroom(1))
+            xmax = max(xmax, a%xroom(2))
+            if (a%room_sticks) then
+                sx_lo = .true.
+                sx_hi = .true.
+            end if
+        end if
+
         if (a%xlim_set) then
             xmin = a%xmin_user
             xmax = a%xmax_user
         else
-            if (.not. anyx) then
+            ! An axes with nothing to autoscale to keeps the plain unit
+            ! square matplotlib gives it, margins and all.
+            if (anyx) then
+                if (.not. a%tight) call expand_limits(xmin, xmax, a%xsc, sx_lo, sx_hi)
+            else
                 xmin = 0.0_dp
                 xmax = 1.0_dp
             end if
-            if (.not. a%tight) call expand_limits(xmin, xmax, a%xsc, sx_lo, sx_hi)
         end if
 
         if (a%ylim_set) then
             ymin = a%ymin_user
             ymax = a%ymax_user
         else
-            if (.not. anyy) then
+            if (anyy) then
+                if (.not. a%tight) call expand_limits(ymin, ymax, a%ysc, sticky_lo, sticky_hi)
+            else
                 ymin = 0.0_dp
                 ymax = 1.0_dp
             end if
-            if (.not. a%tight) call expand_limits(ymin, ymax, a%ysc, sticky_lo, sticky_hi)
         end if
 
         if (a%has_cont) then
@@ -2113,14 +4756,58 @@ contains
             if (.not. a%ylim_set) then
                 ymin = a%img_ext(3)
                 ymax = a%img_ext(4)
-                if (a%img_origin_upper) call swap(ymin, ymax)
+                if (a%img_origin_upper .and. .not. a%has_mesh) call swap(ymin, ymax)
             end if
         end if
         ! A twin borrows the shared axis wholesale, so the two sets of data
         ! stay registered against each other.
+        if (a%sec_of > 0) then
+            call compute_limits(ax(a%sec_of), xlo, xhi, ylo, yhi)
+            if (a%sec_is_x) then
+                xmin = a%sec_scale*xlo + a%sec_offset
+                xmax = a%sec_scale*xhi + a%sec_offset
+            else
+                ymin = a%sec_scale*ylo + a%sec_offset
+                ymax = a%sec_scale*yhi + a%sec_offset
+            end if
+        end if
         if (a%share_x > 0) call compute_limits(ax(a%share_x), xmin, xmax, ylo, yhi)
         if (a%share_y > 0) call compute_limits(ax(a%share_y), xlo, xhi, ymin, ymax)
+        ! A share group spans everything its members hold, so the panels line
+        ! up and a feature at one x is at the same place in all of them.
+        if (a%link_x > 0) call union_limits(a%link_x, .true., xmin, xmax)
+        if (a%link_y > 0) call union_limits(a%link_y, .false., ymin, ymax)
     end subroutine compute_limits
+
+    ! The limits of one axis across a share group. Each member is measured
+    ! with its own link cleared, which is what stops this coming back here.
+    recursive subroutine union_limits(root, is_x, lo, hi)
+        integer, intent(in) :: root
+        logical, intent(in) :: is_x
+        real(dp), intent(inout) :: lo, hi
+        type(axes_t) :: m
+        real(dp) :: x0, x1, y0, y1
+        integer :: i
+
+        do i = 1, n_ax
+            if (is_x) then
+                if (ax(i)%link_x /= root) cycle
+            else
+                if (ax(i)%link_y /= root) cycle
+            end if
+            m = ax(i)
+            m%link_x = 0
+            m%link_y = 0
+            call compute_limits(m, x0, x1, y0, y1)
+            if (is_x) then
+                lo = min(lo, x0)
+                hi = max(hi, x1)
+            else
+                lo = min(lo, y0)
+                hi = max(hi, y1)
+            end if
+        end do
+    end subroutine union_limits
 
     pure subroutine grow_about_centre(lo, hi, f)
         real(dp), intent(inout) :: lo, hi
@@ -2505,8 +5192,47 @@ contains
         ang = 0.0_dp
         ! The API turns angles clockwise, matplotlib counterclockwise.
         if (present(rot)) ang = -rot
-        call b%draw_text(x, y, s, f, brush(color), an, BASE_ALPHABETIC, ang)
+        if (math_is(s)) then
+            call append_math(b, x, y, s, f, brush(color), an, ang)
+        else
+            call b%draw_text(x, y, s, f, brush(color), an, BASE_ALPHABETIC, ang)
+        end if
     end subroutine append_text
+
+    ! Mathtext is laid out into plain runs here, so that the backends only
+    ! ever see text they already know how to draw. The runs are placed
+    ! along the text direction, which is why the offsets are rotated by
+    ! the same angle as the string itself.
+    subroutine append_math(b, x, y, s, f, p, anchor, ang)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: x, y, ang
+        character(len=*), intent(in) :: s
+        type(font_t), intent(in) :: f
+        type(paint_t), intent(in) :: p
+        integer, intent(in) :: anchor
+        type(mrun_t) :: runs(MAX_RUNS)
+        type(font_t) :: rf
+        integer :: nr, i
+        real(dp) :: w, x0, ca, sa, rad
+
+        call math_layout(s, f%size, runs, nr, w)
+        select case (anchor)
+        case (ANCHOR_MIDDLE); x0 = -0.5_dp*w
+        case (ANCHOR_END); x0 = -w
+        case default; x0 = 0.0_dp
+        end select
+        rad = ang*PI/180.0_dp
+        ca = cos(rad)
+        sa = sin(rad)
+        rf = f
+        do i = 1, nr
+            rf%size = runs(i)%size
+            call b%draw_text(x + (x0 + runs(i)%dx)*ca - runs(i)%dy*sa, &
+                             y + (x0 + runs(i)%dx)*sa + runs(i)%dy*ca, &
+                             runs(i)%s(1:runs(i)%n), rf, p, ANCHOR_START, &
+                             BASE_ALPHABETIC, ang)
+        end do
+    end subroutine append_math
 
     ! Straight line segment in pixel coordinates.
     subroutine append_line(b, x1, y1, x2, y2, color, lw, ls, alpha)
@@ -2545,6 +5271,30 @@ contains
         call b%draw_rect(x, y, w, h, p)
     end subroutine append_rect
 
+    ! A shaded band: one pair of coordinates is data, the other a fraction
+    ! of the axes box.
+    subroutine append_span(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp) :: xa, xb, ya, yb
+
+        if (s%kind == SERIES_HSPAN) then
+            xa = ax_l + s%x(1)*ax_w
+            xb = ax_l + s%x(2)*ax_w
+            ya = map_y(s%y(1), ymin, ymax, ax_b, ax_h, ysc)
+            yb = map_y(s%y(2), ymin, ymax, ax_b, ax_h, ysc)
+        else
+            xa = map_x(s%x(1), xmin, xmax, ax_l, ax_w, xsc)
+            xb = map_x(s%x(2), xmin, xmax, ax_l, ax_w, xsc)
+            ya = ax_b - s%y(1)*ax_h
+            yb = ax_b - s%y(2)*ax_h
+        end if
+        call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
+                         abs(yb - ya), trim(s%color), s%alpha)
+    end subroutine append_span
+
     ! One bar of a bar/hist series, drawn from the y = 0 baseline.
     subroutine append_bar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         class(renderer_t), intent(inout) :: b
@@ -2555,25 +5305,297 @@ contains
         real(dp) :: xa, xb, ya, yb, hw
 
         hw = 0.5_dp * s%width
+        if (allocated(s%bwidth)) hw = 0.5_dp * s%bwidth(j)
         if (s%kind == SERIES_BARH) then
             ! x holds the bar position and y its length, so the roles of the
             ! two axes are simply swapped.
             ya = map_y(s%x(j) - hw, ymin, ymax, ax_b, ax_h, ysc)
             yb = map_y(s%x(j) + hw, ymin, ymax, ax_b, ax_h, ysc)
-            xa = map_x(0.0_dp, xmin, xmax, ax_l, ax_w, xsc)
-            xb = map_x(s%y(j), xmin, xmax, ax_l, ax_w, xsc)
+            xa = map_x(bar_base(s, j), xmin, xmax, ax_l, ax_w, xsc)
+            xb = map_x(bar_base(s, j) + s%y(j), xmin, xmax, ax_l, ax_w, xsc)
         else
             xa = map_x(s%x(j) - hw, xmin, xmax, ax_l, ax_w, xsc)
             xb = map_x(s%x(j) + hw, xmin, xmax, ax_l, ax_w, xsc)
-            ya = map_y(0.0_dp, ymin, ymax, ax_b, ax_h, ysc)
-            yb = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            ya = map_y(bar_base(s, j), ymin, ymax, ax_b, ax_h, ysc)
+            yb = map_y(bar_base(s, j) + s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         end if
 
         call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
-                         abs(yb - ya), trim(s%color), s%alpha, "#ffffff", 0.5_dp)
+                         abs(yb - ya), point_color(s, j), s%alpha, &
+                         trim(s%edgecolor), s%edgewidth)
+        if (s%bar_labels) call append_bar_label(b, s, j, xa, xb, ya, yb)
     end subroutine append_bar
 
+    ! Where a bar starts: y = 0 unless the series was stacked on another.
+    pure function bar_base(s, j) result(v)
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp) :: v
+        v = 0.0_dp
+        if (allocated(s%y2)) v = s%y2(j)
+    end function bar_base
+
+    ! The value written at the end of a bar. The padding is in points, which
+    ! is why this waits until the bar has been placed on the canvas.
+    subroutine append_bar_label(b, s, j, xa, xb, ya, yb)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        integer, intent(in) :: j
+        real(dp), intent(in) :: xa, xb, ya, yb
+        character(len=32) :: txt
+        real(dp) :: tx, ty, fs
+        integer :: tn
+
+        txt = ""
+        fs = s%bar_label_size
+        if (len_trim(s%bar_fmt) > 0) then
+            write (txt, s%bar_fmt) s%y(j)
+        else
+            call format_tick_to(s%y(j), .false., txt, tn)
+        end if
+        if (s%kind == SERIES_BARH) then
+            ! Just past the end of the bar, vertically centred on it.
+            tx = xb + s%bar_pad + 1.0_dp
+            if (xb < xa) tx = xb - s%bar_pad - 1.0_dp
+            ty = 0.5_dp*(ya + yb) + 0.36_dp*fs
+            if (xb < xa) then
+                call append_text(b, tx, ty, trim(adjustl(txt)), "right", fs, rc_text_color)
+            else
+                call append_text(b, tx, ty, trim(adjustl(txt)), "left", fs, rc_text_color)
+            end if
+        else
+            ! Above the top of the bar, or below it for a bar that hangs
+            ! down. 0.21 em is the descent of the font, which is what puts
+            ! the bottom of the text, not its baseline, at the padding.
+            ty = min(ya, yb) - s%bar_pad - 0.21_dp*fs
+            if (yb > ya) ty = max(ya, yb) + s%bar_pad + 0.73_dp*fs
+            tx = 0.5_dp*(xa + xb)
+            call append_text(b, tx, ty, trim(adjustl(txt)), "center", fs, rc_text_color)
+        end if
+    end subroutine append_bar_label
+
     ! Shaded region between y and y2, as a single closed polygon.
+    ! A patch: filled first, then outlined, so the outline sits on top of
+    ! its own fill exactly as it does in matplotlib.
+    subroutine append_patch(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp) :: px(s%n + 1), py(s%n + 1)
+        integer :: j
+
+        if (s%n < 3) return
+        do j = 1, s%n
+            px(j) = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+            py(j) = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+        end do
+        px(s%n + 1) = px(1)
+        py(s%n + 1) = py(1)
+        if (s%patch_fill) call append_polygon(b, px, py, s%n, trim(s%color), s%alpha)
+        if (len_trim(s%edgecolor) > 0) &
+            call append_stroke_path(b, px, py, s%n + 1, trim(s%edgecolor), &
+                                    s%edgewidth, s%alpha)
+    end subroutine append_patch
+
+    ! One filled polygon per arrow, shaped exactly as matplotlib shapes it:
+    ! a shaft of width w, a head three w wide and five w long whose barbs
+    ! reach back four and a half w. Everything is measured in shaft widths
+    ! and then scaled, which is why the arrows keep their proportions
+    ! however long they are.
+    subroutine append_quiver(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp), parameter :: HEAD_W = 3.0_dp, HEAD_L = 5.0_dp, HEAD_AX = 4.5_dp
+        real(dp) :: w, sc, sn, amean, mag, ln, ct, st, px(8), py(8), qx(8), qy(8)
+        real(dp) :: x0, y0
+        integer :: j, k
+
+        if (s%n <= 0) return
+        amean = 0.0_dp
+        do j = 1, s%n
+            amean = amean + hypot(s%qu(j), s%qv(j))
+        end do
+        amean = amean/real(s%n, dp)
+
+        w = s%qwidth
+        if (w < 0.0_dp) w = 0.06_dp/min(25.0_dp, max(8.0_dp, sqrt(real(s%n, dp))))
+        w = w*ax_w
+        sc = s%qscale
+        if (sc < 0.0_dp) then
+            sn = max(10.0_dp, sqrt(real(s%n, dp)))
+            sc = 1.8_dp*amean*sn
+            if (sc <= 0.0_dp) sc = 1.0_dp
+        end if
+
+        do j = 1, s%n
+            mag = hypot(s%qu(j), s%qv(j))
+            if (mag <= 0.0_dp) cycle
+            ! Arrow length in shaft widths, so the outline below is pure
+            ! geometry and needs no further conditioning.
+            ln = mag*ax_w/(sc*w)
+            ct = s%qu(j)/mag
+            st = s%qv(j)/mag
+            qx = [0.0_dp, ln - HEAD_AX, ln - HEAD_L, ln, ln - HEAD_L, ln - HEAD_AX, 0.0_dp, 0.0_dp]
+            qy = 0.5_dp*[1.0_dp, 1.0_dp, HEAD_W, 0.0_dp, -HEAD_W, -1.0_dp, -1.0_dp, 1.0_dp]
+            ! A vector too short for a shaft is drawn as head alone,
+            ! shrunk to the length it has.
+            if (ln < HEAD_L) then
+                qx = (ln/HEAD_L)*[0.0_dp, HEAD_L - HEAD_AX, HEAD_L - HEAD_L, HEAD_L, &
+                                  HEAD_L - HEAD_L, HEAD_L - HEAD_AX, 0.0_dp, 0.0_dp]
+                qy = (ln/HEAD_L)*qy
+            end if
+            x0 = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+            y0 = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            do k = 1, 8
+                px(k) = x0 + w*(qx(k)*ct - qy(k)*st)
+                py(k) = y0 - w*(qx(k)*st + qy(k)*ct)
+            end do
+            call append_polygon(b, px, py, 7, trim(s%color), s%alpha)
+        end do
+    end subroutine append_quiver
+
+    ! matplotlib draws these as a FancyArrowPatch with the "-|>" style at a
+    ! mutation scale of ten: a filled triangle four points long and four
+    ! points across, with its tip on the curve.
+    ! Draw the table. Cells are a fixed 1.2 line heights tall, the text is
+    ! right aligned in the body, left in the row labels and centered in the
+    ! column headings, each a tenth of a cell in from its edge.
+    subroutine render_table(b, a, ax_l, ax_w, ax_b, ax_h)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: ax_l, ax_w, ax_b, ax_h
+        real(dp), parameter :: PAD = 0.1_dp
+        real(dp) :: fs, ch, rlw, tw, x0, y0, cx, cy
+        real(dp), allocatable :: cw(:)
+        integer :: nr, nc, nrows, i, j, r
+        character(len=32) :: txt
+
+        if (.not. a%has_table) return
+        nr = size(a%tbl_cells, 1)
+        nc = size(a%tbl_cells, 2)
+        nrows = nr
+        if (allocated(a%tbl_col)) nrows = nrows + 1
+
+        fs = a%tbl_size
+        ch = 1.2_dp*fs
+        allocate (cw(nc))
+        cw = a%tbl_w*ax_w
+        tw = sum(cw)
+
+        ! The row labels get whatever width their text needs, as matplotlib
+        ! sizes that column automatically.
+        rlw = 0.0_dp
+        if (allocated(a%tbl_row)) then
+            do i = 1, nr
+                rlw = max(rlw, math_width(trim(a%tbl_row(i)), fs)*(1.0_dp + 2.0_dp*PAD))
+            end do
+        end if
+
+        x0 = ax_l + 0.5_dp*ax_w - 0.5_dp*tw
+        select case (trim(a%tbl_loc))
+        case ("top")
+            y0 = ax_b - ax_h - real(nrows, dp)*ch
+        case ("center")
+            y0 = ax_b - 0.5_dp*ax_h - 0.5_dp*real(nrows, dp)*ch
+        case default
+            y0 = ax_b
+        end select
+
+        do r = 1, nrows
+            cy = y0 + real(r - 1, dp)*ch
+            cx = x0
+            if (allocated(a%tbl_row) .and. r > nrows - nr) then
+                call table_cell(b, cx - rlw, cy, rlw, ch, &
+                                trim(a%tbl_row(r - (nrows - nr))), "left", fs, PAD)
+            end if
+            do j = 1, nc
+                if (r == 1 .and. allocated(a%tbl_col)) then
+                    txt = a%tbl_col(j)
+                    call table_cell(b, cx, cy, cw(j), ch, trim(txt), "center", fs, PAD)
+                else
+                    i = r - (nrows - nr)
+                    txt = a%tbl_cells(i, j)
+                    call table_cell(b, cx, cy, cw(j), ch, trim(txt), "right", fs, PAD)
+                end if
+                cx = cx + cw(j)
+            end do
+        end do
+    end subroutine render_table
+
+    ! One cell: a white box with a black edge, and its text placed by loc.
+    subroutine table_cell(b, x, y, w, h, s, loc, fs, pad)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: x, y, w, h, fs, pad
+        character(len=*), intent(in) :: s, loc
+        real(dp) :: xs(5), ys(5), tx
+
+        if (w <= 0.0_dp) return
+        xs = [x, x + w, x + w, x, x]
+        ys = [y, y, y + h, y + h, y]
+        call append_polygon(b, xs, ys, 4, "#ffffff", 1.0_dp)
+        call append_stroke_path(b, xs, ys, 5, "#000000", 1.0_dp, 1.0_dp)
+        if (len_trim(s) == 0) return
+        select case (loc)
+        case ("left")
+            tx = x + pad*w
+        case ("center")
+            tx = x + 0.5_dp*w
+        case default
+            tx = x + (1.0_dp - pad)*w
+        end select
+        call append_text(b, tx, y + 0.5_dp*h + 0.36_dp*fs, s, loc, fs, "#000000")
+    end subroutine table_cell
+
+    subroutine append_arrowheads(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        ! "-|>" at a mutation scale of ten: four points long and two either
+        ! side. The barbs are then pushed back far enough that the stroke
+        ! around the head does not overshoot the line it sits on.
+        real(dp), parameter :: HEAD_L = 4.0_dp, HEAD_W = 2.0_dp
+        real(dp) :: x0, y0, dx, dy, mag, ct, st, px(4), py(4)
+        real(dp) :: dist, cs, sn, d, lw
+        integer :: j
+
+        dist = hypot(HEAD_L, HEAD_W)
+        cs = HEAD_L/dist
+        sn = HEAD_W/dist
+        lw = s%linewidth
+        d = dist + 0.5_dp*lw/sn
+
+        do j = 1, s%n
+            x0 = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+            y0 = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            ! The direction is given in data units, so it has to go through
+            ! the same mapping before it means anything on the page.
+            dx = map_x(s%x(j) + s%qu(j), xmin, xmax, ax_l, ax_w, xsc) - x0
+            dy = map_y(s%y(j) + s%qv(j), ymin, ymax, ax_b, ax_h, ysc) - y0
+            mag = hypot(dx, dy)
+            if (mag <= 0.0_dp) cycle
+            ct = dx/mag
+            st = dy/mag
+            ! matplotlib shrinks both ends of the arrow by two points before
+            ! putting the head on, so the tip lands short of the point given.
+            x0 = x0 - 2.0_dp*ct
+            y0 = y0 - 2.0_dp*st
+            px(1) = x0
+            py(1) = y0
+            px(2) = x0 - d*(cs*ct - sn*st)
+            py(2) = y0 - d*(cs*st + sn*ct)
+            px(3) = x0 - d*(cs*ct + sn*st)
+            py(3) = y0 - d*(cs*st - sn*ct)
+            px(4) = px(1)
+            py(4) = py(1)
+            call append_polygon(b, px, py, 3, trim(s%color), s%alpha)
+            call append_stroke_path(b, px, py, 4, trim(s%color), lw, s%alpha)
+        end do
+    end subroutine append_arrowheads
+
     subroutine append_fill(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         class(renderer_t), intent(inout) :: b
         type(series_t), intent(in) :: s
@@ -2603,30 +5625,86 @@ contains
         integer, intent(in) :: j
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
-        real(dp) :: px, plo, phi, cap
+        real(dp) :: px, py, plo, phi, cap
 
         px = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
-        plo = map_y(s%y(j) - s%y2(j), ymin, ymax, ax_b, ax_h, ysc)
-        phi = map_y(s%y(j) + s%y2(j), ymin, ymax, ax_b, ax_h, ysc)
-        call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
-
+        py = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
         cap = s%width
-        if (cap > 0.0_dp) then
-            call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
-            call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+
+        if (allocated(s%eylo) .or. allocated(s%eyhi)) then
+            plo = map_y(s%y(j) - arm(s%eylo, j), ymin, ymax, ax_b, ax_h, ysc)
+            phi = map_y(s%y(j) + arm(s%eyhi, j), ymin, ymax, ax_b, ax_h, ysc)
+            call append_line(b, px, plo, px, phi, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+            if (cap > 0.0_dp) then
+                call append_line(b, px - cap, plo, px + cap, plo, trim(s%color), &
+                                 1.0_dp, LINE_SOLID, s%alpha)
+                call append_line(b, px - cap, phi, px + cap, phi, trim(s%color), &
+                                 1.0_dp, LINE_SOLID, s%alpha)
+            end if
+        end if
+
+        if (allocated(s%exlo) .or. allocated(s%exhi)) then
+            plo = map_x(s%x(j) - arm(s%exlo, j), xmin, xmax, ax_l, ax_w, xsc)
+            phi = map_x(s%x(j) + arm(s%exhi, j), xmin, xmax, ax_l, ax_w, xsc)
+            call append_line(b, plo, py, phi, py, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
+            if (cap > 0.0_dp) then
+                call append_line(b, plo, py - cap, plo, py + cap, trim(s%color), &
+                                 1.0_dp, LINE_SOLID, s%alpha)
+                call append_line(b, phi, py - cap, phi, py + cap, trim(s%color), &
+                                 1.0_dp, LINE_SOLID, s%alpha)
+            end if
         end if
     end subroutine append_errorbar
 
+    ! One error arm, zero where the series has none.
+    pure function arm(e, j) result(v)
+        real(dp), allocatable, intent(in) :: e(:)
+        integer, intent(in) :: j
+        real(dp) :: v
+        v = 0.0_dp
+        if (allocated(e)) v = e(j)
+    end function arm
+
     ! User-set tick positions win over the automatic locator.
-    subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, t, nt)
+    ! How many intervals matplotlib would ask its locator for: as many as
+    ! the axis is long enough to label, assuming tick text about three
+    ! times as wide as it is tall, and never more than nine.
+    pure function tick_space(length, size, horizontal) result(n)
+        real(dp), intent(in) :: length, size
+        logical, intent(in) :: horizontal
+        integer :: n
+        real(dp) :: w
+        if (horizontal) then
+            w = 3.0_dp*size
+        else
+            w = 2.0_dp*size
+        end if
+        if (w <= 0.0_dp) then
+            n = 9
+        else
+            n = max(1, min(9, int(length/w)))
+        end if
+    end function tick_space
+
+    subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, nbins, is_date, &
+                          t, nt, date_unit)
         integer, intent(in) :: n_user
         real(dp), intent(in) :: user_pos(MAX_TICKS), vmin, vmax
         type(scale_t), intent(in) :: sc
+        integer, intent(in) :: nbins
+        logical, intent(in) :: is_date
         real(dp), intent(out) :: t(MAX_TICKS)
         integer, intent(out) :: nt
-        if (n_user > 0) then
+        integer, intent(out) :: date_unit
+
+        date_unit = 0
+        if (n_user < 0) then
+            nt = 0
+        else if (n_user > 0) then
             nt = n_user
             t(1:nt) = user_pos(1:nt)
+        else if (is_date) then
+            call date_ticks(vmin, vmax, nbins, t, nt, date_unit)
         else
             select case (sc%kind)
             case (SCALE_LOG)
@@ -2634,7 +5712,7 @@ contains
             case (SCALE_SYMLOG)
                 call symlog_ticks(vmin, vmax, t, nt)
             case default
-                call linear_ticks(vmin, vmax, 6, t, nt)
+                call linear_ticks(vmin, vmax, nbins, t, nt)
             end select
         end if
     end subroutine axis_ticks
@@ -2877,6 +5955,226 @@ contains
         call b%draw_path(px(1:np), py(1:np), verbs(1:nv), nv, p)
     end subroutine append_wedge
 
+    ! Level lines, one level at a time. The triangles give unordered
+    ! segments, so they are first chained end to end into whole contours:
+    ! a contour has to be a single line before a label can be dropped into
+    ! the middle of it and the line broken to make room.
+    subroutine append_contour_lines(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp), allocatable :: ex(:, :), ey(:, :), vx(:), vy(:), lx(:), ly(:)
+        logical, allocatable :: used(:)
+        integer :: nr, nc, nlev, nseg, i, j, k, tri, ns, np, nv, i0, i1
+        real(dp) :: dx, dy, gx(2), gy(2), tx(3), ty(3), tv(3), sx(2), sy(2)
+        real(dp) :: t, tol, cx, cy, ang, halfw
+        character(len=32) :: lbl
+        integer :: nl, dec
+
+        nr = size(a%cz, 1)
+        nc = size(a%cz, 2)
+        nlev = size(a%clev)
+        dx = (a%cont_ext(2) - a%cont_ext(1))/real(nc - 1, dp)
+        dy = (a%cont_ext(4) - a%cont_ext(3))/real(nr - 1, dp)
+        tol = 1.0e-9_dp*(abs(dx) + abs(dy))
+        dec = tick_decimals(a%clev, nlev)
+
+        nseg = 2*(nr - 1)*(nc - 1)
+        allocate (ex(2, nseg), ey(2, nseg), used(nseg))
+        allocate (vx(nseg + 1), vy(nseg + 1), lx(nseg + 1), ly(nseg + 1))
+
+        do k = 1, nlev
+            ns = 0
+            do i = 1, nr - 1
+                gy(1) = a%cont_ext(3) + real(i - 1, dp)*dy
+                gy(2) = gy(1) + dy
+                do j = 1, nc - 1
+                    gx(1) = a%cont_ext(1) + real(j - 1, dp)*dx
+                    gx(2) = gx(1) + dx
+                    do tri = 1, 2
+                        call cell_triangle(a%cz, i, j, gx, gy, tri, tx, ty, tv)
+                        call tri_level(tx, ty, tv, a%clev(k), sx, sy, np)
+                        if (np /= 2) cycle
+                        ns = ns + 1
+                        ex(:, ns) = sx
+                        ey(:, ns) = sy
+                    end do
+                end do
+            end do
+            if (ns == 0) cycle
+
+            t = real(k - 1, dp)/real(max(nlev - 1, 1), dp)
+            call format_tick_fixed(a%clev(k), dec, lbl, nl)
+            halfw = 0.5_dp*real(nl, dp)*DIGIT_W*a%clab_size + 3.0_dp
+
+            used(1:ns) = .false.
+            do
+                call chain_polyline(ex, ey, used, ns, tol, i, vx, vy, nv)
+                if (nv == 0) exit
+                do j = 1, nv
+                    lx(j) = map_x(vx(j), xmin, xmax, ax_l, ax_w, xsc)
+                    ly(j) = map_y(vy(j), ymin, ymax, ax_b, ax_h, ysc)
+                end do
+                i0 = 0
+                ! Every separate run of a level gets its own label, as
+                ! matplotlib labels each of them.
+                if (a%cont_labels) call label_window(lx, ly, nv, halfw, i0, i1, cx, cy, ang)
+                if (i0 > 0) then
+                    call append_stroke_path(b, lx(1:i0), ly(1:i0), i0, &
+                                            cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
+                    call append_stroke_path(b, lx(i1:nv), ly(i1:nv), nv - i1 + 1, &
+                                            cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
+                    call append_text(b, cx, cy + 0.36_dp*a%clab_size, lbl(1:nl), &
+                                     "middle", a%clab_size, &
+                                     cmap_color(a%cont_cmap, t), ang)
+                else
+                    call append_stroke_path(b, lx(1:nv), ly(1:nv), nv, &
+                                            cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
+                end if
+            end do
+        end do
+    end subroutine append_contour_lines
+
+    ! Take the first segment nobody has used yet and grow it in both
+    ! directions for as long as another segment starts where this one ends.
+    ! Returns nv = 0 once every segment belongs to a line.
+    subroutine chain_polyline(ex, ey, used, ns, tol, id, vx, vy, nv)
+        real(dp), intent(in) :: ex(:, :), ey(:, :), tol
+        logical, intent(inout) :: used(:)
+        integer, intent(in) :: ns
+        integer, intent(out) :: id, nv
+        real(dp), intent(out) :: vx(:), vy(:)
+        integer :: s, i, head, tail, e
+        real(dp) :: hx, hy, tx, ty
+
+        nv = 0
+        id = 0
+        s = 0
+        do i = 1, ns
+            if (.not. used(i)) then
+                s = i
+                exit
+            end if
+        end do
+        if (s == 0) return
+        id = s
+        used(s) = .true.
+        ! The line is built from the middle outwards, so it is laid down
+        ! back to front and then walked forwards.
+        head = size(vx)/2
+        tail = head + 1
+        vx(head) = ex(1, s); vy(head) = ey(1, s)
+        vx(tail) = ex(2, s); vy(tail) = ey(2, s)
+
+        do
+            tx = vx(tail); ty = vy(tail)
+            e = 0
+            do i = 1, ns
+                if (used(i)) cycle
+                if (near(ex(1, i), ey(1, i), tx, ty, tol)) then
+                    e = 2
+                else if (near(ex(2, i), ey(2, i), tx, ty, tol)) then
+                    e = 1
+                else
+                    cycle
+                end if
+                used(i) = .true.
+                tail = tail + 1
+                vx(tail) = ex(e, i); vy(tail) = ey(e, i)
+                exit
+            end do
+            if (e == 0 .or. tail >= size(vx)) exit
+        end do
+
+        do
+            hx = vx(head); hy = vy(head)
+            e = 0
+            do i = 1, ns
+                if (used(i)) cycle
+                if (near(ex(1, i), ey(1, i), hx, hy, tol)) then
+                    e = 2
+                else if (near(ex(2, i), ey(2, i), hx, hy, tol)) then
+                    e = 1
+                else
+                    cycle
+                end if
+                used(i) = .true.
+                head = head - 1
+                vx(head) = ex(e, i); vy(head) = ey(e, i)
+                exit
+            end do
+            if (e == 0 .or. head <= 1) exit
+        end do
+
+        nv = tail - head + 1
+        vx(1:nv) = vx(head:tail)
+        vy(1:nv) = vy(head:tail)
+    end subroutine chain_polyline
+
+    pure function near(ax1, ay1, bx, by, tol) result(q)
+        real(dp), intent(in) :: ax1, ay1, bx, by, tol
+        logical :: q
+        q = abs(ax1 - bx) <= tol .and. abs(ay1 - by) <= tol
+    end function near
+
+    ! Where to break the line for its label: the straightest stretch long
+    ! enough to hold it, which is what matplotlib looks for too. i0 comes
+    ! back as 0 when the line is too short to be worth breaking.
+    subroutine label_window(px, py, n, halfw, i0, i1, cx, cy, ang)
+        real(dp), intent(in) :: px(:), py(:), halfw
+        integer, intent(in) :: n
+        integer, intent(out) :: i0, i1
+        real(dp), intent(out) :: cx, cy, ang
+        real(dp) :: cum(n), dev, bdev, dxs, dys, len2, d
+        integer :: m, j, ja, jb
+
+        i0 = 0
+        i1 = 0
+        cx = 0.0_dp; cy = 0.0_dp; ang = 0.0_dp
+        cum(1) = 0.0_dp
+        do m = 2, n
+            cum(m) = cum(m - 1) + hypot(px(m) - px(m - 1), py(m) - py(m - 1))
+        end do
+        if (cum(n) < 3.0_dp*halfw) return
+
+        bdev = huge(1.0_dp)
+        do m = 2, n - 1
+            if (cum(m) < halfw .or. cum(n) - cum(m) < halfw) cycle
+            ja = m
+            do while (ja > 1 .and. cum(m) - cum(ja) < halfw)
+                ja = ja - 1
+            end do
+            jb = m
+            do while (jb < n .and. cum(jb) - cum(m) < halfw)
+                jb = jb + 1
+            end do
+            dxs = px(jb) - px(ja)
+            dys = py(jb) - py(ja)
+            len2 = dxs*dxs + dys*dys
+            if (len2 <= 0.0_dp) cycle
+            dev = 0.0_dp
+            do j = ja, jb
+                d = abs(dxs*(py(j) - py(ja)) - dys*(px(j) - px(ja)))/sqrt(len2)
+                dev = max(dev, d)
+            end do
+            if (dev < bdev) then
+                bdev = dev
+                i0 = ja
+                i1 = jb
+            end if
+        end do
+        if (i0 == 0) return
+
+        cx = 0.5_dp*(px(i0) + px(i1))
+        cy = 0.5_dp*(py(i0) + py(i1))
+        ! Device y grows downwards, and a label is never written upside
+        ! down: past the vertical it reads the other way round.
+        ang = atan2(-(py(i1) - py(i0)), px(i1) - px(i0))*180.0_dp/PI
+        if (ang > 90.0_dp) ang = ang - 180.0_dp
+        if (ang < -90.0_dp) ang = ang + 180.0_dp
+    end subroutine label_window
+
     ! Walk every cell as two triangles, emitting filled bands or level lines.
     subroutine append_contour(b, a, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
         class(renderer_t), intent(inout) :: b
@@ -2896,6 +6194,12 @@ contains
         nlev = size(a%clev)
         dx = (a%cont_ext(2) - a%cont_ext(1)) / real(nc - 1, dp)
         dy = (a%cont_ext(4) - a%cont_ext(3)) / real(nr - 1, dp)
+
+        if (.not. a%cont_filled) then
+            call append_contour_lines(b, a, xmin, xmax, ymin, ymax, &
+                                      ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            return
+        end if
 
         do i = 1, nr - 1
             gy(1) = a%cont_ext(3) + real(i - 1, dp) * dy
@@ -2920,18 +6224,6 @@ contains
                             t = (real(k, dp) - 0.5_dp) / real(nlev - 1, dp)
                             call append_polygon(b, px, py, nq, &
                                                 cmap_color(a%cont_cmap, t), 1.0_dp, seal=.true.)
-                        end do
-                    else
-                        do k = 1, nlev
-                            call tri_level(tx, ty, tv, a%clev(k), sx, sy, ns)
-                            if (ns /= 2) cycle
-                            t = real(k - 1, dp) / real(max(nlev - 1, 1), dp)
-                            call append_stroke_path(b, &
-                                [map_x(sx(1), xmin, xmax, ax_l, ax_w, xsc), &
-                                 map_x(sx(2), xmin, xmax, ax_l, ax_w, xsc)], &
-                                [map_y(sy(1), ymin, ymax, ax_b, ax_h, ysc), &
-                                 map_y(sy(2), ymin, ymax, ax_b, ax_h, ysc)], &
-                                2, cmap_color(a%cont_cmap, t), 1.5_dp, 1.0_dp)
                         end do
                     end if
                 end do
@@ -2973,7 +6265,7 @@ contains
         type(paint_t) :: p
         logical :: flip_x, flip_y
 
-        if (xsc%kind /= SCALE_LINEAR .or. ysc%kind /= SCALE_LINEAR) then
+        if (a%has_mesh .or. xsc%kind /= SCALE_LINEAR .or. ysc%kind /= SCALE_LINEAR) then
             call append_image_cells(b, a, xmin, xmax, ymin, ymax, &
                                     ax_l, ax_w, ax_b, ax_h, xsc, ysc)
             return
@@ -3000,6 +6292,11 @@ contains
         ! images are small enough that interpolating turns the data into a
         ! blur. Repeating each sample a whole number of times is exactly
         ! nearest neighbour, so no value is invented by doing it.
+        if (a%img_bilinear) then
+            call append_image_smooth(b, a, px0, px1, py0, py1, flip_x, flip_y)
+            return
+        end if
+
         fx = fill_factor(abs(px1 - px0), nc)
         fy = fill_factor(abs(py1 - py0), nr)
 
@@ -3010,7 +6307,7 @@ contains
             do j = 1, nc*fx
                 sj = (j - 1)/fx + 1
                 if (flip_x) sj = nc - sj + 1
-                t = (a%img(si, sj) - a%img_vmin) / (a%img_vmax - a%img_vmin)
+                t = cmap_t(a, a%img(si, sj))
                 rgba(1:3, j, i) = hex_rgb(cmap_color(a%img_cmap, t))
                 rgba(4, j, i) = 255
             end do
@@ -3020,6 +6317,57 @@ contains
         call b%draw_image(min(px0, px1), min(py0, py1), abs(px1 - px0), &
                           abs(py1 - py0), rgba, nc*fx, nr*fy, p)
     end subroutine append_image
+
+    ! interpolation="bilinear": the raster is built at the size the image
+    ! is drawn and every pixel is read from the four samples around it, so
+    ! the picture comes out smooth rather than blocked. The samples sit at
+    ! the middles of their cells, which is what puts the outermost half
+    ! cell at a flat color rather than running off the data.
+    subroutine append_image_smooth(b, a, px0, px1, py0, py1, flip_x, flip_y)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: px0, px1, py0, py1
+        logical, intent(in) :: flip_x, flip_y
+        integer, parameter :: MAX_SIDE = 2048
+        integer, allocatable :: rgba(:, :, :)
+        integer :: nr, nc, ow, oh, i, j, i0, i1, j0, j1
+        real(dp) :: u, v, fu, fv, val, t
+        type(paint_t) :: p
+
+        nr = size(a%img, 1)
+        nc = size(a%img, 2)
+        ow = max(1, min(MAX_SIDE, nint(abs(px1 - px0))))
+        oh = max(1, min(MAX_SIDE, nint(abs(py1 - py0))))
+        allocate (rgba(4, ow, oh))
+
+        do i = 1, oh
+            v = (real(i, dp) - 0.5_dp)/real(oh, dp)*real(nr, dp) - 0.5_dp
+            if (flip_y) v = real(nr - 1, dp) - v
+            i0 = floor(v)
+            fv = v - real(i0, dp)
+            i1 = min(nr - 1, max(0, i0 + 1))
+            i0 = min(nr - 1, max(0, i0))
+            do j = 1, ow
+                u = (real(j, dp) - 0.5_dp)/real(ow, dp)*real(nc, dp) - 0.5_dp
+                if (flip_x) u = real(nc - 1, dp) - u
+                j0 = floor(u)
+                fu = u - real(j0, dp)
+                j1 = min(nc - 1, max(0, j0 + 1))
+                j0 = min(nc - 1, max(0, j0))
+                val = (1.0_dp - fv)*((1.0_dp - fu)*a%img(i0 + 1, j0 + 1) &
+                                     + fu*a%img(i0 + 1, j1 + 1)) &
+                      + fv*((1.0_dp - fu)*a%img(i1 + 1, j0 + 1) &
+                            + fu*a%img(i1 + 1, j1 + 1))
+                t = cmap_t(a, val)
+                rgba(1:3, j, i) = hex_rgb(cmap_color(a%img_cmap, t))
+                rgba(4, j, i) = 255
+            end do
+        end do
+
+        p%clip = g_clip
+        call b%draw_image(min(px0, px1), min(py0, py1), abs(px1 - px0), &
+                          abs(py1 - py0), rgba, ow, oh, p)
+    end subroutine append_image_smooth
 
     ! How many times to repeat each sample so the raster covers the space it
     ! is drawn in, bounded so that a large image is left as it is rather than
@@ -3051,16 +6399,26 @@ contains
         dyc = (a%img_ext(4) - a%img_ext(3)) / real(nr, dp)
 
         do i = 1, nr
-            ye0 = a%img_ext(3) + real(i - 1, dp) * dyc
-            ye1 = ye0 + dyc
+            if (a%has_mesh) then
+                ye0 = a%mesh_y(i)
+                ye1 = a%mesh_y(i + 1)
+            else
+                ye0 = a%img_ext(3) + real(i - 1, dp) * dyc
+                ye1 = ye0 + dyc
+            end if
             py0 = map_y(ye0, ymin, ymax, ax_b, ax_h, ysc)
             py1 = map_y(ye1, ymin, ymax, ax_b, ax_h, ysc)
             do j = 1, nc
-                xe0 = a%img_ext(1) + real(j - 1, dp) * dxc
-                xe1 = xe0 + dxc
+                if (a%has_mesh) then
+                    xe0 = a%mesh_x(j)
+                    xe1 = a%mesh_x(j + 1)
+                else
+                    xe0 = a%img_ext(1) + real(j - 1, dp) * dxc
+                    xe1 = xe0 + dxc
+                end if
                 px0 = map_x(xe0, xmin, xmax, ax_l, ax_w, xsc)
                 px1 = map_x(xe1, xmin, xmax, ax_l, ax_w, xsc)
-                t = (a%img(i, j) - a%img_vmin) / (a%img_vmax - a%img_vmin)
+                t = cmap_t(a, a%img(i, j))
                 call append_cell(b, min(px0, px1), min(py0, py1), &
                                  abs(px1 - px0), abs(py1 - py0), &
                                  cmap_color(a%img_cmap, t))
@@ -3088,7 +6446,7 @@ contains
         real(dp), intent(in) :: W, H
         real(dp) :: bx, bw, bt, bb, bh, y0, y1, t, v, py
         real(dp) :: cb_ticks(MAX_TICKS), lo, hi
-        integer :: i, nt, ln
+        integer :: i, nt, ln, dec
         character(len=64) :: lbl
         character(len=512) :: esc
         real(dp) :: w0, l0
@@ -3114,24 +6472,35 @@ contains
         end do
         call clear_clip()
 
-        call b%draw_rect(bx, bt, bw, bh, pen("#000000", 0.8_dp))
+        call b%draw_rect(bx, bt, bw, bh, pen(rc_spine_color, rc_spine_lw))
 
         lo = a%img_vmin
         hi = a%img_vmax
-        call linear_ticks(lo, hi, 6, cb_ticks, nt)
+        if (a%img_log_norm) then
+            call log_ticks(lo, hi, cb_ticks, nt)
+        else
+            call linear_ticks(lo, hi, tick_space(bh, a%ytick_size, .false.), &
+                              cb_ticks, nt)
+        end if
+        dec = -1
+        if (.not. a%img_log_norm) dec = tick_decimals(cb_ticks, nt)
         do i = 1, nt
             v = cb_ticks(i)
             if (v < lo .or. v > hi) cycle
-            py = bb - (v - lo) / (hi - lo) * bh
+            py = bb - cmap_t(a, v) * bh
             call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
-            call format_tick_to(v, .false., lbl, ln)
+            if (a%img_log_norm) then
+                call format_tick_to(v, .true., lbl, ln)
+            else
+                call format_tick_fixed(v, dec, lbl, ln)
+            end if
             call append_text(b, bx + bw + 7.0_dp, py + 3.5_dp, lbl(1:ln), &
-                             "left", a%ytick_size, "#000000")
+                             "left", a%ytick_size, rc_text_color)
         end do
 
         if (len_trim(a%cbar_label) > 0) then
             call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), trim(a%cbar_label), &
-                             "center", a%ylabel_size, "#000000", 90.0_dp)
+                             "center", a%ylabel_size, rc_text_color, 90.0_dp)
         end if
     end subroutine append_colorbar
 
@@ -3144,6 +6513,34 @@ contains
     end function fmt_pt
 
     ! Per-point color when scatter mapped c values, otherwise the series color.
+    ! Where a value sits on the colormap, in [0, 1].
+    pure function cmap_t(a, v) result(t)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: v
+        real(dp) :: t, lo, hi
+        lo = a%img_vmin
+        hi = a%img_vmax
+        if (a%img_log_norm) then
+            ! Anything at or below zero has no logarithm, so it takes the
+            ! bottom of the map, as matplotlib's LogNorm does.
+            if (v <= 0.0_dp .or. lo <= 0.0_dp .or. hi <= lo) then
+                t = 0.0_dp
+            else
+                t = (log10(v) - log10(lo)) / (log10(hi) - log10(lo))
+            end if
+        else
+            t = (v - lo) / (hi - lo)
+        end if
+    end function cmap_t
+
+    ! Series drawn as filled shapes, which take a swatch in the legend.
+    pure function is_patch_series(kd) result(v)
+        integer, intent(in) :: kd
+        logical :: v
+        v = kd == SERIES_BAR .or. kd == SERIES_BARH .or. kd == SERIES_FILL .or. &
+            kd == SERIES_HSPAN .or. kd == SERIES_VSPAN
+    end function is_patch_series
+
     function point_color(s, j) result(col)
         type(series_t), intent(in) :: s
         integer, intent(in) :: j
@@ -3224,13 +6621,13 @@ contains
     subroutine append_tick(b, x1, y1, x2, y2)
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x1, y1, x2, y2
-        call append_line(b, x1, y1, x2, y2, "#000000", 0.8_dp, LINE_SOLID, 1.0_dp)
+        call append_line(b, x1, y1, x2, y2, rc_text_color, 0.8_dp, LINE_SOLID, 1.0_dp)
     end subroutine append_tick
 
     subroutine append_spine(b, x1, y1, x2, y2)
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x1, y1, x2, y2
-        call append_line(b, x1, y1, x2, y2, "#000000", 0.8_dp, LINE_SOLID, 1.0_dp)
+        call append_line(b, x1, y1, x2, y2, rc_spine_color, rc_spine_lw, LINE_SOLID, 1.0_dp)
     end subroutine append_spine
 
     ! A tick at (x, y) on a spine whose outward normal is (ox, oy). dir 1
@@ -3257,24 +6654,593 @@ contains
         class(renderer_t), intent(inout) :: b
         real(dp), intent(in) :: x, y, fontsize, rot
         character(len=*), intent(in) :: s, anchor
-        call append_text(b, x, y, s, anchor, fontsize, "#000000", rot)
+        call append_text(b, x, y, s, anchor, fontsize, rc_text_color, rot)
     end subroutine append_tick_text
 
-    subroutine tick_label(labeled, lab, i, v, sc, out, n)
+    ! dec is the decimal count the whole axis agreed on, or -1 when the
+    ! scale writes its own labels.
+    subroutine tick_label(labeled, lab, i, v, sc, dec, date_unit, out, n)
         logical, intent(in) :: labeled
         character(len=24), intent(in) :: lab(MAX_TICKS)
         integer, intent(in) :: i
         real(dp), intent(in) :: v
         type(scale_t), intent(in) :: sc
+        integer, intent(in) :: dec, date_unit
         character(len=*), intent(out) :: out
         integer, intent(out) :: n
         if (labeled) then
             n = len_trim(lab(i))
             out(1:n) = trim(lab(i))
+        else if (date_unit > 0) then
+            call format_date(v, date_unit, out, n)
+        else if (sc%kind == SCALE_LOG) then
+            call format_tick_to(v, .true., out, n)
         else
-            call format_tick_to(v, sc%kind == SCALE_LOG, out, n)
+            call format_tick_fixed(v, dec, out, n)
         end if
     end subroutine tick_label
+
+    ! The decimal count for one axis: none when the scale is not linear,
+    ! since those label themselves.
+    function axis_decimals(t, nt, sc) result(d)
+        real(dp), intent(in) :: t(MAX_TICKS)
+        integer, intent(in) :: nt
+        type(scale_t), intent(in) :: sc
+        integer :: d
+        if (sc%kind /= SCALE_LINEAR) then
+            d = -1
+        else
+            d = tick_decimals(t, nt)
+        end if
+    end function axis_decimals
+
+    ! A polar axes. The box holds the largest circle that fits: the angle
+    ! runs anticlockwise from the right and the radius from the middle out,
+    ! so the whole of the drawing is one change of coordinates away from
+    ! everything else here.
+    subroutine render_polar(b, a, ax_l, ax_r, ax_b, ax_t)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: ax_l, ax_r, ax_b, ax_t
+        integer, parameter :: NC = 180
+        real(dp) :: cx, cy, R, rmax, t(MAX_TICKS), cxs(NC + 1), cys(NC + 1)
+        real(dp) :: ang, rr, lx, ly
+        real(dp), allocatable :: px(:), py(:)
+        character(len=64) :: lbl
+        integer :: nt, i, j, k, n, unit, dec
+
+        cx = 0.5_dp*(ax_l + ax_r)
+        cy = 0.5_dp*(ax_t + ax_b)
+        R = 0.5_dp*min(ax_r - ax_l, ax_b - ax_t)
+
+        ! The radius starts at the middle and reaches 5% past the data, as
+        ! matplotlib scales it.
+        rmax = 0.0_dp
+        do i = 1, a%n_series
+            do j = 1, a%series(i)%n
+                rmax = max(rmax, a%series(i)%y(j))
+            end do
+        end do
+        if (a%ylim_set) rmax = a%ymax_user
+        if (rmax <= 0.0_dp) rmax = 1.0_dp
+        if (.not. a%ylim_set) rmax = 1.05_dp*rmax
+
+        call linear_ticks(0.0_dp, rmax, tick_space(ax_b - ax_t, a%ytick_size, .false.), t, nt)
+        dec = tick_decimals(t, nt)
+
+        ! Grid: a circle at every radial tick and a spoke every 45 degrees.
+        if (a%grid_on) then
+            do k = 1, nt
+                if (t(k) <= 0.0_dp .or. t(k) > rmax) cycle
+                call polar_circle(cx, cy, R*t(k)/rmax, cxs, cys)
+                call append_stroke_path(b, cxs, cys, NC + 1, rc_grid_color, 0.8_dp, 1.0_dp)
+            end do
+            do k = 0, 7
+                ang = real(k, dp)*PI/4.0_dp
+                call append_stroke_path(b, [cx, cx + R*cos(ang)], &
+                                        [cy, cy - R*sin(ang)], 2, &
+                                        rc_grid_color, 0.8_dp, 1.0_dp)
+            end do
+        end if
+
+        ! The data, drawn straight through the change of coordinates.
+        do i = 1, a%n_series
+            n = a%series(i)%n
+            if (n < 1) cycle
+            allocate (px(n), py(n))
+            do j = 1, n
+                rr = R*a%series(i)%y(j)/rmax
+                px(j) = cx + rr*cos(a%series(i)%x(j))
+                py(j) = cy - rr*sin(a%series(i)%x(j))
+            end do
+            if (a%series(i)%linestyle /= LINE_NONE .and. n >= 2) &
+                call append_stroke_path(b, px, py, n, trim(a%series(i)%color), &
+                                        a%series(i)%linewidth, a%series(i)%alpha)
+            if (a%series(i)%marker /= MARKER_NONE) &
+                call append_markers(b, a%series(i)%marker, px, py, n, &
+                                    a%series(i)%markersize, trim(a%series(i)%color), &
+                                    a%series(i)%alpha)
+            deallocate (px, py)
+        end do
+
+        ! The outer circle is the whole of the frame a polar axes has.
+        call polar_circle(cx, cy, R, cxs, cys)
+        call append_stroke_path(b, cxs, cys, NC + 1, rc_spine_color, 0.8_dp, 1.0_dp)
+
+        ! Angles are labelled outside the circle, radii along the 22.5
+        ! degree line, which is where matplotlib puts them.
+        do k = 0, 7
+            ang = real(k, dp)*PI/4.0_dp
+            ! The degree sign is byte 176, which the backends know how to
+            ! write: a character reference in SVG, WinAnsi in PDF, and an
+            ! outline of its own in PNG.
+            write (lbl, "(I0,A)") k*45, achar(176)
+            lx = cx + (R + 4.0_dp + 0.5_dp*a%xtick_size)*cos(ang)
+            ly = cy - (R + 4.0_dp + 0.5_dp*a%xtick_size)*sin(ang) + 0.36_dp*a%xtick_size
+            call append_text(b, lx, ly, trim(lbl), "middle", a%xtick_size, rc_text_color)
+        end do
+        do k = 1, nt
+            if (t(k) <= 0.0_dp .or. t(k) > rmax) cycle
+            call format_tick_fixed(t(k), dec, lbl, n)
+            rr = R*t(k)/rmax
+            lx = cx + rr*cos(22.5_dp*PI/180.0_dp)
+            ly = cy - rr*sin(22.5_dp*PI/180.0_dp) + 0.36_dp*a%ytick_size
+            call append_text(b, lx, ly, lbl(1:n), "middle", a%ytick_size, rc_text_color)
+        end do
+
+        ! The title clears the angle label above the circle rather than
+        ! sitting on the box, which would run straight through it.
+        if (len_trim(a%title) > 0) &
+            call append_text(b, cx, cy - R - 4.0_dp - 1.6_dp*a%xtick_size &
+                             - 0.5_dp*a%title_size, trim(a%title), &
+                             "center", a%title_size, rc_text_color)
+    end subroutine render_polar
+
+    ! ------------------------------------------------------------------
+    ! A 3D axes. The camera lives in fplot_proj3d; what is here is what
+    ! the camera is pointed at: the limits, the three back panes and their
+    ! grids, the three axis lines with ticks and labels, and the data.
+    !
+    ! There is no depth buffer, only the painter's algorithm: faces are
+    ! sorted back to front and drawn in that order. mplot3d does the same
+    ! and has the same limitation, that surfaces which intersect one
+    ! another come out wrong.
+    ! ------------------------------------------------------------------
+
+    ! Data bounds, then matplotlib's 3D margins: five percent in x and y,
+    ! none in z, and then the whole box widened by 25/24 about its centre,
+    ! which is the compensation mplot3d applies to every 3D axes.
+    subroutine limits3d(a, lims)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(out) :: lims(6)
+        real(dp), parameter :: MARG(3) = [0.05_dp, 0.05_dp, 0.0_dp]
+        real(dp) :: lo(3), hi(3), c, d
+        logical :: have
+        integer :: i, k
+
+        lo = huge(1.0_dp)
+        hi = -huge(1.0_dp)
+        have = .false.
+        do i = 1, a%n_series
+            select case (a%series(i)%kind)
+            case (SERIES_LINE3D, SERIES_SCATTER3D)
+                do k = 1, a%series(i)%n
+                    lo(1) = min(lo(1), a%series(i)%x(k))
+                    hi(1) = max(hi(1), a%series(i)%x(k))
+                    lo(2) = min(lo(2), a%series(i)%y(k))
+                    hi(2) = max(hi(2), a%series(i)%y(k))
+                    lo(3) = min(lo(3), a%series(i)%z(k))
+                    hi(3) = max(hi(3), a%series(i)%z(k))
+                end do
+                have = .true.
+            case (SERIES_SURFACE)
+                lo(1) = min(lo(1), minval(a%series(i)%x))
+                hi(1) = max(hi(1), maxval(a%series(i)%x))
+                lo(2) = min(lo(2), minval(a%series(i)%y))
+                hi(2) = max(hi(2), maxval(a%series(i)%y))
+                lo(3) = min(lo(3), minval(a%series(i)%zg))
+                hi(3) = max(hi(3), maxval(a%series(i)%zg))
+                have = .true.
+            end select
+        end do
+        if (.not. have) then
+            lo = 0.0_dp
+            hi = 1.0_dp
+        end if
+
+        do i = 1, 3
+            if (hi(i) <= lo(i)) then
+                c = 0.5_dp*(lo(i) + hi(i))
+                lo(i) = c - 0.5_dp
+                hi(i) = c + 0.5_dp
+            end if
+            d = hi(i) - lo(i)
+            lo(i) = lo(i) - MARG(i)*d
+            hi(i) = hi(i) + MARG(i)*d
+            c = 0.5_dp*(lo(i) + hi(i))
+            lo(i) = c + (lo(i) - c)*25.0_dp/24.0_dp
+            hi(i) = c + (hi(i) - c)*25.0_dp/24.0_dp
+            lims(2*i - 1) = lo(i)
+            lims(2*i) = hi(i)
+        end do
+
+        ! Limits set by hand get none of that: they are taken as given.
+        if (a%xlim_set) lims(1:2) = [a%xmin_user, a%xmax_user]
+        if (a%ylim_set) lims(3:4) = [a%ymin_user, a%ymax_user]
+        if (a%zlim_set) lims(5:6) = [a%zmin_user, a%zmax_user]
+    end subroutine limits3d
+
+    ! A data point to device points, with the projected depth alongside.
+    subroutine dev3(M, bl, bt, side, x, y, z, ux, uy, uz)
+        real(dp), intent(in) :: M(4, 4), bl, bt, side, x, y, z
+        real(dp), intent(out) :: ux, uy, uz
+        real(dp) :: px, py, span
+
+        call proj3d_point(M, x, y, z, px, py, uz)
+        span = PROJ3D_VIEW_MAX - PROJ3D_VIEW_MIN
+        ux = bl + (px - PROJ3D_VIEW_MIN)/span*side
+        uy = bt + (PROJ3D_VIEW_MAX - py)/span*side
+    end subroutine dev3
+
+    ! Push a point away from the middle of the box along every axis but
+    ! one, which is how mplot3d keeps tick and axis labels clear of the box.
+    pure function move_out(p, centers, d, keep) result(q)
+        real(dp), intent(in) :: p(3), centers(3), d(3)
+        integer, intent(in) :: keep
+        real(dp) :: q(3)
+        integer :: j
+
+        q = p
+        do j = 1, 3
+            if (j == keep) cycle
+            if (p(j) < centers(j)) then
+                q(j) = p(j) - d(j)
+            else
+                q(j) = p(j) + d(j)
+            end if
+        end do
+    end function move_out
+
+    ! Order 1..n so that key decreases: the painter's algorithm needs the
+    ! far things first. Insertion sort, because n is a few thousand faces
+    ! at worst and the sort is not what costs.
+    pure subroutine order_far_first(key, n, idx)
+        real(dp), intent(in) :: key(:)
+        integer, intent(in) :: n
+        integer, intent(out) :: idx(:)
+        integer :: i, j, t
+
+        do i = 1, n
+            idx(i) = i
+        end do
+        do i = 2, n
+            t = idx(i)
+            j = i - 1
+            do while (j >= 1)
+                if (key(idx(j)) >= key(t)) exit
+                idx(j + 1) = idx(j)
+                j = j - 1
+            end do
+            idx(j + 1) = t
+        end do
+    end subroutine order_far_first
+
+    subroutine render_axes3d(b, a, ax_l, ax_r, ax_b, ax_t)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: ax_l, ax_r, ax_b, ax_t
+        ! The six faces of the box as corner numbers: the two x faces, then
+        ! the two y faces, then the two z faces.
+        integer, parameter :: PLANES(4, 6) = reshape([ &
+                                             1, 4, 8, 5, 2, 3, 7, 6, &
+                                             1, 2, 6, 5, 4, 3, 7, 8, &
+                                             1, 2, 3, 4, 5, 6, 7, 8], [4, 6])
+        ! The rcParams axes3d.*axis.panecolor greys.
+        character(len=7), parameter :: PANE(3) = ["#f2f2f2", "#e6e6e6", "#ececec"]
+        ! Which coordinate a tick mark runs along, per axis.
+        integer, parameter :: TICKDIR(3) = [2, 1, 1]
+        ! The two coordinates that pin each axis line to an edge of the box.
+        integer, parameter :: JUG(2, 3) = reshape([2, 1, 1, 2, 1, 3], [2, 3])
+        real(dp) :: lims(6), M(4, 4), side, bl, bt
+        real(dp) :: ccx(8), ccy(8), ccz(8), dx(8), dy(8), dz(8)
+        real(dp) :: mins(3), maxs(3), centers(3), deltas(3), minmax(3), maxmin(3)
+        real(dp) :: e1(3), e2(3), p(3), q(3), lab_d(3), tick_d(3)
+        real(dp) :: gx(3), gy(3), gd(3), ex(2), ey(2), tx(2), ty(2), td2
+        real(dp) :: tk(MAX_TICKS, 3), none(MAX_TICKS)
+        integer :: ntk(3), dec(3)
+        real(dp) :: dpp, tdel, t_out, t_in, ang, fs
+        logical :: highs(3)
+        integer :: i, k, j1, j2, pl, td, ln, du
+        character(len=64) :: lbl
+        character(len=256) :: axl
+        type(scale_t) :: lin
+
+        ! mplot3d squares the axes box before drawing, so that the picture
+        ! does not stretch when the figure does.
+        side = min(ax_r - ax_l, ax_b - ax_t)
+        bl = 0.5_dp*(ax_l + ax_r) - 0.5_dp*side
+        bt = 0.5_dp*(ax_t + ax_b) - 0.5_dp*side
+
+        call limits3d(a, lims)
+        call proj3d_matrix(lims, a%elev, a%azim, M)
+        do i = 1, 3
+            mins(i) = lims(2*i - 1)
+            maxs(i) = lims(2*i)
+        end do
+        centers = 0.5_dp*(mins + maxs)
+        deltas = 0.08_dp*(maxs - mins)
+
+        ccx = [lims(1), lims(2), lims(2), lims(1), lims(1), lims(2), lims(2), lims(1)]
+        ccy = [lims(3), lims(3), lims(4), lims(4), lims(3), lims(3), lims(4), lims(4)]
+        ccz = [lims(5), lims(5), lims(5), lims(5), lims(6), lims(6), lims(6), lims(6)]
+        do k = 1, 8
+            call dev3(M, bl, bt, side, ccx(k), ccy(k), ccz(k), dx(k), dy(k), dz(k))
+        end do
+
+        ! Of each pair of parallel faces, the one further from the camera is
+        ! the one that gets a pane and a grid.
+        do i = 1, 3
+            highs(i) = sum(dz(PLANES(:, 2*i - 1)))/4.0_dp < sum(dz(PLANES(:, 2*i)))/4.0_dp
+            if (highs(i)) then
+                minmax(i) = maxs(i)
+                maxmin(i) = mins(i)
+            else
+                minmax(i) = mins(i)
+                maxmin(i) = maxs(i)
+            end if
+        end do
+
+        do i = 1, 3
+            pl = 2*i - 1
+            if (highs(i)) pl = 2*i
+            call append_polygon(b, dx(PLANES(:, pl)), dy(PLANES(:, pl)), 4, &
+                                PANE(i), 0.5_dp, .true.)
+        end do
+
+        ! x and y run across the picture and z up it, so x and y are spaced
+        ! as a horizontal axis is and z as a vertical one.
+        none = 0.0_dp
+        call axis_ticks(a%n_xticks, a%xtick_pos, lims(1), lims(2), lin, &
+                        tick_space(side, a%xtick_size, .true.), .false., tk(:, 1), ntk(1), du)
+        call axis_ticks(a%n_yticks, a%ytick_pos, lims(3), lims(4), lin, &
+                        tick_space(side, a%ytick_size, .true.), .false., tk(:, 2), ntk(2), du)
+        call axis_ticks(0, none, lims(5), lims(6), lin, &
+                        tick_space(side, a%xtick_size, .false.), .false., tk(:, 3), ntk(3), du)
+        do i = 1, 3
+            dec(i) = axis_decimals(tk(:, i), ntk(i), lin)
+        end do
+
+        if (a%grid_on) then
+            do i = 1, 3
+                ! A grid line runs from the far edge of one pane, through
+                ! the corner where the two panes meet, to the far edge of
+                ! the other.
+                j1 = mod(i, 3) + 1
+                j2 = mod(i + 1, 3) + 1
+                do k = 1, ntk(i)
+                    if (tk(k, i) < mins(i) .or. tk(k, i) > maxs(i)) cycle
+                    p = minmax
+                    p(i) = tk(k, i)
+                    q = p
+                    q(j1) = maxmin(j1)
+                    call dev3(M, bl, bt, side, q(1), q(2), q(3), gx(1), gy(1), gd(1))
+                    call dev3(M, bl, bt, side, p(1), p(2), p(3), gx(2), gy(2), gd(2))
+                    q = p
+                    q(j2) = maxmin(j2)
+                    call dev3(M, bl, bt, side, q(1), q(2), q(3), gx(3), gy(3), gd(3))
+                    call append_stroke_path(b, gx, gy, 3, rc_grid_color, rc_grid_lw, 1.0_dp)
+                end do
+            end do
+        end if
+
+        ! What one point is worth in data units. A 3D axes has no one
+        ! direction to measure a point along, so mplot3d averages the two
+        ! sides of the box, and so do we.
+        dpp = 48.0_dp/(2.0_dp*side)
+        tick_d = (3.5_dp + 8.0_dp)*dpp*deltas
+        lab_d = (LABEL_PAD + 21.0_dp)*dpp*deltas
+
+        do i = 1, 3
+            fs = a%xtick_size
+            e1 = minmax
+            e1(JUG(1, i)) = maxmin(JUG(1, i))
+            e2 = e1
+            e2(JUG(2, i)) = maxmin(JUG(2, i))
+            call dev3(M, bl, bt, side, e1(1), e1(2), e1(3), ex(1), ey(1), td2)
+            call dev3(M, bl, bt, side, e2(1), e2(2), e2(3), ex(2), ey(2), td2)
+            call append_stroke_path(b, ex, ey, 2, rc_spine_color, rc_spine_lw, 1.0_dp)
+
+            td = TICKDIR(i)
+            tdel = deltas(td)
+            if (.not. highs(td)) tdel = -tdel
+            t_out = e1(td) + 0.1_dp*tdel
+            t_in = e1(td) - 0.2_dp*tdel
+
+            do k = 1, ntk(i)
+                if (tk(k, i) < mins(i) .or. tk(k, i) > maxs(i)) cycle
+                q = e1
+                q(i) = tk(k, i)
+                q(td) = t_out
+                call dev3(M, bl, bt, side, q(1), q(2), q(3), tx(1), ty(1), td2)
+                q(td) = t_in
+                call dev3(M, bl, bt, side, q(1), q(2), q(3), tx(2), ty(2), td2)
+                call append_stroke_path(b, tx, ty, 2, rc_spine_color, 0.8_dp, 1.0_dp)
+
+                q(td) = e1(td)
+                q = move_out(q, centers, tick_d, i)
+                call dev3(M, bl, bt, side, q(1), q(2), q(3), tx(1), ty(1), td2)
+                ! All three axes label their ticks the way an x axis does:
+                ! centred, and hanging from the top of the text.
+                call format_tick_fixed(tk(k, i), dec(i), lbl, ln)
+                call append_text(b, tx(1), ty(1) + 0.76_dp*fs, lbl(1:ln), &
+                                 "center", fs, rc_text_color)
+            end do
+
+            axl = ""
+            if (i == 1) axl = a%xlabel
+            if (i == 2) axl = a%ylabel
+            if (i == 3) axl = a%zlabel
+            if (len_trim(axl) == 0) cycle
+            q = move_out(0.5_dp*(e1 + e2), centers, lab_d, i)
+            call dev3(M, bl, bt, side, q(1), q(2), q(3), tx(1), ty(1), td2)
+            ! A short label stays upright; a long one is turned to lie along
+            ! its own axis, which is where matplotlib draws the line too.
+            ang = 0.0_dp
+            if (len_trim(axl) > 4) ang = atan2(ey(1) - ey(2), ex(2) - ex(1))*180.0_dp/PI
+            call append_text(b, tx(1), ty(1) + 0.36_dp*a%xlabel_size, trim(axl), &
+                             "center", a%xlabel_size, rc_text_color, ang)
+        end do
+
+        call render_series3d(b, a, M, bl, bt, side)
+
+        if (len_trim(a%title) > 0) &
+            call append_text(b, bl + 0.5_dp*side, bt - 0.5_dp*a%title_size, &
+                             trim(a%title), "center", a%title_size, rc_text_color)
+    end subroutine render_axes3d
+
+    subroutine render_series3d(b, a, M, bl, bt, side)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: M(4, 4), bl, bt, side
+        real(dp), allocatable :: px(:), py(:), pd(:)
+        integer, allocatable :: idx(:)
+        real(dp) :: sat, lo, span, one(1), oney(1)
+        integer :: i, k, n
+        type(paint_t) :: p
+
+        do i = 1, a%n_series
+            n = a%series(i)%n
+            select case (a%series(i)%kind)
+            case (SERIES_LINE3D)
+                allocate (px(n), py(n), pd(n))
+                do k = 1, n
+                    call dev3(M, bl, bt, side, a%series(i)%x(k), a%series(i)%y(k), &
+                              a%series(i)%z(k), px(k), py(k), pd(k))
+                end do
+                if (a%series(i)%linestyle /= LINE_NONE) then
+                    p = pen(a%series(i)%color, a%series(i)%linewidth, &
+                            a%series(i)%alpha, a%series(i)%linestyle)
+                    call b%draw_path(px, py, line_verbs(n), n, p)
+                end if
+                call append_markers(b, a%series(i)%marker, px, py, n, &
+                                    a%series(i)%markersize, a%series(i)%color, &
+                                    a%series(i)%alpha)
+                deallocate (px, py, pd)
+            case (SERIES_SCATTER3D)
+                allocate (px(n), py(n), pd(n), idx(n))
+                do k = 1, n
+                    call dev3(M, bl, bt, side, a%series(i)%x(k), a%series(i)%y(k), &
+                              a%series(i)%z(k), px(k), py(k), pd(k))
+                end do
+                call order_far_first(pd, n, idx)
+                ! Depth shading: the further a point is, the more it fades
+                ! into the background, down to three tenths opacity.
+                lo = minval(pd)
+                span = sqrt((maxval(px) - minval(px))**2 + (maxval(py) - minval(py))**2 &
+                            + (maxval(pd) - lo)**2)
+                do k = 1, n
+                    sat = 1.0_dp
+                    if (span > 0.0_dp) sat = 1.0_dp - (pd(idx(k)) - lo)/span
+                    sat = max(0.3_dp, min(1.0_dp, sat))
+                    one(1) = px(idx(k))
+                    oney(1) = py(idx(k))
+                    call append_markers(b, a%series(i)%marker, one, oney, 1, &
+                                        a%series(i)%markersize, a%series(i)%color, &
+                                        a%series(i)%alpha*sat)
+                end do
+                deallocate (px, py, pd, idx)
+            case (SERIES_SURFACE)
+                call render_surface(b, a%series(i), M, bl, bt, side)
+            end select
+        end do
+    end subroutine render_series3d
+
+    ! One quadrilateral per cell of the grid, lit by matplotlib's default
+    ! light source and painted back to front.
+    subroutine render_surface(b, s, M, bl, bt, side)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: M(4, 4), bl, bt, side
+        ! LightSource(azdeg=225, altdeg=19.4712), as a direction.
+        real(dp), parameter :: AZ = (90.0_dp - 225.0_dp)*PI/180.0_dp
+        real(dp), parameter :: ALT = 19.4712_dp*PI/180.0_dp
+        real(dp) :: dir(3)
+        real(dp), allocatable :: fx(:, :), fy(:, :), depth(:)
+        integer, allocatable :: idx(:)
+        real(dp) :: cx(4), cy(4), cz(4), ux, uy, uz, v1(3), v2(3), nrm(3), nl, shade
+        integer :: nx, ny, nf, f, i, j, c, rgb(3)
+        character(len=7) :: col
+
+        dir = [cos(AZ)*cos(ALT), sin(AZ)*cos(ALT), sin(ALT)]
+        nx = size(s%x)
+        ny = size(s%y)
+        nf = (nx - 1)*(ny - 1)
+        if (nf <= 0) return
+        allocate (fx(4, nf), fy(4, nf), depth(nf), idx(nf))
+        rgb = hex_rgb(s%color)
+
+        f = 0
+        do j = 1, ny - 1
+            do i = 1, nx - 1
+                f = f + 1
+                ! The perimeter of the cell, anticlockwise in index space.
+                cx = [s%x(i), s%x(i + 1), s%x(i + 1), s%x(i)]
+                cy = [s%y(j), s%y(j), s%y(j + 1), s%y(j + 1)]
+                cz = [s%zg(j, i), s%zg(j, i + 1), s%zg(j + 1, i + 1), s%zg(j + 1, i)]
+                depth(f) = 0.0_dp
+                do c = 1, 4
+                    call dev3(M, bl, bt, side, cx(c), cy(c), cz(c), ux, uy, uz)
+                    fx(c, f) = ux
+                    fy(c, f) = uy
+                    depth(f) = depth(f) + 0.25_dp*uz
+                end do
+            end do
+        end do
+
+        call order_far_first(depth, nf, idx)
+
+        f = 0
+        do j = 1, ny - 1
+            do i = 1, nx - 1
+                f = f + 1
+                cx = [s%x(i), s%x(i + 1), s%x(i + 1), s%x(i)]
+                cy = [s%y(j), s%y(j), s%y(j + 1), s%y(j + 1)]
+                cz = [s%zg(j, i), s%zg(j, i + 1), s%zg(j + 1, i + 1), s%zg(j + 1, i)]
+                v1 = [cx(1) - cx(2), cy(1) - cy(2), cz(1) - cz(2)]
+                v2 = [cx(2) - cx(3), cy(2) - cy(3), cz(2) - cz(3)]
+                nrm = [v1(2)*v2(3) - v1(3)*v2(2), v1(3)*v2(1) - v1(1)*v2(3), &
+                       v1(1)*v2(2) - v1(2)*v2(1)]
+                nl = sqrt(sum(nrm**2))
+                shade = 0.0_dp
+                if (nl > 0.0_dp) shade = dot_product(nrm/nl, dir)
+                depth(f) = 0.3_dp + 0.7_dp*(shade + 1.0_dp)/2.0_dp
+            end do
+        end do
+
+        do f = 1, nf
+            ! depth now carries the lighting factor for each face, and idx
+            ! the order to paint them in.
+            col = "#"//hex_pair(nint(rgb(1)*depth(idx(f)))) &
+                  //hex_pair(nint(rgb(2)*depth(idx(f)))) &
+                  //hex_pair(nint(rgb(3)*depth(idx(f))))
+            call append_polygon(b, fx(:, idx(f)), fy(:, idx(f)), 4, col, s%alpha, .true.)
+        end do
+        deallocate (fx, fy, depth, idx)
+    end subroutine render_surface
+
+    pure subroutine polar_circle(cx, cy, r, px, py)
+        real(dp), intent(in) :: cx, cy, r
+        real(dp), intent(out) :: px(:), py(:)
+        integer :: i, n
+        real(dp) :: t
+
+        n = size(px) - 1
+        do i = 1, n + 1
+            t = 2.0_dp*PI*real(i - 1, dp)/real(n, dp)
+            px(i) = cx + r*cos(t)
+            py(i) = cy - r*sin(t)
+        end do
+    end subroutine polar_circle
 
     subroutine render_axes(b, a, idx, W, H, clear)
         class(renderer_t), intent(inout) :: b
@@ -3289,6 +7255,7 @@ contains
         real(dp) :: xminor(MAX_MINOR), yminor(MAX_MINOR)
         real(dp) :: span_x, span_y, sc, new_w, new_h
         integer :: nxt, nyt, nxm, nym, i, j, n, nl
+        integer :: x_unit, y_unit
         real(dp) :: px, py, ms, r, mid
         real(dp) :: x_edge, x_out, y_edge, y_out
         character(len=64) :: lbl
@@ -3308,6 +7275,16 @@ contains
         ax_t = (1.0_dp - a%top) * H
         ax_w = ax_r - ax_l
         ax_h = ax_b - ax_t
+
+        if (a%polar) then
+            call render_polar(b, a, ax_l, ax_r, ax_b, ax_t)
+            return
+        end if
+
+        if (a%is3d) then
+            call render_axes3d(b, a, ax_l, ax_r, ax_b, ax_t)
+            return
+        end if
 
         call compute_limits(a, xmin, xmax, ymin, ymax)
 
@@ -3340,9 +7317,12 @@ contains
         xsc = a%xsc
         ysc = a%ysc
 
-        call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xsc, xticks, nxt)
+        call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xsc, &
+                        tick_space(ax_w, a%xtick_size, .true.), a%x_date, &
+                        xticks, nxt, x_unit)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        ysc, yticks, nyt)
+                        ysc, tick_space(ax_h, a%ytick_size, .false.), a%y_date, &
+                        yticks, nyt, y_unit)
         if (a%minor_ticks) then
             call minor_positions(xticks, nxt, xmin, xmax, xsc, xminor, nxm)
             call minor_positions(yticks, nyt, ymin, ymax, ysc, yminor, nym)
@@ -3361,19 +7341,19 @@ contains
 
         ! axes face
         if (.not. clear .and. .not. a%patch_off) then
-            call append_rect(b, ax_l, ax_t, ax_w, ax_h, "#ffffff")
+            call append_rect(b, ax_l, ax_t, ax_w, ax_h, rc_axes_face)
         end if
 
         ! grid
         if (a%grid_on) then
             do i = 1, nxt
                 px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
-                call append_line(b, px, ax_t, px, ax_b, "#b0b0b0", 0.8_dp, &
+                call append_line(b, px, ax_t, px, ax_b, rc_grid_color, rc_grid_lw, &
                                  LINE_SOLID, 1.0_dp)
             end do
             do i = 1, nyt
                 py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
-                call append_line(b, ax_l, py, ax_r, py, "#b0b0b0", 0.8_dp, &
+                call append_line(b, ax_l, py, ax_r, py, rc_grid_color, rc_grid_lw, &
                                  LINE_SOLID, 1.0_dp)
             end do
         end if
@@ -3455,6 +7435,42 @@ contains
                                  trim(a%series(i)%color), a%series(i)%linewidth, &
                                  a%series(i)%linestyle, a%series(i)%alpha)
                 cycle
+            case (SERIES_HLINES)
+                do j = 1, n
+                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc)
+                    call append_line(b, &
+                        map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc), py, &
+                        map_x(a%series(i)%y2(j), xmin, xmax, ax_l, ax_w, xsc), py, &
+                        trim(a%series(i)%color), a%series(i)%linewidth, &
+                        a%series(i)%linestyle, a%series(i)%alpha)
+                end do
+                cycle
+            case (SERIES_VLINES)
+                do j = 1, n
+                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
+                    call append_line(b, px, &
+                        map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc), px, &
+                        map_y(a%series(i)%y2(j), ymin, ymax, ax_b, ax_h, ysc), &
+                        trim(a%series(i)%color), a%series(i)%linewidth, &
+                        a%series(i)%linestyle, a%series(i)%alpha)
+                end do
+                cycle
+            case (SERIES_PATCH)
+                call append_patch(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                  ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+                cycle
+            case (SERIES_QUIVER)
+                call append_quiver(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                   ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+                cycle
+            case (SERIES_ARROWHEAD)
+                call append_arrowheads(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                       ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+                cycle
+            case (SERIES_HSPAN, SERIES_VSPAN)
+                call append_span(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                 ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+                cycle
             case (SERIES_ERRORBAR)
                 do j = 1, n
                     call append_errorbar(b, a%series(i), j, xmin, xmax, ymin, ymax, &
@@ -3520,7 +7536,7 @@ contains
         ! them alone renders exactly as it did before they could be hidden.
         if (.not. a%frame_off) then
             if (all(a%spine)) then
-                call b%draw_rect(ax_l, ax_t, ax_w, ax_h, pen("#000000", 0.8_dp))
+                call b%draw_rect(ax_l, ax_t, ax_w, ax_h, pen(rc_spine_color, rc_spine_lw))
             else
                 if (a%spine(SPINE_LEFT)) call append_spine(b, ax_l, ax_t, ax_l, ax_b)
                 if (a%spine(SPINE_RIGHT)) call append_spine(b, ax_r, ax_t, ax_r, ax_b)
@@ -3545,10 +7561,13 @@ contains
         do i = 1, nxt
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
             call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, a%xtick_len)
-            call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, lbl, ln)
-            call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
-                                  merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
-                                  a%xtick_size, a%xtick_rot)
+            if (.not. a%xticklabels_off) then
+                call tick_label(a%xtick_labeled, a%xtick_lab, i, xticks(i), xsc, &
+                                axis_decimals(xticks, nxt, xsc), x_unit, lbl, ln)
+                call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
+                                      merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), "center", &
+                                      a%xtick_size, a%xtick_rot)
+            end if
         end do
         do i = 1, nxm
             px = map_x(xminor(i), xmin, xmax, ax_l, ax_w, xsc)
@@ -3568,10 +7587,13 @@ contains
         do i = 1, nyt
             py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
             call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, a%ytick_len)
-            call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, lbl, ln)
-            call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, lbl(1:ln), &
-                                  merge("left ", "right", a%y_right), &
-                                  a%ytick_size, a%ytick_rot)
+            if (.not. a%yticklabels_off) then
+                call tick_label(a%ytick_labeled, a%ytick_lab, i, yticks(i), ysc, &
+                                axis_decimals(yticks, nyt, ysc), y_unit, lbl, ln)
+                call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, lbl(1:ln), &
+                                      merge("left ", "right", a%y_right), &
+                                      a%ytick_size, a%ytick_rot)
+            end if
         end do
         do i = 1, nym
             py = map_y(yminor(i), ymin, ymax, ax_b, ax_h, ysc)
@@ -3583,16 +7605,15 @@ contains
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_b + xtick_gap(a) + 0.24_dp * a%xtick_size + 1.84_dp &
                              + 0.76_dp * a%xlabel_size, trim(a%xlabel), &
-                             "center", a%xlabel_size, "#000000")
+                             "center", a%xlabel_size, rc_text_color)
         end if
 
         if (len_trim(a%ylabel) > 0) then
             ! The right-hand label of a twinx faces the other way, so that it
             ! reads from outside the axes just as the left-hand one does.
-            mid = y_edge + y_out * (34.0_dp + 0.76_dp * (a%ylabel_size - LABEL_FONT) &
-                                    + 1.15_dp * (a%ytick_size - TICK_FONT))
+            mid = y_edge + y_out * ylabel_out(a)
             call append_text(b, mid, 0.5_dp*(ax_t + ax_b), trim(a%ylabel), &
-                             "center", a%ylabel_size, "#000000", &
+                             "center", a%ylabel_size, rc_text_color, &
                              merge(-90.0_dp, 90.0_dp, a%y_right))
         end if
 
@@ -3600,7 +7621,7 @@ contains
         if (len_trim(a%title) > 0) then
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_t - 0.5_dp * a%title_size, trim(a%title), &
-                             "center", a%title_size, "#000000")
+                             "center", a%title_size, rc_text_color)
         end if
 
 
@@ -3639,12 +7660,12 @@ contains
                     call append_text(b, leg_x + 0.5_dp * leg_w, &
                                      leg_y + 4.0_dp + 0.5_dp * row_h + 3.5_dp, &
                                      trim(a%legend_title), "center", &
-                                     a%legend_size, "#000000")
+                                     a%legend_size, rc_text_color)
                 end if
                 if (a%legend_frame) then
-                    pnt = brush("#ffffff")
+                    pnt = brush(rc_legend_face)
                     pnt%stroked = .true.
-                    pnt%stroke_rgb = hex_rgb("#cccccc")
+                    pnt%stroke_rgb = hex_rgb(rc_legend_edge)
                     pnt%line_width = 0.8_dp
                     call b%draw_rect(leg_x, leg_y, leg_w, leg_h, pnt, 2.0_dp)
                 end if
@@ -3657,7 +7678,15 @@ contains
                     lr = k - 1 - lc * n_row
                     leg_x = leg_x0 + real(lc, dp) * col_w
                     py = leg_y + 4.0_dp + ttl_h + (real(lr, dp) + 0.5_dp) * row_h
-                    if (a%series(i)%linestyle /= LINE_NONE) then
+                    if (is_patch_series(a%series(i)%kind)) then
+                        ! Anything filled shows a swatch, not a line: a bar
+                        ! or a band has no line to show.
+                        call append_rect(b, leg_x + 8.0_dp, &
+                                         py - 0.35_dp*a%legend_size, 20.0_dp, &
+                                         0.7_dp*a%legend_size, &
+                                         point_color(a%series(i), 1), &
+                                         a%series(i)%alpha)
+                    else if (a%series(i)%linestyle /= LINE_NONE) then
                         call append_line(b, leg_x + 8.0_dp, py, leg_x + 28.0_dp, py, &
                                          trim(a%series(i)%color), &
                                          a%series(i)%linewidth, &
@@ -3671,10 +7700,12 @@ contains
                     end if
                     call append_text(b, leg_x + 34.0_dp, py + 3.5_dp, &
                                      trim(a%series(i)%label), &
-                                     "left", a%legend_size, "#000000")
+                                     "left", a%legend_size, rc_text_color)
                 end do
             end if
         end if
+
+        call render_table(b, a, ax_l, ax_w, ax_b, ax_h)
     end subroutine render_axes
 
     ! Draw the whole figure into any backend. Everything above this point is
@@ -3695,7 +7726,7 @@ contains
         clear = .false.
         if (present(transparent)) clear = transparent
         face = resolve_color(facecolor)
-        if (len_trim(face) == 0) face = "#ffffff"
+        if (len_trim(face) == 0) face = rc_fig_face
         call clear_clip()
 
         W = fig_w_in*PT_PER_IN
@@ -3748,7 +7779,7 @@ contains
         if (len_trim(fig_suptitle) > 0) then
             call append_text(b, 0.5_dp*W, (1.0_dp - SUPTITLE_Y)*H + 4.2_dp, &
                              trim(fig_suptitle), "center", fig_suptitle_size, &
-                             "#000000")
+                             rc_text_color)
         end if
 
         call b%close_canvas()
@@ -3776,6 +7807,16 @@ contains
 
     ! Unlike the vector formats, dpi is not decorative here: it is what
     ! decides how many pixels the figure is rasterized into.
+    function render_eps(facecolor, transparent, bbox_inches, pad_inches) result(eps)
+        character(len=*), intent(in), optional :: facecolor, bbox_inches
+        logical, intent(in), optional :: transparent
+        real(dp), intent(in), optional :: pad_inches
+        character(len=:), allocatable :: eps
+        type(eps_renderer_t) :: r
+        call render_figure(r, facecolor, transparent, bbox_inches, pad_inches)
+        eps = r%bytes()
+    end function render_eps
+
     function render_png(facecolor, transparent, bbox_inches, pad_inches) result(png)
         character(len=*), intent(in), optional :: facecolor, bbox_inches
         logical, intent(in), optional :: transparent
@@ -3809,7 +7850,7 @@ contains
     subroutine reject_ext(filename)
         character(len=*), intent(in) :: filename
         print *, "fplot: cannot write ", trim(filename)
-        print *, "fplot: supported formats are .svg, .pdf and .png, not ." &
+        print *, "fplot: supported formats are .svg, .pdf, .eps and .png, not ." &
             //file_ext(filename)
         error stop "fplot: unsupported savefig format"
     end subroutine reject_ext
@@ -3836,7 +7877,6 @@ contains
         character(len=*), intent(in), optional :: facecolor, bbox_inches
         real(dp), intent(in), optional :: dpi, pad_inches
         character(len=:), allocatable :: svg
-        integer :: u, ios, n
         real(dp) :: saved_dpi
 
         ! dpi given here applies to this file only, as it does in matplotlib;
@@ -3853,12 +7893,20 @@ contains
             svg = render_pdf(facecolor, transparent, bbox_inches, pad_inches)
         case ("png")
             svg = render_png(facecolor, transparent, bbox_inches, pad_inches)
+        case ("eps")
+            svg = render_eps(facecolor, transparent, bbox_inches, pad_inches)
         case default
             call reject_ext(filename)
             return
         end select
         fig_dpi = saved_dpi
-        n = len(svg)
+        call write_bytes(filename, svg)
+    end subroutine savefig
+
+    subroutine write_bytes(filename, data)
+        character(len=*), intent(in) :: filename, data
+        integer :: u, ios
+
         open (newunit=u, file=trim(filename), status="replace", action="write", &
               form="unformatted", access="stream", iostat=ios)
         if (ios /= 0) then
@@ -3869,13 +7917,100 @@ contains
                 print *, "fplot: failed to open ", trim(filename)
                 return
             end if
-            write (u, "(A)") svg
+            write (u, "(A)") data
             close (u)
             return
         end if
-        if (n > 0) write (u) svg
+        if (len(data) > 0) write (u) data
         close (u)
-    end subroutine savefig
+    end subroutine write_bytes
+
+    ! ------------------------------------------------------------------
+    ! Animation. matplotlib builds an Animation object around a callback;
+    ! Fortran has loops, so the loop stays in the caller and each pass adds
+    ! the figure as it stands to the reel.
+    ! ------------------------------------------------------------------
+
+    subroutine add_frame(facecolor, dpi)
+        character(len=*), intent(in), optional :: facecolor
+        real(dp), intent(in), optional :: dpi
+        type(png_renderer_t) :: r
+        real(dp) :: saved_dpi
+
+        saved_dpi = fig_dpi
+        if (present(dpi)) fig_dpi = dpi
+        r%keep_pixels = .true.
+        call r%set_dpi(fig_dpi)
+        call render_figure(r, facecolor)
+        fig_dpi = saved_dpi
+
+        if (anim_n > 0) then
+            if (r%pw /= anim_w .or. r%ph /= anim_h) then
+                print *, "fplot: add_frame ignored, frame size changed"
+                return
+            end if
+        end if
+        anim_w = r%pw
+        anim_h = r%ph
+        call anim_append(r%rgb)
+        anim_n = anim_n + 1
+    end subroutine add_frame
+
+    subroutine anim_append(frame)
+        character(len=*), intent(in) :: frame
+        character(len=:), allocatable :: bigger
+        integer :: cap, need
+
+        need = anim_len + len(frame)
+        cap = 0
+        if (allocated(anim_pix)) cap = len(anim_pix)
+        if (cap < need) then
+            cap = max(2*cap, need)
+            allocate (character(len=cap) :: bigger)
+            if (anim_len > 0) bigger(1:anim_len) = anim_pix(1:anim_len)
+            call move_alloc(bigger, anim_pix)
+        end if
+        anim_pix(anim_len + 1:need) = frame
+        anim_len = need
+    end subroutine anim_append
+
+    ! Writes the frames collected so far and starts a new reel, so that a
+    ! program can make several animations without a reset call.
+    subroutine save_animation(filename, fps, loop)
+        character(len=*), intent(in) :: filename
+        real(dp), intent(in), optional :: fps
+        logical, intent(in), optional :: loop
+        real(dp) :: rate
+        logical :: rep
+        integer :: delay
+
+        if (anim_n == 0) then
+            print *, "fplot: no frames; call add_frame before save_animation"
+            return
+        end if
+        if (file_ext(filename) /= "gif") then
+            print *, "fplot: save_animation writes .gif, not .", file_ext(filename)
+            return
+        end if
+        rate = 5.0_dp
+        if (present(fps)) then
+            if (fps <= 0.0_dp) error stop "fplot: save_animation fps must be positive"
+            rate = fps
+        end if
+        rep = .true.
+        if (present(loop)) rep = loop
+
+        ! GIF counts delays in hundredths of a second and viewers treat 0 as
+        ! "as fast as you like", so a frame never asks for less than one.
+        delay = max(1, nint(100.0_dp/rate))
+        call write_bytes(filename, gif_encode(anim_w, anim_h, anim_n, &
+                                              anim_pix(1:anim_len), delay, rep))
+        anim_n = 0
+        anim_w = 0
+        anim_h = 0
+        anim_len = 0
+        deallocate (anim_pix)
+    end subroutine save_animation
 
     subroutine show()
         ! File backend. In LFortran Jupyter notebooks, prefer:

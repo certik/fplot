@@ -32,7 +32,12 @@ TTF = (
     / "DejaVuSans.ttf"
 )
 
-FIRST, LAST = 32, 126
+# ASCII, and then the Latin-1 places that carry a symbol worth having:
+# the degree sign a polar axes labels its angles with, and the few others
+# that turn up in axis labels. The gaps between them are left empty, which
+# costs four numbers each and keeps the table a plain contiguous lookup.
+FIRST, LAST = 32, 255
+KEEP = set(range(32, 127)) | {0xB0, 0xB1, 0xB5, 0xD7, 0xF7}
 
 VERB_MOVE, VERB_LINE, VERB_CUBIC, VERB_CLOSE = 1, 2, 3, 4
 
@@ -132,6 +137,12 @@ def main() -> None:
     vbeg, vlen, pbeg, adv = [], [], [], []
 
     for code in range(FIRST, LAST + 1):
+        if code not in KEEP:
+            vbeg.append(len(all_verbs) + 1)
+            vlen.append(0)
+            pbeg.append(len(all_x) + 1)
+            adv.append(0)
+            continue
         name = cmap.get(code)
         if name is None:
             raise SystemExit(f"DejaVu Sans has no glyph for U+{code:04X}")

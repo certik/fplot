@@ -33,3 +33,7 @@ jobs:
         run: pixi run compare-png
       - name: Compare PDF output against matplotlib
         run: pixi run compare-pdf
+      - name: Compare EPS output against matplotlib
+        run: pixi run compare-eps
+      - name: Compare GIF output against matplotlib
+        run: pixi run compare-gif

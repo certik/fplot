@@ -161,9 +161,18 @@ contains
                 out(n+1:n+6) = "&quot;"
                 n = n + 6
             case default
-                if (n + 1 > len(out)) exit
-                n = n + 1
-                out(n:n) = c
+                ! A byte past ASCII is a Latin-1 symbol such as the degree
+                ! sign. XML is read as UTF-8, so it goes out as a character
+                ! reference rather than as the raw byte.
+                if (iachar(c) > 126) then
+                    if (n + 6 > len(out)) exit
+                    write (out(n+1:n+6), "(A2,I3,A1)") "&#", iachar(c), ";"
+                    n = n + 6
+                else
+                    if (n + 1 > len(out)) exit
+                    n = n + 1
+                    out(n:n) = c
+                end if
             end select
         end do
     end subroutine xml_escape_to

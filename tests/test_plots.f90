@@ -2,6 +2,9 @@ program test_plots
     use fplot
     implicit none
     integer :: fig1
+    type(axes), allocatable :: axs(:, :)
+    type(axes) :: a1, a2, a3
+    real(dp) :: td(366), yd(366)
 
     integer, parameter :: n = 100
     integer, parameter :: m = 20
@@ -24,14 +27,33 @@ program test_plots
     real(dp) :: xe(ne), ye(ne), ee(ne)
     real(dp), parameter :: xb(nb) = [1.0_dp, 2.0_dp, 3.0_dp, 4.0_dp, 5.0_dp, 6.0_dp]
     real(dp), parameter :: hb(nb) = [3.0_dp, 5.0_dp, 2.0_dp, 7.0_dp, 4.0_dp, 6.0_dp]
+    real(dp), parameter :: hb2(nb) = [1.0_dp, 2.0_dp, 4.0_dp, 1.0_dp, 3.0_dp, 2.0_dp]
+    character(len=8), parameter :: bar_cols(nb) = [ &
+        "red     ", "green   ", "blue    ", "orange  ", "purple  ", "brown   "]
     real(dp), parameter :: xh(nh) = [ &
         0.2_dp, 0.5_dp, 0.7_dp, 1.1_dp, 1.3_dp, 1.4_dp, 1.8_dp, 2.0_dp, 2.1_dp, 2.3_dp, &
         2.4_dp, 2.6_dp, 2.9_dp, 3.0_dp, 3.2_dp, 3.3_dp, 3.7_dp, 4.0_dp, 4.4_dp, 4.9_dp]
     character(len=1), parameter :: mark_codes(n_marks) = &
         ["o", "x", ".", "s", "^", "v", "<", ">", "*", "+", "D"]
-    integer :: i, j
+    integer :: i, j, k
+    integer, parameter :: n3 = 31, nl3 = 100
+    real(dp), parameter :: PI_T = 3.14159265358979323846_dp
+    real(dp) :: s3x(n3), s3y(n3), s3z(n3, n3)
+    real(dp) :: t3(nl3), l3x(nl3), l3y(nl3), l3z(nl3)
+    character(len=8), parameter :: fruit(4) = &
+        ["apple ", "banana", "cherry", "date  "]
+    real(dp), parameter :: hedges(5) = [-3.0_dp, -1.0_dp, 0.0_dp, 1.5_dp, 3.0_dp]
     integer, parameter :: nzr = 8, nzc = 16
-    real(dp) :: zimg(nzr, nzc)
+    real(dp) :: zimg(nzr, nzc), zlog(nzr, nzc)
+    real(dp), parameter :: xedge(nzc + 1) = [ &
+        0.0_dp, 0.5_dp, 1.5_dp, 3.0_dp, 5.0_dp, 8.0_dp, 9.0_dp, 10.0_dp, &
+        11.0_dp, 12.0_dp, 13.0_dp, 14.0_dp, 15.0_dp, 16.0_dp, 17.0_dp, &
+        18.0_dp, 19.0_dp]
+    real(dp) :: qx(64), qy(64), qu(64), qv(64)
+    real(dp) :: hx(500), hy(500), mz(6, 6), ev(40)
+    real(dp) :: sxg(16), syg(16), su(16, 16), sv(16, 16)
+    real(dp), parameter :: yedge(nzr + 1) = [ &
+        0.0_dp, 1.0_dp, 2.0_dp, 4.0_dp, 6.0_dp, 6.5_dp, 7.0_dp, 8.0_dp, 10.0_dp]
     real(dp) :: svals(ns), cvals(ns)
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
@@ -325,6 +347,7 @@ program test_plots
     do i = 1, nzr
         do j = 1, nzc
             zimg(i, j) = sin(0.4_dp * real(j, dp)) + cos(0.5_dp * real(i, dp))
+            zlog(i, j) = 10.0_dp ** (0.5_dp * real(i + j, dp) / 4.0_dp)
         end do
     end do
 
@@ -541,9 +564,340 @@ program test_plots
     call title("imshow on a log axis")
     call save_all("imshow_log")
 
+    ! 45) subplots with axes handles and a shared x axis
+    call subplots(2, 2, axs, sharex=.true.)
+    call axs(1, 1)%plot(x, y, "b-", label="sin")
+    call axs(1, 1)%set_title("one")
+    call axs(1, 1)%legend()
+    call axs(1, 2)%scatter(xs, ys, s=18.0_dp, c="r")
+    call axs(1, 2)%set_title("two")
+    call axs(2, 1)%bar(xb, hb, color="g")
+    call axs(2, 1)%set_xlabel("x")
+    call axs(2, 2)%plot(x, y3, "m--")
+    call axs(2, 2)%grid(.true.)
+    call axs(2, 2)%set_xlabel("x")
+    call suptitle("subplots with handles")
+    call save_all("subplots_shared")
+
+    ! 46) a style sheet
+    call style_use("ggplot")
+    call clf()
+    call plot(x, y, label="sin")
+    call plot(x, y2, label="cos")
+    call title("ggplot style")
+    call xlabel("x")
+    call ylabel("y")
+    call legend()
+    call save_all("style_ggplot")
+    call style_use("default")
+
+    ! 47) spans and line runs
+    call style_use("default")
+    call clf()
+    call plot(x, y, "b-")
+    call axhspan(-0.5_dp, 0.5_dp, color="orange", alpha=0.3_dp)
+    call axvspan(1.0_dp, 2.0_dp, color="green", alpha=0.2_dp)
+    call hlines([-1.0_dp, 1.0_dp], 0.0_dp, 3.0_dp, color="red", linestyle="--")
+    call vlines([4.0_dp, 5.0_dp], -1.0_dp, 0.0_dp, color="purple")
+    call title("spans and line runs")
+    call save_all("spans")
+
+    ! 48) stacked and labelled bars
+    call clf()
+    call bar(xb, hb, width=0.6_dp, color="tab:blue", label="first")
+    call bar(xb, hb2, width=0.6_dp, bottom=hb, color="tab:orange", label="second")
+    call bar_label()
+    call legend()
+    call title("stacked bars")
+    call save_all("bar_stacked")
+
+    ! 49) per-bar colors and horizontal bar labels
+    call clf()
+    call barh(xb, hb, color="k", colors=bar_cols)
+    call bar_label(padding=2.0_dp)
+    call title("bars in their own colors")
+    call save_all("bar_colors")
+
+    ! 50) histogram options
+    call clf()
+    call hist(dist1, bins=12, density=.true., color="tab:blue", alpha=0.6_dp, &
+              label="density")
+    call hist(dist1, bins=12, density=.true., histtype="step", color="k", &
+              label="step")
+    call legend()
+    call title("histogram options")
+    call save_all("hist_opts")
+
+    ! 51) uneven bins, cumulative
+    call clf()
+    call hist(dist1, bin_edges=hedges, cumulative=.true., color="tab:green")
+    call title("uneven bins, cumulative")
+    call save_all("hist_bins")
+
+    ! 52) asymmetric errors in both directions
+    call clf()
+    call errorbar(xe, ye, yerr_lo=ee, yerr_hi=0.5_dp*ee, xerr=0.3_dp*ee, &
+                  fmt="o", color="tab:red", capsize=4.0_dp)
+    call title("asymmetric errors")
+    call save_all("errorbar_xy")
+
+    ! 53) fill_between with a condition
+    call clf()
+    call plot(x, y, "k-")
+    call fill_between(x, y, spread(0.0_dp, 1, n), where=(y > 0.0_dp), &
+                      color="tab:green", alpha=0.4_dp, label="positive")
+    call fill_between(x, y, spread(0.0_dp, 1, n), where=(y < 0.0_dp), &
+                      color="tab:red", alpha=0.4_dp, label="negative")
+    call legend()
+    call title("fill_between where")
+    call save_all("fill_where")
+
+    ! 54) a reversed colormap
+    call clf()
+    call imshow(zimg, cmap="RdBu_r", aspect="auto")
+    call colorbar()
+    call title("RdBu_r")
+    call save_all("cmap_reversed")
+
+    ! 55) a logarithmic color norm
+    call clf()
+    call imshow(zlog, cmap="magma", norm="log", aspect="auto")
+    call colorbar()
+    call title("log color norm")
+    call save_all("cmap_lognorm")
+
+    ! 56) categories instead of numbers
+    call clf()
+    call bar(fruit, hb(1:4), color="tab:purple")
+    call ylabel("count")
+    call title("categories")
+    call save_all("categorical")
+
+    ! 57) mathtext in the labels
+    call clf()
+    call plot(x, y)
+    call xlabel("$x_{i}$ [m]")
+    call ylabel("$E = mc^{2}$")
+    call title("$10^{-3} < T^{2}_{n} < 10^{3}$")
+    call save_all("mathtext")
+
+    ! 58) a mesh with uneven cells
+    call clf()
+    call pcolormesh(xedge, yedge, zimg, cmap="viridis")
+    call colorbar()
+    call title("pcolormesh")
+    call save_all("pcolormesh")
+
+    ! 59) panels spanning several cells
+    call clf()
+    a1 = subplot2grid([3, 3], [0, 0], colspan=3)
+    a2 = subplot2grid([3, 3], [1, 0], colspan=2, rowspan=2)
+    a3 = subplot2grid([3, 3], [1, 2], rowspan=2)
+    call a1%plot(x, y)
+    call a1%set_title("wide")
+    call a2%plot(x, y2)
+    call a2%set_title("big")
+    call a3%plot(x, y)
+    call a3%set_title("tall")
+    call save_all("gridspec")
+
+    ! 60) a date axis
+    call clf()
+    do i = 1, 366
+        td(i) = date_num(2024, 1, 1) + real(i - 1, dp)
+        yd(i) = sin(2.0_dp * pi * real(i - 1, dp) / 365.0_dp)
+    end do
+    call plot(td, yd)
+    call xaxis_date()
+    call title("dates")
+    call save_all("dates")
+
+    ! 61) a vector field
+    call clf()
+    do i = 1, 8
+        do j = 1, 8
+            k = (i - 1)*8 + j
+            qx(k) = real(j - 1, dp)*0.5_dp
+            qy(k) = real(i - 1, dp)*0.5_dp
+            qu(k) = cos(qx(k))
+            qv(k) = sin(qy(k))
+        end do
+    end do
+    call quiver(qx, qy, qu, qv)
+    call title("quiver")
+    call save_all("quiver")
+
+    ! 62) labelled contour lines
+    call clf()
+    call contour(zimg)
+    call clabel()
+    call title("clabel")
+    call save_all("clabel")
+
+    ! 63) an inset and a secondary axis
+    call clf()
+    a1 = subplot2grid([1, 1], [0, 0])
+    call a1%plot(x, y)
+    call a1%set_title("inset")
+    a2 = a1%secondary_xaxis(scale=2.0_dp)
+    a3 = a1%inset_axes([0.6_dp, 0.6_dp, 0.35_dp, 0.3_dp])
+    call a3%plot(x, y2)
+    call save_all("inset")
+
+    ! 64) plain shapes
+    call clf()
+    call add_rectangle([0.1_dp, 0.1_dp], 0.4_dp, 0.2_dp, &
+                       facecolor="tab:orange", edgecolor="black")
+    call add_circle([0.7_dp, 0.7_dp], 0.15_dp)
+    call add_ellipse([0.3_dp, 0.7_dp], 0.4_dp, 0.2_dp, angle=30.0_dp, &
+                     facecolor="tab:green", alpha=0.5_dp)
+    call add_polygon([0.6_dp, 0.9_dp, 0.75_dp], [0.1_dp, 0.1_dp, 0.4_dp], &
+                     edgecolor="tab:red", lw=2.0_dp, fill=.false.)
+    call title("patches")
+    call save_all("patches")
+
+    ! 65) a polar plot
+    call clf()
+    do i = 1, n
+        td(i) = 2.0_dp*pi*real(i - 1, dp)/real(n - 1, dp)
+        yd(i) = 1.0_dp + cos(td(i))
+    end do
+    call polar(td(1:n), yd(1:n))
+    call title("polar")
+    call save_all("polar")
+
+    ! 66) a smoothed image
+    call clf()
+    call imshow(zimg, interpolation="bilinear")
+    call title("interp")
+    call save_all("interp")
+
+    ! 67) two dimensional histograms
+    call clf()
+    do i = 1, 500
+        hx(i) = gauss(real(i, dp)*12.9898_dp)
+        hy(i) = gauss(real(i, dp)*78.233_dp)
+    end do
+    call hist2d(hx, hy, bins=[12, 12])
+    call title("hist2d")
+    call save_all("hist2d")
+
+    ! 68) hexagonal binning
+    call clf()
+    call hexbin(hx, hy, gridsize=15)
+    call title("hexbin")
+    call save_all("hexbin")
+
+! 69) a matrix as an image
+    call clf()
+    do i = 1, 6
+        do j = 1, 6
+            mz(i, j) = real(i*j, dp)
+        end do
+    end do
+    call matshow(mz)
+    call save_all("matshow")
+
+! 70) a row of events
+    call clf()
+    do i = 1, 40
+        ev(i) = 10.0_dp*(gauss(real(i, dp)*3.7_dp) + 1.0_dp)
+    end do
+    call eventplot(ev, color="C0")
+    call title("eventplot")
+    call save_all("eventplot")
+
+! 71) bars broken into pieces
+    call clf()
+    call broken_barh(reshape([1.0_dp, 4.0_dp, 7.0_dp, 2.0_dp, 2.0_dp, 3.0_dp], [3, 2]), &
+                     [1.0_dp, 0.8_dp], color="C0")
+    call broken_barh(reshape([2.0_dp, 6.0_dp, 3.0_dp, 3.0_dp], [2, 2]), &
+                     [2.5_dp, 0.8_dp], color="C1")
+    call title("broken_barh")
+    call save_all("broken_barh")
+
+! 72) streamlines of a vector field
+    call clf()
+    do i = 1, 16
+        sxg(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/15.0_dp
+    end do
+    do i = 1, 16
+        syg(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/15.0_dp
+    end do
+    do i = 1, 16
+        do j = 1, 16
+            su(i, j) = -1.0_dp - sxg(j)**2 + syg(i)
+            sv(i, j) = 1.0_dp + sxg(j) - syg(i)**2
+        end do
+    end do
+    call streamplot(sxg, syg, su, sv)
+    call title("streamplot")
+    call save_all("streamplot")
+
+! 73) a table below the axes
+    call clf()
+    call table(reshape(["100", "200", "300", "400", "500", "600"], [2, 3]), &
+               col_labels=["a", "b", "c"], row_labels=["x", "y"])
+    call xticks([real(dp) ::])
+    call yticks([real(dp) ::])
+    call title("table")
+    call save_all("table")
+
+! 75) a 3D surface
+    call clf()
+    do i = 1, n3
+        s3x(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/real(n3 - 1, dp)
+        s3y(i) = s3x(i)
+    end do
+    do i = 1, n3
+        do j = 1, n3
+            s3z(i, j) = sin(sqrt(s3x(j)**2 + s3y(i)**2))
+        end do
+    end do
+    call plot_surface(s3x, s3y, s3z)
+    call title("surface3d")
+    call save_all("surface3d")
+
+! 76) a 3D line and a 3D scatter
+    call clf()
+    do i = 1, nl3
+        t3(i) = real(i - 1, dp)*4.0_dp*PI_T/real(nl3 - 1, dp)
+        l3x(i) = cos(t3(i))
+        l3y(i) = sin(t3(i))
+        l3z(i) = t3(i)/(4.0_dp*PI_T)
+    end do
+    call plot3d(l3x, l3y, l3z)
+    call scatter3d(l3x(1:nl3:10), l3y(1:nl3:10), l3z(1:nl3:10), c="r")
+    call xlabel("x")
+    call ylabel("y")
+    call zlabel("z")
+    call title("line3d")
+    call save_all("line3d")
+
+! 74) an animation: the same line redrawn at a moving phase
+    do i = 1, 20
+        call clf()
+        call plot(x, sin(x + real(i - 1, dp)*0.3_dp), "b-")
+        call ylim(-1.5_dp, 1.5_dp)
+        call title("anim_sine")
+        call add_frame()
+    end do
+    call save_animation("tests/out/anim_sine.gif", fps=10.0_dp)
+    print *, "wrote tests/out/anim_sine.gif"
+
     print *, "All test plots written."
 
 contains
+
+    ! A repeatable stand-in for random numbers: the fractional part of a
+    ! large sine, summed twice so the result piles up in the middle.
+    function gauss(seed) result(g)
+        real(dp), intent(in) :: seed
+        real(dp) :: g, a, b
+        a = sin(seed)*43758.5453_dp
+        b = sin(seed + 1.0_dp)*43758.5453_dp
+        g = (a - floor(a)) + (b - floor(b)) - 1.0_dp
+    end function gauss
 
     ! Every case is written in all three formats, so the three savefig calls
     ! and the line that reports them are stated once here rather than once
@@ -560,7 +914,9 @@ contains
                      bbox_inches=bbox_inches, dpi=dpi)
         call savefig("tests/out/"//stem//".png", facecolor=facecolor, &
                      bbox_inches=bbox_inches, dpi=dpi)
-        print *, "wrote tests/out/"//stem//".svg, .pdf and .png"
+        call savefig("tests/out/"//stem//".eps", facecolor=facecolor, &
+                     bbox_inches=bbox_inches, dpi=dpi)
+        print *, "wrote tests/out/"//stem//".svg, .pdf, .png and .eps"
     end subroutine save_all
 
 end program test_plots

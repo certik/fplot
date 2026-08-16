@@ -17,8 +17,8 @@ demo-lfortran = "bash scripts/build_lfortran.sh && ./build/lfortran/demo"
 
 mpl-refs = "python tests/gen_mpl_refs.py"
 
-# The three comparisons share their setup, so it is expressed once as a
-# dependency rather than repeated in each command and run three times.
+# The five comparisons share their setup, so it is expressed once as a
+# dependency rather than repeated in each command and run five times.
 [tasks.compare]
 cmd = "python tests/compare_svgs.py"
 depends-on = ["mpl-refs", "test-flang"]
@@ -31,6 +31,14 @@ depends-on = ["mpl-refs", "test-flang"]
 cmd = "python tests/compare_pdfs.py"
 depends-on = ["mpl-refs", "test-flang"]
 
+[tasks.compare-eps]
+cmd = "python tests/compare_eps.py"
+depends-on = ["mpl-refs", "test-flang"]
+
+[tasks.compare-gif]
+cmd = "python tests/compare_gif.py"
+depends-on = ["mpl-refs", "test-flang"]
+
 [dependencies]
 python = ">=3.14.6,<3.15"
 matplotlib = ">=3.11.1,<4"
@@ -40,6 +48,8 @@ pillow = ">=12.3.0,<13"
 # pdftoppm, for rasterizing PDFs in tests/compare_pdfs.py
 poppler = "*"
 lfortran = ">=0.64.0,<0.65"
+# gs, for rasterizing EPS in tests/compare_eps.py
+ghostscript = ">=10.4.0,<11"
 
 [target.linux-64.dependencies]
 flang_linux-64 = ">=22,<23"

@@ -1,21 +1,17 @@
-"""Compare fplot's PDFs to matplotlib's by rasterizing both.
+"""Compare fplot's EPS files to matplotlib's by rasterizing both.
 
-A PDF cannot be compared as bytes and is not worth comparing as structure:
-two files can describe the same page with completely different operators. So
-both sides are handed to the same rasterizer and the resulting images are
-compared, which asks the only question that matters, whether the page looks
-the same.
+Same argument as tests/compare_pdfs.py: PostScript is a program, not a
+picture, so two files that draw the same page share almost nothing textually.
+Both sides go through Ghostscript and the images are compared.
 
-Text is the expected difference and it is a real one, not an artifact of the
-measurement. Matplotlib embeds a subset of DejaVu Sans and draws text with
-the same outlines it uses everywhere else. fplot's PDF backend refers to the
-base-14 Helvetica instead, so the file needs no embedded font at all, but the
-glyphs are a different typeface and are spaced by Helvetica's widths while
-the surrounding layout was computed from DejaVu's. Everything that is not
-text should agree closely, and the per-case limit is set to catch it when it
-does not.
+Two differences from the PDF comparison are expected and are properties of
+the format, not defects. Text is a different typeface, because matplotlib
+embeds a DejaVu Sans subset and fplot names the base-13 Helvetica; and
+PostScript has no transparency, so fplot composites every alpha against the
+page colour while matplotlib simply drops it. The limit below is set to
+allow both and still catch a page that is actually drawn wrongly.
 
-    pixi run compare-pdf
+    pixi run compare-eps
 """
 
 import shutil
@@ -33,34 +29,42 @@ OUT = ROOT / "out"
 
 DPI = 100
 
-# Mean absolute channel difference out of 255. Looser than the PNG limit
-# because a whole typeface differs, not just its hinting.
-MEAN_LIMIT = 12.0
+# Mean absolute channel difference out of 255. Looser than the PDF limit
+# because flattened alpha shifts large filled areas, not just glyphs.
+MEAN_LIMIT = 20.0
 
 SIZE_TOLERANCE = {"savefig_tight": 0.02}
 
-# Cases whose reference PDF the rasterizer itself gets wrong. matplotlib
-# writes the hexbin collection as one marker path drawn at many offsets, and
-# poppler draws only the offsets it feels like, so the reference page is
-# missing most of its hexagons. The PNG comparison covers this case.
-SKIP = {"hexbin"}
+# Cases where the whole page is dominated by translucent fills. matplotlib
+# draws them fully opaque, since PostScript cannot blend; fplot composites
+# them against the page colour instead, so the figure keeps the appearance it
+# has in SVG and PNG. That is a deliberate improvement, not a defect, and it
+# is what these two cases measure, so they get their own limits.
+LIMIT = {"spans": 40.0, "hist_opts": 32.0}
 
 
-def render(pdf: Path, tmp: Path) -> np.ndarray | None:
-    stem = str(tmp / pdf.stem)
+def limit(stem: str) -> float:
+    return LIMIT.get(stem, MEAN_LIMIT)
+
+
+def render(eps: Path, tmp: Path) -> np.ndarray | None:
+    png = tmp / (eps.stem + ".png")
     r = subprocess.run(
-        ["pdftoppm", "-r", str(DPI), "-png", "-singlefile", str(pdf), stem],
+        [
+            "gs", "-q", "-dNOPAUSE", "-dBATCH", "-dSAFER", "-dEPSCrop",
+            "-sDEVICE=png16m", "-r%d" % DPI, "-dTextAlphaBits=4",
+            "-dGraphicsAlphaBits=4", "-sOutputFile=" + str(png), str(eps),
+        ],
         capture_output=True,
     )
-    png = Path(stem + ".png")
     if r.returncode != 0 or not png.exists():
         return None
     return np.asarray(Image.open(png).convert("RGB")).astype(np.int16)
 
 
 def main() -> int:
-    if shutil.which("pdftoppm") is None:
-        print("pdftoppm not found; it comes from the poppler dependency")
+    if shutil.which("gs") is None:
+        print("gs not found; it comes from the ghostscript dependency")
         return 1
     if not REF.exists():
         print("no matplotlib references; run: pixi run mpl-refs")
@@ -69,16 +73,13 @@ def main() -> int:
     results = []
     broken = []
     with tempfile.TemporaryDirectory() as td:
-        # Reference and output share a stem, so they are rendered into
-        # separate directories to keep pdftoppm from overwriting one with
-        # the other.
         ours = Path(td) / "out"
         theirs = Path(td) / "ref"
         ours.mkdir()
         theirs.mkdir()
-        for out in sorted(OUT.glob("*.pdf")):
+        for out in sorted(OUT.glob("*.eps")):
             ref = REF / out.name
-            if not ref.exists() or out.stem in SKIP:
+            if not ref.exists():
                 continue
             b = render(out, ours)
             a = render(ref, theirs)
@@ -106,20 +107,20 @@ def main() -> int:
             )
 
     if broken:
-        print(f"FAIL: {len(broken)} PDF(s) could not be rendered at all:")
+        print(f"FAIL: {len(broken)} EPS file(s) could not be rendered at all:")
         for n in broken:
             print(f"  {n}")
         return 1
     if not results:
-        print("no PDFs to compare; run: pixi run test-flang")
+        print("no EPS files to compare; run: pixi run test-flang")
         return 1
 
-    print("Comparing fplot PDFs to matplotlib references\n")
+    print("Comparing fplot EPS files to matplotlib references\n")
     results.sort(key=lambda r: -r[1])
-    failed = [r for r in results if r[1] < 0 or r[1] > MEAN_LIMIT]
+    failed = [r for r in results if r[1] < 0 or r[1] > limit(Path(r[0]).stem)]
 
     for name, mean, note in results[:10]:
-        flag = "FAIL" if (mean < 0 or mean > MEAN_LIMIT) else "ok  "
+        flag = "FAIL" if (mean < 0 or mean > limit(Path(name).stem)) else "ok  "
         shown = "n/a" if mean < 0 else "%5.2f" % mean
         print(f"  {flag} {name:<24} mean={shown}  {note}")
 

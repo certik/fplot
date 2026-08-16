@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/certik/fplot/actions/workflows/ci.yml/badge.svg)](https://github.com/certik/fplot/actions/workflows/ci.yml)
 
-Pure Fortran plotting library with a pylab-style API, writing SVG, PNG and PDF.
+Pure Fortran plotting library with a pylab-style API, writing SVG, PNG, PDF and EPS.
 No external graphics library: the PNG rasterizer and its font are part of fplot.
 
 ```fortran
@@ -13,7 +13,7 @@ call xlabel("x")
 call ylabel("y")
 call grid(.true.)
 call legend()
-call savefig("out.svg")   ! or "out.png", "out.pdf"
+call savefig("out.svg")   ! or "out.png", "out.pdf", "out.eps"
 call show()               ! Jupyter (LFortran) or writes fplot_show.svg
 
 ! subplots
@@ -45,7 +45,7 @@ call suptitle("figure title")
 - Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
 - Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure(figsize=, dpi=)`
 - `savefig(file, transparent=, facecolor=)`; the extension picks the format,
-  one of `.svg`, `.png` or `.pdf`, and `dpi=` sizes the PNG raster
+  one of `.svg`, `.png`, `.pdf` or `.eps`, and `dpi=` sizes the PNG raster
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
@@ -55,11 +55,58 @@ call suptitle("figure title")
   `set_fontsize(size=, title=, labels=, ticks=, legend=)` to set them globally
 - `savefig(dpi=, bbox_inches="tight", pad_inches=)` to crop to the drawing
 - Several live figures at once: `figure(num=)`, `gcf()`, `close(num=, all=)`
+- `subplots(m, n, axs, sharex=, sharey=)` hands back axes handles, so
+  `call axs(1,2)%plot(x, y)` works alongside the stateful `subplot` style;
+  shared axes span the union of the group and drop their inner tick labels
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing
 - `subplots_adjust` and `tight_layout`
 - `twinx` and `twiny` for a second y or x axis on the same plot
+- Bars: `bar`/`barh` with `bottom=`/`left=` for stacks, `colors=` for a
+  color per bar, `edgecolor=`/`linewidth=`, and `bar_label(fmt=, padding=)`
+- `add_axes` for an axes placed by hand, `inset_axes` for a small axes
+  inside another, and `secondary_xaxis`/`secondary_yaxis` for a second
+  scale along an edge
+- `table` for a block of text below (or above) the axes
+- `streamplot` for the streamlines of a vector field
+- `add_frame` / `save_animation(file, fps=, loop=)` to write an animated GIF
+- `matshow`, `eventplot` and `broken_barh`
+- `hist2d` and `hexbin` for counting points into square or hexagonal bins
+- `imshow(interpolation="bilinear")` to smooth an image instead of
+  showing it as blocks
+- 3D axes: `plot3d`, `scatter3d` and `plot_surface`, with `view_init`,
+  `zlabel` and `zlim`, drawn with mplot3d's camera, panes and lighting
+- Polar axes: `polar(theta, r)`, or `set_polar()` on an axes, with the
+  angular grid, the degree labels and the radial labels along 22.5°
+- Patches: `add_rectangle`, `add_circle`, `add_ellipse` and `add_polygon`,
+  filled and outlined in data coordinates
+- `clabel` to write the level into each contour line, breaking the line
+  at its straightest stretch to make room
+- `quiver` for a field of arrows, sized as matplotlib sizes them
+- Date axes: `date_num(y, m, d)` for the numbers and `xaxis_date()` to
+  have the ticks land on round dates and read as dates
+- `subplot2grid`: panels that span several cells of a grid, so a wide
+  plot can sit over two narrow ones
+- `pcolormesh` and `pcolor`: a grid of cells with edges of your own
+  choosing, which is what an unevenly sampled field needs
+- matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
+  same number of ticks for the space available, and one decimal count
+  shared by the whole axis
+- Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$` in any label, laid out
+  once and drawn by every backend
+- Categorical axes: `plot`, `bar` and `barh` take a list of names in place
+  of the numbers, and place them at 0, 1, 2, ... with the names as ticks
+- 49 matplotlib colormaps, any of them reversed with a `_r` suffix, and
+  `imshow(norm="log")` for a logarithmic color scale
+- `errorbar` with `xerr=` and asymmetric `yerr_lo=`/`yerr_hi=` arms
+- `fill_between(where=)` to shade only where a condition holds
+- `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled")`
+- `axhspan`/`axvspan` shaded bands and `hlines`/`vlines` line runs
+- `style_use("ggplot")` and friends (`seaborn`, `fivethirtyeight`,
+  `dark_background`, `grayscale`, `default`), or `rc(figsize=, dpi=,
+  fontsize=, linewidth=, grid=, facecolor=, axes_facecolor=, grid_color=,
+  text_color=, color_cycle=)` for one setting at a time
 - Colors as CSS4/X11 names, `tab:` names, `#rgb`, `#rrggbb`, `#rrggbbaa`,
   single letters, `C0`-`C9`, or a greyscale fraction such as `"0.5"`
 - SVG defaults aligned with matplotlib (6.4×4.8 in, tab10 colors, subplot margins)
@@ -86,13 +133,16 @@ pixi run test-lfortran
 pixi run compare       # SVG, structurally
 pixi run compare-png   # PNG, pixel by pixel
 pixi run compare-pdf   # PDF, rasterized by pdftoppm
+pixi run compare-eps   # EPS, rasterized by ghostscript
+pixi run compare-gif   # GIF, frame by frame
 ```
 
 The SVG comparison is structural because a viewer, not fplot, decides what an
-SVG looks like. PNG and PDF are compared as pixels, since there fplot decides.
+SVG looks like. PNG, PDF and EPS are compared as pixels, since there fplot
+decides.
 
 CI (Linux) runs `pixi run test-flang` and `pixi run test-lfortran`, then all
-three comparisons.
+five comparisons.
 
 ## Layout
 

@@ -9,7 +9,14 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
+import matplotlib.dates as mdates
+from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon
+import datetime
+import io
+
 import numpy as np
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
@@ -38,6 +45,37 @@ OUT_NAMES = [
     "imshow",
     "imshow_cbar",
     "imshow_log",
+    "subplots_shared",
+    "style_ggplot",
+    "spans",
+    "bar_stacked",
+    "bar_colors",
+    "hist_opts",
+    "hist_bins",
+    "errorbar_xy",
+    "fill_where",
+    "cmap_reversed",
+    "cmap_lognorm",
+    "categorical",
+    "mathtext",
+    "pcolormesh",
+    "gridspec",
+    "dates",
+    "quiver",
+    "clabel",
+    "inset",
+    "patches",
+    "polar",
+    "interp",
+    "hist2d",
+    "hexbin",
+    "matshow",
+    "eventplot",
+    "broken_barh",
+    "streamplot",
+    "table",
+    "surface3d",
+    "line3d",
     "scatter_cmap",
     "contour",
     "contourf",
@@ -75,6 +113,7 @@ def save(fig, name: str, **kw) -> None:
     # would only tell us how the SVG renderer differs.
     fig.savefig(REF / f"{name}.png", format="png", **kw)
     fig.savefig(REF / f"{name}.pdf", format="pdf", **kw)
+    fig.savefig(REF / f"{name}.eps", format="eps", **kw)
     plt.close(fig)
     print(f"wrote {path}")
 
@@ -234,6 +273,7 @@ def main() -> None:
     # 11 bar
     xb = np.arange(1.0, 7.0)
     hb = np.array([3.0, 5.0, 2.0, 7.0, 4.0, 6.0])
+    hb2 = np.array([1.0, 2.0, 4.0, 1.0, 3.0, 2.0])
     fig, ax = setup_fig()
     ax.bar(xb, hb, label="counts")
     ax.set_title("Bar")
@@ -358,6 +398,8 @@ def main() -> None:
     # 22/23 imshow
     nzr, nzc = 8, 16
     zimg = np.array([[np.sin(0.4 * (j + 1)) + np.cos(0.5 * (i + 1))
+                      for j in range(nzc)] for i in range(nzr)])
+    zlog = np.array([[10.0 ** (0.5 * (i + j + 2) / 4.0)
                       for j in range(nzc)] for i in range(nzr)])
 
     fig, ax = setup_fig()
@@ -545,6 +587,305 @@ def main() -> None:
     ax.set_xscale("log")
     ax.set_title("imshow on a log axis")
     save(fig, "imshow_log")
+
+    # 45 subplots with axes handles and a shared x axis
+    fig, axs = plt.subplots(2, 2, sharex=True, figsize=(6.4, 4.8))
+    axs[0, 0].plot(x, y, "b-", label="sin")
+    axs[0, 0].set_title("one")
+    axs[0, 0].legend()
+    axs[0, 1].scatter(xs, ys, s=18.0, c="r")
+    axs[0, 1].set_title("two")
+    axs[1, 0].bar(xb, hb, color="g")
+    axs[1, 0].set_xlabel("x")
+    axs[1, 1].plot(x, y3, "m--")
+    axs[1, 1].grid(True)
+    axs[1, 1].set_xlabel("x")
+    fig.suptitle("subplots with handles")
+    save(fig, "subplots_shared")
+
+    # 46 a style sheet
+    with plt.style.context("ggplot"):
+        fig, ax = plt.subplots(figsize=(6.4, 4.8))
+        ax.plot(x, y, label="sin")
+        ax.plot(x, y2, label="cos")
+        ax.set_title("ggplot style")
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.legend()
+        save(fig, "style_ggplot")
+
+    # 47 spans and line runs
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-")
+    ax.axhspan(-0.5, 0.5, color="orange", alpha=0.3)
+    ax.axvspan(1.0, 2.0, color="green", alpha=0.2)
+    ax.hlines([-1.0, 1.0], 0.0, 3.0, color="red", linestyle="--")
+    ax.vlines([4.0, 5.0], -1.0, 0.0, color="purple")
+    ax.set_title("spans and line runs")
+    save(fig, "spans")
+
+    # 48 stacked and labelled bars
+    fig, ax = setup_fig()
+    ax.bar(xb, hb, width=0.6, color="tab:blue", label="first")
+    ax.bar(xb, hb2, width=0.6, bottom=hb, color="tab:orange", label="second")
+    ax.bar_label(ax.containers[-1], padding=3)
+    ax.legend()
+    ax.set_title("stacked bars")
+    save(fig, "bar_stacked")
+
+    # 49 per-bar colors and horizontal bar labels
+    fig, ax = setup_fig()
+    ax.barh(xb, hb, color=["red", "green", "blue", "orange", "purple", "brown"])
+    ax.bar_label(ax.containers[-1], padding=2)
+    ax.set_title("bars in their own colors")
+    save(fig, "bar_colors")
+
+    # 50 histogram options
+    fig, ax = setup_fig()
+    ax.hist(dist1, bins=12, density=True, color="tab:blue", alpha=0.6,
+            label="density")
+    ax.hist(dist1, bins=12, density=True, histtype="step", color="k",
+            label="step")
+    ax.legend()
+    ax.set_title("histogram options")
+    save(fig, "hist_opts")
+
+    # 51 uneven bins, cumulative
+    fig, ax = setup_fig()
+    ax.hist(dist1, bins=[-3.0, -1.0, 0.0, 1.5, 3.0], cumulative=True,
+            color="tab:green")
+    ax.set_title("uneven bins, cumulative")
+    save(fig, "hist_bins")
+
+    # 52 asymmetric errors in both directions
+    fig, ax = setup_fig()
+    ax.errorbar(xe, ye, yerr=[ee, 0.5 * ee], xerr=0.3 * ee, fmt="o",
+                color="tab:red", capsize=4.0)
+    ax.set_title("asymmetric errors")
+    save(fig, "errorbar_xy")
+
+    # 53 fill_between with a condition
+    fig, ax = setup_fig()
+    ax.plot(x, y, "k-")
+    ax.fill_between(x, y, 0.0, where=(y > 0.0), color="tab:green", alpha=0.4,
+                    label="positive")
+    ax.fill_between(x, y, 0.0, where=(y < 0.0), color="tab:red", alpha=0.4,
+                    label="negative")
+    ax.legend()
+    ax.set_title("fill_between where")
+    save(fig, "fill_where")
+
+    # 54 a reversed colormap
+    fig, ax = setup_fig()
+    im = ax.imshow(zimg, cmap="RdBu_r", aspect="auto")
+    fig.colorbar(im, ax=ax)
+    ax.set_title("RdBu_r")
+    save(fig, "cmap_reversed")
+
+    # 55 a logarithmic color norm
+    fig, ax = setup_fig()
+    im = ax.imshow(zlog, cmap="magma", norm=LogNorm(), aspect="auto")
+    fig.colorbar(im, ax=ax)
+    ax.set_title("log color norm")
+    save(fig, "cmap_lognorm")
+
+    # 56 categories instead of numbers
+    fig, ax = setup_fig()
+    ax.bar(["apple", "banana", "cherry", "date"], hb[:4], color="tab:purple")
+    ax.set_ylabel("count")
+    ax.set_title("categories")
+    save(fig, "categorical")
+
+    # 57 mathtext in the labels
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.set_xlabel(r"$x_{i}$ [m]")
+    ax.set_ylabel(r"$E = mc^{2}$")
+    ax.set_title(r"$10^{-3} < T^{2}_{n} < 10^{3}$")
+    save(fig, "mathtext")
+
+    # 58 a mesh with uneven cells
+    fig, ax = setup_fig()
+    xe = np.array([0.0, 0.5, 1.5, 3.0, 5.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+                   13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0])
+    ye = np.array([0.0, 1.0, 2.0, 4.0, 6.0, 6.5, 7.0, 8.0, 10.0])
+    m = ax.pcolormesh(xe, ye, zimg, cmap="viridis")
+    fig.colorbar(m, ax=ax)
+    ax.set_title("pcolormesh")
+    save(fig, "pcolormesh")
+
+    # 59 panels spanning several cells
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    a1 = plt.subplot2grid((3, 3), (0, 0), colspan=3)
+    a2 = plt.subplot2grid((3, 3), (1, 0), colspan=2, rowspan=2)
+    a3 = plt.subplot2grid((3, 3), (1, 2), rowspan=2)
+    a1.plot(x, y)
+    a1.set_title("wide")
+    a2.plot(x, y2)
+    a2.set_title("big")
+    a3.plot(x, y)
+    a3.set_title("tall")
+    save(fig, "gridspec")
+
+    # 60 a date axis
+    fig, ax = setup_fig()
+    t0 = mdates.date2num(datetime.datetime(2024, 1, 1))
+    td = t0 + np.arange(0.0, 366.0, 1.0)
+    ax.plot(td, np.sin(2.0 * np.pi * np.arange(366) / 365.0))
+    ax.xaxis_date()
+    ax.set_title("dates")
+    save(fig, "dates")
+
+    # 61 a vector field
+    fig, ax = setup_fig()
+    qy, qx = np.meshgrid(np.arange(8) * 0.5, np.arange(8) * 0.5, indexing="ij")
+    ax.quiver(qx, qy, np.cos(qx), np.sin(qy))
+    ax.set_title("quiver")
+    save(fig, "quiver")
+
+    # 62 labelled contour lines
+    fig, ax = setup_fig()
+    cs = ax.contour(zimg)
+    ax.clabel(cs)
+    ax.set_title("clabel")
+    save(fig, "clabel")
+
+    # 63 an inset and a secondary axis
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.set_title("inset")
+    ax.secondary_xaxis("top", functions=(lambda v: 2.0 * v, lambda v: v / 2.0))
+    axi = ax.inset_axes([0.6, 0.6, 0.35, 0.3])
+    axi.plot(x, y2)
+    save(fig, "inset")
+
+    # 64 plain shapes
+    fig, ax = setup_fig()
+    ax.add_patch(Rectangle((0.1, 0.1), 0.4, 0.2, facecolor="tab:orange",
+                           edgecolor="black"))
+    ax.add_patch(Circle((0.7, 0.7), 0.15))
+    ax.add_patch(Ellipse((0.3, 0.7), 0.4, 0.2, angle=30.0,
+                         facecolor="tab:green", alpha=0.5))
+    ax.add_patch(Polygon([[0.6, 0.1], [0.9, 0.1], [0.75, 0.4]],
+                         edgecolor="tab:red", lw=2.0, fill=False))
+    ax.set_title("patches")
+    save(fig, "patches")
+
+    # 65 a polar plot
+    fig = plt.figure(figsize=(6.4, 4.8), dpi=100)
+    ax = fig.add_subplot(projection="polar")
+    th = np.linspace(0.0, 2.0 * np.pi, 100)
+    ax.plot(th, 1.0 + np.cos(th))
+    ax.set_title("polar")
+    save(fig, "polar")
+
+    # 66 a smoothed image
+    fig, ax = setup_fig()
+    ax.imshow(zimg, interpolation="bilinear")
+    ax.set_title("interp")
+    save(fig, "interp")
+
+    # 67/68 two dimensional histograms
+    seed = np.arange(1, 501, dtype=float)
+    ha = np.sin(seed * 12.9898) * 43758.5453
+    hb = np.sin(seed * 12.9898 + 1.0) * 43758.5453
+    hxx = (ha - np.floor(ha)) + (hb - np.floor(hb)) - 1.0
+    ha = np.sin(seed * 78.233) * 43758.5453
+    hb = np.sin(seed * 78.233 + 1.0) * 43758.5453
+    hyy = (ha - np.floor(ha)) + (hb - np.floor(hb)) - 1.0
+
+    fig, ax = setup_fig()
+    ax.hist2d(hxx, hyy, bins=[12, 12])
+    ax.set_title("hist2d")
+    save(fig, "hist2d")
+
+    fig, ax = setup_fig()
+    ax.hexbin(hxx, hyy, gridsize=15)
+    ax.set_title("hexbin")
+    save(fig, "hexbin")
+
+    # 69 a matrix as an image
+    fig, ax = setup_fig()
+    zm = np.array([[float(i * j) for j in range(1, 7)] for i in range(1, 7)])
+    ax.matshow(zm)
+    save(fig, "matshow")
+
+    # 70 a row of events
+    fig, ax = setup_fig()
+    seed = np.arange(1, 41, dtype=float) * 3.7
+    ea = np.sin(seed) * 43758.5453
+    eb = np.sin(seed + 1.0) * 43758.5453
+    ev = 10.0 * ((ea - np.floor(ea)) + (eb - np.floor(eb)))
+    ax.eventplot(ev, color="C0")
+    ax.set_title("eventplot")
+    save(fig, "eventplot")
+
+    # 71 bars broken into pieces
+    fig, ax = setup_fig()
+    ax.broken_barh([(1.0, 2.0), (4.0, 2.0), (7.0, 3.0)], (1.0, 0.8), color="C0")
+    ax.broken_barh([(2.0, 3.0), (6.0, 3.0)], (2.5, 0.8), color="C1")
+    ax.set_title("broken_barh")
+    save(fig, "broken_barh")
+
+    # 72 streamlines of a vector field
+    fig, ax = setup_fig()
+    sg = np.linspace(-3.0, 3.0, 16)
+    sxx, syy = np.meshgrid(sg, sg)
+    ax.streamplot(sg, sg, -1.0 - sxx**2 + syy, 1.0 + sxx - syy**2)
+    ax.set_title("streamplot")
+    save(fig, "streamplot")
+
+    # 73 a table below the axes
+    fig, ax = setup_fig()
+    ax.table(cellText=[["100", "300", "500"], ["200", "400", "600"]],
+             colLabels=["a", "b", "c"], rowLabels=["x", "y"])
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title("table")
+    save(fig, "table")
+
+    # 75 a 3D surface
+    fig = plt.figure(figsize=(6.4, 4.8))
+    ax = fig.add_subplot(projection="3d")
+    s3 = np.linspace(-3, 3, 31)
+    sx, sy = np.meshgrid(s3, s3)
+    ax.plot_surface(sx, sy, np.sin(np.sqrt(sx ** 2 + sy ** 2)))
+    ax.set_title("surface3d")
+    save(fig, "surface3d")
+
+    # 76 a 3D line and a 3D scatter
+    fig = plt.figure(figsize=(6.4, 4.8))
+    ax = fig.add_subplot(projection="3d")
+    t3 = np.linspace(0, 4 * np.pi, 100)
+    ax.plot(np.cos(t3), np.sin(t3), t3 / (4 * np.pi))
+    ax.scatter(np.cos(t3[::10]), np.sin(t3[::10]), t3[::10] / (4 * np.pi), c="r")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    ax.set_title("line3d")
+    save(fig, "line3d")
+
+    # 74 an animation. matplotlib's own PillowWriter is exactly this: every
+    # frame saved as a PNG and handed to Pillow, which quantizes and writes
+    # the GIF.
+    frames = []
+    for k in range(20):
+        fig, ax = setup_fig()
+        ax.plot(x, np.sin(x + k * 0.3), "b-")
+        ax.set_ylim(-1.5, 1.5)
+        ax.set_title("anim_sine")
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        frames.append(Image.open(buf).convert("RGB"))
+    frames[0].save(
+        REF / "anim_sine.gif",
+        save_all=True,
+        append_images=frames[1:],
+        duration=100,
+        loop=0,
+    )
+    print("wrote tests/refs/anim_sine.gif")
 
     print("All matplotlib references written.")
 
