@@ -84,7 +84,8 @@ call suptitle("figure title")
   `zlabel` and `zlim`, drawn with mplot3d's camera, panes and lighting
 - Polar axes: `polar(theta, r)`, or `set_polar()` on an axes, with the
   angular grid, the degree labels and the radial labels along 22.5°
-- Patches: `add_rectangle`, `add_circle`, `add_ellipse` and `add_polygon`,
+- Patches: `add_rectangle`, `add_circle`, `add_ellipse`, `add_polygon`,
+  `add_arrow` and `add_path` for an arbitrary path of lines and cubics,
   filled and outlined in data coordinates
 - `clabel` to write the level into each contour line, breaking the line
   at its straightest stretch to make room

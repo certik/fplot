@@ -12,7 +12,8 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from matplotlib.colors import LogNorm, BoundaryNorm
 import matplotlib.dates as mdates
-from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon
+from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon, Arrow, PathPatch
+from matplotlib.path import Path as MPath
 import datetime
 import io
 
@@ -75,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "patches_path",
     "cmap_discrete",
     "hist_stacked",
     "grid_ratios",
@@ -851,6 +853,18 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 82 an arrow patch and a path of cubic curves
+    fig, ax = setup_fig()
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.2)
+    ax.add_patch(Arrow(0.1, 0.1, 0.6, 0.4, width=0.2,
+                       facecolor="tab:blue", edgecolor="k"))
+    pp = MPath([(0.1, 0.8), (0.3, 1.1), (0.6, 0.5), (0.9, 0.8)],
+               [MPath.MOVETO, MPath.CURVE4, MPath.CURVE4, MPath.CURVE4])
+    ax.add_patch(PathPatch(pp, facecolor="tab:orange", edgecolor="k", lw=2.0))
+    ax.set_title("an arrow and a path")
+    save(fig, "patches_path")
 
     # 81 bands of a discrete norm, and the qualitative maps
     fig = plt.figure(figsize=(6.4, 4.8))

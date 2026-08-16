@@ -27,6 +27,7 @@ module fplot
     public :: matshow, eventplot, broken_barh, streamplot, table
     public :: add_axes, secondary_xaxis, secondary_yaxis
     public :: add_rectangle, add_circle, add_ellipse, add_polygon
+    public :: add_arrow, add_path
     public :: polar, set_polar
     public :: quiver
     public :: axhspan, axvspan, hlines, vlines, bar_label
@@ -186,6 +187,9 @@ module fplot
         ! only when edgecolor names one, as in matplotlib, where a patch is
         ! filled and edgeless unless asked otherwise.
         logical :: patch_fill = .true.
+        ! A patch drawn from an arbitrary path carries its own verbs; a
+        ! plain polygon leaves this alone and every point is a line to.
+        integer, allocatable :: pverb(:)
         ! Most patches never ask for room of their own; the ones a plotting
         ! call makes for itself, such as broken_barh, do.
         logical :: patch_scales = .false.
@@ -3837,6 +3841,82 @@ contains
         if (present(fill)) ax(cur_i)%series(is)%patch_fill = fill
     end subroutine add_polygon
 
+    ! matplotlib's Arrow patch: the same unit outline it uses, scaled to the
+    ! length of (dx, dy) and to `width` across, then turned to point along
+    ! the vector. It is built in data coordinates, as matplotlib builds it,
+    ! so an axes that is not square shears the arrow in the same way.
+    subroutine add_arrow(x, y, dx, dy, width, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: x, y, dx, dy
+        real(dp), intent(in), optional :: width, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        real(dp), parameter :: UX(7) = [0.0_dp, 0.0_dp, 0.8_dp, 0.8_dp, &
+                                        1.0_dp, 0.8_dp, 0.8_dp]
+        real(dp), parameter :: UY(7) = [0.1_dp, -0.1_dp, -0.1_dp, -0.3_dp, &
+                                        0.0_dp, 0.3_dp, 0.1_dp]
+        real(dp) :: w, ln, ct, st, ax_(7), ay(7), u, v
+        integer :: j
+
+        w = 1.0_dp
+        if (present(width)) w = width
+        ln = hypot(dx, dy)
+        if (ln <= 0.0_dp) return
+        ct = dx/ln
+        st = dy/ln
+        do j = 1, 7
+            u = UX(j)*ln
+            v = UY(j)*w
+            ax_(j) = x + ct*u - st*v
+            ay(j) = y + st*u + ct*v
+        end do
+        call add_polygon(ax_, ay, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine add_arrow
+
+    ! An arbitrary path, as matplotlib's PathPatch draws one. `codes` has a
+    ! letter per verb: M moves, L draws a line, C draws a cubic from the
+    ! next three points and Z closes back to the last move.
+    subroutine add_path(x, y, codes, facecolor, edgecolor, lw, alpha, fill)
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in) :: codes
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        integer :: is, j, np, nv
+        integer :: v(len_trim(codes))
+
+        nv = len_trim(codes)
+        np = 0
+        do j = 1, nv
+            select case (codes(j:j))
+            case ("M", "m")
+                v(j) = VERB_MOVE
+                np = np + 1
+            case ("L", "l")
+                v(j) = VERB_LINE
+                np = np + 1
+            case ("C", "c")
+                v(j) = VERB_CUBIC
+                np = np + 3
+            case ("Z", "z")
+                v(j) = VERB_CLOSE
+            case default
+                print *, "fplot: add_path: unknown code ", codes(j:j)
+                error stop
+            end select
+        end do
+        if (np < 2 .or. np > min(size(x), size(y))) then
+            print *, "fplot: add_path: codes need", np, "points, given", &
+                min(size(x), size(y))
+            error stop
+        end if
+
+        call add_polygon(x(1:np), y(1:np), facecolor, edgecolor, lw, alpha, fill)
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        allocate (ax(cur_i)%series(is)%pverb(nv))
+        ax(cur_i)%series(is)%pverb = v
+    end subroutine add_path
+
     ! A field of arrows, one per point, pointing along (u, v). Left to
     ! itself matplotlib sizes the arrows from the field: the shaft is a
     ! fixed fraction of the axes width and the scale is set so a vector of
@@ -5651,7 +5731,24 @@ contains
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
         real(dp) :: px(s%n + 1), py(s%n + 1)
+        type(paint_t) :: p
         integer :: j
+
+        if (allocated(s%pverb)) then
+            do j = 1, s%n
+                px(j) = map_x(s%x(j), xmin, xmax, ax_l, ax_w, xsc)
+                py(j) = map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc)
+            end do
+            if (s%patch_fill) then
+                p = brush(trim(s%color), s%alpha)
+                call b%draw_path(px(1:s%n), py(1:s%n), s%pverb, size(s%pverb), p)
+            end if
+            if (len_trim(s%edgecolor) > 0) then
+                p = pen(trim(s%edgecolor), s%edgewidth, s%alpha)
+                call b%draw_path(px(1:s%n), py(1:s%n), s%pverb, size(s%pverb), p)
+            end if
+            return
+        end if
 
         if (s%n < 3) return
         do j = 1, s%n

@@ -846,6 +846,18 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 82) an arrow patch and a path of cubic curves
+    call clf()
+    call xlim(0.0_dp, 1.0_dp)
+    call ylim(0.0_dp, 1.2_dp)
+    call add_arrow(0.1_dp, 0.1_dp, 0.6_dp, 0.4_dp, width=0.2_dp, &
+                   facecolor="tab:blue", edgecolor="k")
+    call add_path([0.1_dp, 0.3_dp, 0.6_dp, 0.9_dp], &
+                  [0.8_dp, 1.1_dp, 0.5_dp, 0.8_dp], "MC", &
+                  facecolor="tab:orange", edgecolor="k", lw=2.0_dp)
+    call title("an arrow and a path")
+    call save_all("patches_path")
+
 ! 81) bands of a discrete norm, and the qualitative maps
     call clf()
     call subplot(1, 2, 1)
