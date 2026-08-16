@@ -41,7 +41,7 @@ module fplot
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, view_init, zlabel, zlim
-    public :: subplot, subplot2grid, suptitle, subplots_adjust, tight_layout
+    public :: subplot, subplot2grid, gridspec, suptitle, subplots_adjust, tight_layout
     public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
     public :: set_fontsize
@@ -52,6 +52,9 @@ module fplot
     ! How the ticks of an axis are written. FMT_AUTO is matplotlib's
     ! ScalarFormatter, which is what an axis does unless it is told
     ! otherwise; the rest are its named formatters.
+    ! Most rows or columns a figure's grid can be given a ratio for.
+    integer, parameter :: MAX_RATIO = 32
+
     integer, parameter :: FMT_AUTO = 0
     integer, parameter :: FMT_PERCENT = 1
     integer, parameter :: FMT_COMMA = 2
@@ -527,6 +530,10 @@ module fplot
     integer, save :: n_ax = 0
     integer, save :: cur_i = 0
     integer, save :: grid_m = 0, grid_n = 0
+    ! Relative column widths and row heights, GridSpec's width_ratios and
+    ! height_ratios. All ones, the default, is an even grid.
+    real(dp), save :: fig_wratio(MAX_RATIO) = 1.0_dp
+    real(dp), save :: fig_hratio(MAX_RATIO) = 1.0_dp
     ! A grid whose cells are filled in one at a time by subplot2grid,
     ! rather than all at once by subplot.
     logical, save :: grid_sparse = .false.
@@ -545,6 +552,7 @@ module fplot
         type(axes_t), allocatable :: ax(:)
         integer :: n_ax, cur_i, grid_m, grid_n
         logical :: sparse
+        real(dp) :: wratio(MAX_RATIO), hratio(MAX_RATIO)
     end type figure_t
     type(figure_t), allocatable, save :: figs(:)
     integer, save :: cur_fig = 0
@@ -594,6 +602,8 @@ contains
         figs(k)%grid_m = grid_m
         figs(k)%grid_n = grid_n
         figs(k)%sparse = grid_sparse
+        figs(k)%wratio = fig_wratio
+        figs(k)%hratio = fig_hratio
         if (allocated(figs(k)%ax)) deallocate (figs(k)%ax)
         ! Allocated explicitly rather than relying on reallocation on
         ! assignment, which is not on by default in every compiler.
@@ -614,6 +624,8 @@ contains
         fig_top = figs(k)%top
         fig_wspace = figs(k)%wspace
         fig_hspace = figs(k)%hspace
+        fig_wratio = figs(k)%wratio
+        fig_hratio = figs(k)%hratio
         fig_suptitle = figs(k)%suptitle
         def_title = figs(k)%d_title
         def_label = figs(k)%d_label
@@ -761,6 +773,8 @@ contains
         fig_top = MARGIN_TOP
         fig_wspace = WSPACE
         fig_hspace = HSPACE
+        fig_wratio = 1.0_dp
+        fig_hratio = 1.0_dp
         def_title = TITLE_FONT
         def_label = LABEL_FONT
         def_tick = TICK_FONT
@@ -946,19 +960,45 @@ contains
 
     ! Place the existing axes in the current margins. Called again whenever
     ! those margins move, so the axes objects themselves survive.
+    ! Where each column starts and how wide it is, in figure fractions.
+    ! The gap between cells is the same everywhere, as it is in matplotlib:
+    ! wspace and hspace are fractions of the average cell, not of each one,
+    ! so uneven ratios change the cells and leave the gaps alone.
+    subroutine grid_edges(nc, lo, hi, space, ratio, pos, len)
+        integer, intent(in) :: nc
+        real(dp), intent(in) :: lo, hi, space, ratio(MAX_RATIO)
+        real(dp), intent(out) :: pos(MAX_RATIO), len(MAX_RATIO)
+        real(dp) :: cell, sep, total, sumr, p
+        integer :: k
+
+        cell = (hi - lo)/(real(nc, dp) + space*real(nc - 1, dp))
+        sep = space*cell
+        total = cell*real(nc, dp)
+        sumr = 0.0_dp
+        do k = 1, nc
+            sumr = sumr + max(ratio(k), 0.0_dp)
+        end do
+        if (sumr <= 0.0_dp) sumr = real(nc, dp)
+        p = lo
+        do k = 1, nc
+            len(k) = total*max(ratio(k), 0.0_dp)/sumr
+            pos(k) = p
+            p = p + len(k) + sep
+        end do
+    end subroutine grid_edges
+
     subroutine layout_grid()
         integer :: i, r, c
-        real(dp) :: w, h, dx, dy
+        real(dp) :: xpos(MAX_RATIO), xlen(MAX_RATIO)
+        real(dp) :: ypos(MAX_RATIO), ylen(MAX_RATIO)
 
         if (grid_m < 1 .or. grid_n < 1) return
+        if (grid_m > MAX_RATIO .or. grid_n > MAX_RATIO) return
 
-        ! Cell size and cell pitch (cell plus gap), in figure fractions.
-        w = (fig_right - fig_left) / &
-            (real(grid_n, dp) + fig_wspace * real(grid_n - 1, dp))
-        h = (fig_top - fig_bottom) / &
-            (real(grid_m, dp) + fig_hspace * real(grid_m - 1, dp))
-        dx = w * (1.0_dp + fig_wspace)
-        dy = h * (1.0_dp + fig_hspace)
+        call grid_edges(grid_n, fig_left, fig_right, fig_wspace, fig_wratio, xpos, xlen)
+        ! Rows are laid out from the top, since that is how they are counted.
+        call grid_edges(grid_m, 1.0_dp - fig_top, 1.0_dp - fig_bottom, fig_hspace, &
+                        fig_hratio, ypos, ylen)
 
         do i = 1, n_ax
             if (ax(i)%fixed_pos .or. ax(i)%inset_of > 0) cycle
@@ -967,11 +1007,10 @@ contains
             if (r >= 1) cycle
             r = ax(i)%g_row          ! row from the top
             c = ax(i)%g_col          ! column from the left
-            ax(i)%left = fig_left + real(c, dp) * dx
-            ax(i)%right = ax(i)%left + w + real(ax(i)%g_colspan - 1, dp) * dx
-            ax(i)%bottom = fig_bottom + &
-                           real(grid_m - r - ax(i)%g_rowspan, dp) * dy
-            ax(i)%top = ax(i)%bottom + h + real(ax(i)%g_rowspan - 1, dp) * dy
+            ax(i)%left = xpos(c + 1)
+            ax(i)%right = xpos(c + ax(i)%g_colspan) + xlen(c + ax(i)%g_colspan)
+            ax(i)%top = 1.0_dp - ypos(r + 1)
+            ax(i)%bottom = 1.0_dp - (ypos(r + ax(i)%g_rowspan) + ylen(r + ax(i)%g_rowspan))
         end do
 
         do i = 1, n_ax
@@ -1373,6 +1412,28 @@ contains
         call layout_grid()
         h%idx = cur_i
     end function add_secondary
+
+    ! GridSpec's width_ratios and height_ratios: the columns and rows of the
+    ! grid need not be equal. Call it before the subplots are made; the
+    ! ratios stay with the figure and the panels are laid out to them.
+    subroutine gridspec(width_ratios, height_ratios)
+        real(dp), intent(in), optional :: width_ratios(:), height_ratios(:)
+        integer :: k
+
+        call ensure_fig()
+        if (present(width_ratios)) then
+            fig_wratio = 1.0_dp
+            do k = 1, min(size(width_ratios), MAX_RATIO)
+                fig_wratio(k) = width_ratios(k)
+            end do
+        end if
+        if (present(height_ratios)) then
+            fig_hratio = 1.0_dp
+            do k = 1, min(size(height_ratios), MAX_RATIO)
+                fig_hratio(k) = height_ratios(k)
+            end do
+        end if
+    end subroutine gridspec
 
     function subplot2grid(shape, loc, rowspan, colspan) result(h)
         integer, intent(in) :: shape(2), loc(2)

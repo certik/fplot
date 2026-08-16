@@ -75,6 +75,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "grid_ratios",
     "formatters",
     "offset_text",
     "surface3d",
@@ -846,6 +847,15 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 79 a grid whose columns and rows are not equal
+    fig = plt.figure(figsize=(6.4, 4.8))
+    gs = fig.add_gridspec(2, 2, width_ratios=[2, 1], height_ratios=[1, 2])
+    a1 = fig.add_subplot(gs[0, 0]); a1.plot(x, y, "b-"); a1.set_title("wide")
+    a2 = fig.add_subplot(gs[0, 1]); a2.plot(x, y2, "r-"); a2.set_title("narrow")
+    a3 = fig.add_subplot(gs[1, 0]); a3.plot(x, y2, "g-")
+    a4 = fig.add_subplot(gs[1, 1]); a4.plot(x, y, "k-")
+    save(fig, "grid_ratios")
 
     # 78 named formatters and a locator
     fig, ax = setup_fig()

@@ -844,6 +844,21 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 79) a grid whose columns and rows are not equal
+    call clf()
+    call gridspec(width_ratios=[2.0_dp, 1.0_dp], height_ratios=[1.0_dp, 2.0_dp])
+    call subplot(2, 2, 1)
+    call plot(x, y, "b-")
+    call title("wide")
+    call subplot(2, 2, 2)
+    call plot(x, y2, "r-")
+    call title("narrow")
+    call subplot(2, 2, 3)
+    call plot(x, y2, "g-")
+    call subplot(2, 2, 4)
+    call plot(x, y, "k-")
+    call save_all("grid_ratios")
+
 ! 78) named formatters and a locator: a percentage on y, thousands on x,
 !     and ticks every 250 units
     call clf()

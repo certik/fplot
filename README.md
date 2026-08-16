@@ -93,6 +93,8 @@ call suptitle("figure title")
   have the ticks land on round dates and read as dates
 - `subplot2grid`: panels that span several cells of a grid, so a wide
   plot can sit over two narrow ones
+- `gridspec(width_ratios=, height_ratios=)`: columns and rows of unequal
+  size, for a wide panel beside a narrow one
 - `pcolormesh` and `pcolor`: a grid of cells with edges of your own
   choosing, which is what an unevenly sampled field needs
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
