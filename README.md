@@ -273,9 +273,9 @@ difference. As of this writing, over 100 cases:
 
 | format | cases | mean difference |
 | --- | --- | --- |
-| PNG | 108 | 1.51/255 |
-| PDF | 107 | 2.06/255 |
-| EPS | 108 | 3.58/255 |
+| PNG | 124 | 1.50/255 |
+| PDF | 123 | 2.05/255 |
+| EPS | 124 | 3.57/255 |
 | GIF | 20 frames | 0.60/255 |
 
 What is left is mostly antialiasing along edges, and text: fplot draws with
