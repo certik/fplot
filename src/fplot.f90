@@ -383,6 +383,10 @@ module fplot
         real(dp) :: xtick_size = TICK_FONT, ytick_size = TICK_FONT
         real(dp) :: title_size = TITLE_FONT
         real(dp) :: xlabel_size = LABEL_FONT, ylabel_size = LABEL_FONT
+        ! loc is "center", "left" or "right"; the pads are matplotlib's
+        ! labelpad in points, measured from its default of LABEL_PAD.
+        character(len=6) :: title_loc = "center"
+        real(dp) :: xlabel_pad = LABEL_PAD, ylabel_pad = LABEL_PAD
         ! Face of the title and the two axis labels.
         integer :: title_w = WEIGHT_NORMAL, title_sl = SLANT_ROMAN
         integer :: xlabel_w = WEIGHT_NORMAL, xlabel_sl = SLANT_ROMAN
@@ -1299,7 +1303,7 @@ contains
     function ylabel_out(a) result(v)
         type(axes_t), intent(in) :: a
         real(dp) :: v
-        v = TICK_LEN + 2.0_dp + tick_label_width(a) + LABEL_PAD &
+        v = TICK_LEN + 2.0_dp + tick_label_width(a) + a%ylabel_pad &
             + 0.76_dp * a%ylabel_size
     end function ylabel_out
 
@@ -1318,7 +1322,8 @@ contains
         end if
         if (a%xtick_rot /= 0.0_dp) v = v + tick_label_width(a) * &
                                         abs(sin(a%xtick_rot * PI / 180.0_dp))
-        if (len_trim(a%xlabel) > 0) v = v + LABEL_BOX * a%xlabel_size
+        if (len_trim(a%xlabel) > 0) &
+            v = v + LABEL_BOX * a%xlabel_size + a%xlabel_pad - LABEL_PAD
     end function decor_bottom
 
     ! How far the decorations reach to the right of the axes box. Only a
@@ -2386,31 +2391,31 @@ contains
                       fontweight, fontstyle, transform=transform)
     end subroutine ax_annotate
 
-    subroutine ax_set_title(self, s, fontsize, fontweight, fontstyle)
+    subroutine ax_set_title(self, s, fontsize, fontweight, fontstyle, loc)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
-        character(len=*), intent(in), optional :: fontweight, fontstyle
+        character(len=*), intent(in), optional :: fontweight, fontstyle, loc
         call ax_sca(self)
-        call title(s, fontsize, fontweight, fontstyle)
+        call title(s, fontsize, fontweight, fontstyle, loc)
     end subroutine ax_set_title
 
-    subroutine ax_set_xlabel(self, s, fontsize, fontweight, fontstyle)
+    subroutine ax_set_xlabel(self, s, fontsize, fontweight, fontstyle, labelpad)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
-        real(dp), intent(in), optional :: fontsize
+        real(dp), intent(in), optional :: fontsize, labelpad
         character(len=*), intent(in), optional :: fontweight, fontstyle
         call ax_sca(self)
-        call xlabel(s, fontsize, fontweight, fontstyle)
+        call xlabel(s, fontsize, fontweight, fontstyle, labelpad)
     end subroutine ax_set_xlabel
 
-    subroutine ax_set_ylabel(self, s, fontsize, fontweight, fontstyle)
+    subroutine ax_set_ylabel(self, s, fontsize, fontweight, fontstyle, labelpad)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: s
-        real(dp), intent(in), optional :: fontsize
+        real(dp), intent(in), optional :: fontsize, labelpad
         character(len=*), intent(in), optional :: fontweight, fontstyle
         call ax_sca(self)
-        call ylabel(s, fontsize, fontweight, fontstyle)
+        call ylabel(s, fontsize, fontweight, fontstyle, labelpad)
     end subroutine ax_set_ylabel
 
     subroutine ax_set_xlim(self, xmin, xmax)
@@ -2570,34 +2575,37 @@ contains
         if (present(fontstyle)) fig_suptitle_sl = slant_from_str(fontstyle)
     end subroutine suptitle
 
-    subroutine title(s, fontsize, fontweight, fontstyle)
+    subroutine title(s, fontsize, fontweight, fontstyle, loc)
         character(len=*), intent(in) :: s
         real(dp), intent(in), optional :: fontsize
-        character(len=*), intent(in), optional :: fontweight, fontstyle
+        character(len=*), intent(in), optional :: fontweight, fontstyle, loc
         call ensure_fig()
         ax(cur_i)%title = s
+        if (present(loc)) ax(cur_i)%title_loc = loc
         if (present(fontsize)) ax(cur_i)%title_size = fontsize
         if (present(fontweight)) ax(cur_i)%title_w = weight_from_str(fontweight)
         if (present(fontstyle)) ax(cur_i)%title_sl = slant_from_str(fontstyle)
     end subroutine title
 
-    subroutine xlabel(s, fontsize, fontweight, fontstyle)
+    subroutine xlabel(s, fontsize, fontweight, fontstyle, labelpad)
         character(len=*), intent(in) :: s
-        real(dp), intent(in), optional :: fontsize
+        real(dp), intent(in), optional :: fontsize, labelpad
         character(len=*), intent(in), optional :: fontweight, fontstyle
         call ensure_fig()
         ax(cur_i)%xlabel = s
+        if (present(labelpad)) ax(cur_i)%xlabel_pad = labelpad
         if (present(fontsize)) ax(cur_i)%xlabel_size = fontsize
         if (present(fontweight)) ax(cur_i)%xlabel_w = weight_from_str(fontweight)
         if (present(fontstyle)) ax(cur_i)%xlabel_sl = slant_from_str(fontstyle)
     end subroutine xlabel
 
-    subroutine ylabel(s, fontsize, fontweight, fontstyle)
+    subroutine ylabel(s, fontsize, fontweight, fontstyle, labelpad)
         character(len=*), intent(in) :: s
-        real(dp), intent(in), optional :: fontsize
+        real(dp), intent(in), optional :: fontsize, labelpad
         character(len=*), intent(in), optional :: fontweight, fontstyle
         call ensure_fig()
         ax(cur_i)%ylabel = s
+        if (present(labelpad)) ax(cur_i)%ylabel_pad = labelpad
         if (present(fontsize)) ax(cur_i)%ylabel_size = fontsize
         if (present(fontweight)) ax(cur_i)%ylabel_w = weight_from_str(fontweight)
         if (present(fontstyle)) ax(cur_i)%ylabel_sl = slant_from_str(fontstyle)
@@ -9841,6 +9849,7 @@ contains
         if (len_trim(a%xlabel) > 0) then
             call append_text(b, 0.5_dp * (ax_l + ax_r), &
                              ax_b + xtick_gap(a) + 0.24_dp * a%xtick_size + 1.84_dp &
+                             + a%xlabel_pad - LABEL_PAD &
                              + 0.76_dp * a%xlabel_size, trim(a%xlabel), &
                              "center", a%xlabel_size, rc_text_color, &
                              weight=a%xlabel_w, slant=a%xlabel_sl)
@@ -9856,12 +9865,24 @@ contains
                              weight=a%ylabel_w, slant=a%ylabel_sl)
         end if
 
-        ! title
+        ! title, centred over the axes unless it was asked to sit against
+        ! one end of it
         if (len_trim(a%title) > 0) then
-            call append_text(b, 0.5_dp * (ax_l + ax_r), &
-                             ax_t - 0.5_dp * a%title_size, trim(a%title), &
-                             "center", a%title_size, rc_text_color, &
-                             weight=a%title_w, slant=a%title_sl)
+            select case (trim(a%title_loc))
+            case ("left")
+                call append_text(b, ax_l, ax_t - 0.5_dp*a%title_size, &
+                                 trim(a%title), "left", a%title_size, &
+                                 rc_text_color, weight=a%title_w, slant=a%title_sl)
+            case ("right")
+                call append_text(b, ax_r, ax_t - 0.5_dp*a%title_size, &
+                                 trim(a%title), "right", a%title_size, &
+                                 rc_text_color, weight=a%title_w, slant=a%title_sl)
+            case default
+                call append_text(b, 0.5_dp*(ax_l + ax_r), &
+                                 ax_t - 0.5_dp*a%title_size, trim(a%title), &
+                                 "center", a%title_size, rc_text_color, &
+                                 weight=a%title_w, slant=a%title_sl)
+            end select
         end if
 
 

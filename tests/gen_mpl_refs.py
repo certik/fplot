@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "title_loc",
     "bar_err",
     "invert_axes",
     "annotate_arrow",
@@ -872,6 +873,14 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 102 a title against one end, and labels pushed further out
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-")
+    ax.set_title("left title", loc="left")
+    ax.set_xlabel("x", labelpad=12)
+    ax.set_ylabel("y", labelpad=16)
+    save(fig, "title_loc")
 
     # 101 bars with error bars, edge alignment and their own tick labels
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))

@@ -852,6 +852,14 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 102) a title against one end, and labels pushed further out
+    call clf()
+    call plot(x, y, "b-")
+    call title("left title", loc="left")
+    call xlabel("x", labelpad=12.0_dp)
+    call ylabel("y", labelpad=16.0_dp)
+    call save_all("title_loc")
+
 ! 101) bars with error bars, edge alignment and their own tick labels
     call clf()
     call subplot(1, 2, 1)

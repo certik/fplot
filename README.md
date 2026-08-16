@@ -84,6 +84,7 @@ call suptitle("figure title")
   label at its end, as matplotlib's ScalarFormatter does
 - Font sizes: `fontsize=` on `title` / `xlabel` / `ylabel` / `suptitle`, and
   `set_fontsize(size=, title=, labels=, ticks=, legend=)` to set them globally
+- `title(loc="left"|"right")` and `xlabel`/`ylabel(labelpad=)`
 - `savefig(dpi=, bbox_inches="tight", pad_inches=)` to crop to the drawing
 - Several live figures at once: `figure(num=)`, `gcf()`, `close(num=, all=)`
 - `subplots(m, n, axs, sharex=, sharey=)` hands back axes handles, so
