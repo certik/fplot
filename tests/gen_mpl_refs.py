@@ -76,6 +76,12 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "surface3d_extra",
+    "mathtext_frac",
+    "hatch",
+    "colorbar_orient",
+    "margins",
+    "fills",
     "axes_facecolor",
     "marker_detail",
     "text_options",
@@ -861,6 +867,79 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 96 a wireframe and a colormapped surface
+    fig = plt.figure(figsize=(6.4, 4.8))
+    s3 = np.linspace(-3, 3, 31)
+    sx, sy = np.meshgrid(s3, s3)
+    sz = np.sin(np.sqrt(sx ** 2 + sy ** 2))
+    ax = fig.add_subplot(1, 2, 1, projection="3d")
+    ax.plot_wireframe(sx, sy, sz, color="tab:blue")
+    ax.set_title("wireframe")
+    ax = fig.add_subplot(1, 2, 2, projection="3d")
+    ax.plot_surface(sx, sy, sz, cmap="viridis")
+    ax.set_title("colormapped")
+    save(fig, "surface3d_extra")
+
+    # 95 fractions, roots and greek
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.set_xlabel(r"$\frac{x}{2}$")
+    ax.set_ylabel(r"$\sqrt{y}$")
+    ax.set_title(r"$T = 2\pi\sqrt{\frac{L}{g}}$, $\Omega = \alpha + \beta$")
+    save(fig, "mathtext_frac")
+
+    # 94 hatched fills
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    hx6 = np.arange(1.0, 7.0)
+    hh1 = np.array([3.0, 5.0, 2.0, 7.0, 4.0, 6.0])
+    hh2 = np.array([1.0, 2.0, 4.0, 1.0, 3.0, 2.0])
+    axs[0].bar(hx6, hh1, hatch="/")
+    axs[0].bar(hx6, hh2, bottom=hh1, hatch="\\\\")
+    axs[0].set_title("hatched bars")
+    axs[1].fill_between(x, y, hatch="x", color="tab:green", alpha=0.4,
+                        edgecolor="tab:green")
+    axs[1].add_patch(Rectangle((1.0, -0.8), 2.0, 0.6,
+                     facecolor="white", edgecolor="black", hatch="|||"))
+    axs[1].set_title("hatched fill")
+    save(fig, "hatch")
+
+    # 93 a colorbar lying on its side
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    im = axs[0].imshow(zimg, cmap="viridis", aspect="auto")
+    fig.colorbar(im, ax=axs[0], orientation="horizontal", label="value")
+    axs[0].set_title("horizontal")
+    im = axs[1].imshow(zimg, cmap="viridis", aspect="auto")
+    fig.colorbar(im, ax=axs[1], shrink=0.6, aspect=10.0)
+    axs[1].set_title("shrunk")
+    save(fig, "colorbar_orient")
+
+    # 92 how much room the data is given
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].plot(x, y)
+    axs[0].margins(x=0.0, y=0.3)
+    axs[0].set_title("margins")
+    axs[1].plot(x, y)
+    # matplotlib defers autoscaling to the draw, so the limits only exist
+    # once something has drawn them; fplot computes them on demand, so the
+    # two agree only after a draw is forced here.
+    fig.canvas.draw()
+    axs[1].autoscale(False)
+    axs[1].plot(x, 3.0 * y)
+    axs[1].set_title("autoscale off")
+    save(fig, "margins")
+
+    # 91 stacked bands, a band along y, and an endless line
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    stx = np.arange(12.0)
+    sty = np.vstack([1.0 + 0.5 * stx, 2.0 + np.sin(0.5 * stx), 3.0 - 0.1 * stx])
+    axs[0].stackplot(stx, sty, labels=["low", "mid", "high"])
+    axs[0].legend(loc="upper left")
+    axs[0].set_title("stackplot")
+    axs[1].fill_betweenx(x, y - 1.5, np.cos(x) + 1.5, color="tab:orange", alpha=0.5)
+    axs[1].axline((0.0, 0.0), slope=1.5, color="tab:red", linestyle="--")
+    axs[1].set_title("fill_betweenx and axline")
+    save(fig, "fills")
 
     # 90 a background colour for one axes only
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))

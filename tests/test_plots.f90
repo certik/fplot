@@ -58,6 +58,9 @@ program test_plots
     real(dp), parameter :: yedge(nzr + 1) = [ &
         0.0_dp, 1.0_dp, 2.0_dp, 4.0_dp, 6.0_dp, 6.5_dp, 7.0_dp, 8.0_dp, 10.0_dp]
     real(dp) :: svals(ns), cvals(ns)
+    integer, parameter :: nst = 12
+    real(dp) :: stx(nst), sty(3, nst)
+    character(len=4), parameter :: stlab(3) = ["low ", "mid ", "high"]
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
     ! Shared data
@@ -846,6 +849,90 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 96) a wireframe and a colormapped surface
+    call clf()
+    do i = 1, n3
+        s3x(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/real(n3 - 1, dp)
+        s3y(i) = s3x(i)
+    end do
+    do i = 1, n3
+        do j = 1, n3
+            s3z(i, j) = sin(sqrt(s3x(j)**2 + s3y(i)**2))
+        end do
+    end do
+    call subplot(1, 2, 1)
+    call plot_wireframe(s3x, s3y, s3z, color="tab:blue")
+    call title("wireframe")
+    call subplot(1, 2, 2)
+    call plot_surface(s3x, s3y, s3z, cmap="viridis")
+    call title("colormapped")
+    call save_all("surface3d_extra")
+
+! 95) fractions, roots and greek
+    call clf()
+    call plot(x, y)
+    call xlabel("$\frac{x}{2}$")
+    call ylabel("$\sqrt{y}$")
+    call title("$T = 2\pi\sqrt{\frac{L}{g}}$, $\Omega = \alpha + \beta$")
+    call save_all("mathtext_frac")
+
+! 94) hatched fills
+    call clf()
+    call subplot(1, 2, 1)
+    call bar(xb, hb, hatch="/")
+    call bar(xb, hb2, bottom=hb, hatch="\\")
+    call title("hatched bars")
+    call subplot(1, 2, 2)
+    call fill_between(x, y, hatch="x", color="tab:green", alpha=0.4_dp, &
+                      edgecolor="tab:green")
+    call add_rectangle([1.0_dp, -0.8_dp], 2.0_dp, 0.6_dp, facecolor="white", &
+                       edgecolor="black", hatch="|||")
+    call title("hatched fill")
+    call save_all("hatch")
+
+! 93) a colorbar lying on its side
+    call clf()
+    call subplot(1, 2, 1)
+    call imshow(zimg, cmap="viridis", aspect="auto")
+    call colorbar(orientation="horizontal", label="value")
+    call title("horizontal")
+    call subplot(1, 2, 2)
+    call imshow(zimg, cmap="viridis", aspect="auto")
+    call colorbar(shrink=0.6_dp, aspect=10.0_dp)
+    call title("shrunk")
+    call save_all("colorbar_orient")
+
+! 92) how much room the data is given
+    call clf()
+    call subplot(1, 2, 1)
+    call plot(x, y)
+    call margins(x=0.0_dp, y=0.3_dp)
+    call title("margins")
+    call subplot(1, 2, 2)
+    call plot(x, y)
+    call autoscale(.false.)
+    call plot(x, 3.0_dp * y)
+    call title("autoscale off")
+    call save_all("margins")
+
+! 91) stacked bands, a band along y, and an endless line
+    call clf()
+    do i = 1, nst
+        stx(i) = real(i - 1, dp)
+        sty(1, i) = 1.0_dp + 0.5_dp * real(i - 1, dp)
+        sty(2, i) = 2.0_dp + sin(0.5_dp * stx(i))
+        sty(3, i) = 3.0_dp - 0.1_dp * real(i - 1, dp)
+    end do
+    call subplot(1, 2, 1)
+    call stackplot(stx, sty, labels=stlab)
+    call legend(loc="upper left")
+    call title("stackplot")
+    call subplot(1, 2, 2)
+    call fill_betweenx(x, y - 1.5_dp, y2 + 1.5_dp, color="tab:orange", alpha=0.5_dp)
+    call axline([0.0_dp, 0.0_dp], slope=1.5_dp, color="tab:red", linestyle="--")
+    call title("fill_betweenx and axline")
+    call save_all("fills")
 
 ! 90) a background colour for one axes only
     call clf()
