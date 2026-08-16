@@ -80,9 +80,6 @@ module fplot
     integer, parameter :: MAX_MINOR = 256
 
     ! Colorbar layout, as fractions of the axes box before it was shrunk.
-    real(dp), parameter :: CBAR_SHRINK = 0.8_dp
-    real(dp), parameter :: CBAR_X = 0.85_dp
-    real(dp), parameter :: CBAR_W = 0.03725_dp
     integer, parameter :: CBAR_SLICES = 64
 
     real(dp), parameter :: FIG_W_DEFAULT = 6.4_dp
@@ -432,6 +429,15 @@ module fplot
         ! otherwise; zero is axis("tight"), which fits the data exactly.
         real(dp) :: xmargin = 0.05_dp, ymargin = 0.05_dp
         logical :: cbar_on = .false.
+        ! Which way the bar runs, and matplotlib's four numbers for where it
+        ! sits: how much of the box it takes, how much space is left between
+        ! it and the axes, how much of the length it uses, and how many
+        ! times longer it is than it is thick.
+        logical :: cbar_horiz = .false.
+        real(dp) :: cbar_frac = 0.15_dp
+        real(dp) :: cbar_pad = 0.05_dp
+        real(dp) :: cbar_shrink = 1.0_dp
+        real(dp) :: cbar_aspect = 20.0_dp
         character(len=32) :: cbar_label = ""
         type(scale_t) :: xsc
         type(scale_t) :: ysc
@@ -1212,13 +1218,13 @@ contains
             ! An axes the caller placed itself is not the grid's business.
             if (ax(i)%fixed_pos .or. ax(i)%inset_of > 0) cycle
             need_l = max(need_l, decor_left(ax(i)))
-            need_b = max(need_b, decor_bottom(ax(i)))
+            need_b = max(need_b, decor_bottom(ax(i), W, H))
             need_t = max(need_t, decor_top(ax(i)))
             ! Only axes away from the left column and the bottom row put
             ! decorations into the gaps between subplots.
             if (ax(i)%g_col > 0) inner_l = max(inner_l, decor_left(ax(i)))
             if (ax(i)%g_row + ax(i)%g_rowspan < grid_m) &
-                inner_b = max(inner_b, decor_bottom(ax(i)))
+                inner_b = max(inner_b, decor_bottom(ax(i), W, H))
         end do
         if (len_trim(fig_suptitle) > 0) need_t = need_t + LABEL_BOX * fig_suptitle_size
 
@@ -1269,10 +1275,19 @@ contains
             + 0.76_dp * a%ylabel_size
     end function ylabel_out
 
-    function decor_bottom(a) result(v)
+    function decor_bottom(a, W, H) result(v)
         type(axes_t), intent(in) :: a
-        real(dp) :: v
+        real(dp), intent(in) :: W, H
+        real(dp) :: v, bx, by, bw, bh
         v = TICK_LEN + 1.0_dp + 1.15_dp * a%xtick_size
+        ! A horizontal colorbar hangs below the axes, with tick labels of
+        ! its own under that.
+        if (a%cbar_on .and. a%cbar_horiz) then
+            call cbar_box(a, W, H, bx, by, bw, bh)
+            v = v + by + bh - (1.0_dp - a%bottom) * H &
+                + xtick_gap(a) + 0.4_dp * a%xtick_size
+            if (len_trim(a%cbar_label) > 0) v = v + LABEL_BOX * a%xlabel_size
+        end if
         if (a%xtick_rot /= 0.0_dp) v = v + tick_label_width(a) * &
                                         abs(sin(a%xtick_rot * PI / 180.0_dp))
         if (len_trim(a%xlabel) > 0) v = v + LABEL_BOX * a%xlabel_size
@@ -1280,15 +1295,15 @@ contains
 
     ! How far the decorations reach to the right of the axes box. Only a
     ! colorbar and its labels live out there.
-    function decor_right(a, W) result(v)
+    function decor_right(a, W, H) result(v)
         type(axes_t), intent(in) :: a
-        real(dp), intent(in) :: W
-        real(dp) :: v, l0, w0
+        real(dp), intent(in) :: W, H
+        real(dp) :: v, bx, by, bw, bh
         v = 0.0_dp
         if (.not. a%cbar_on) return
-        l0 = a%left * W
-        w0 = (a%right * W - l0) / CBAR_SHRINK
-        v = l0 + (CBAR_X + CBAR_W) * w0 - a%right * W + 7.0_dp
+        if (a%cbar_horiz) return
+        call cbar_box(a, W, H, bx, by, bw, bh)
+        v = bx + bw - a%right * W + 7.0_dp
         if (len_trim(a%cbar_label) > 0) then
             v = v + 34.0_dp
         else
@@ -1310,9 +1325,9 @@ contains
         y1 = 0.0_dp
         do i = 1, n_ax
             l = ax(i)%left * W - decor_left(ax(i))
-            r = ax(i)%right * W + decor_right(ax(i), W)
+            r = ax(i)%right * W + decor_right(ax(i), W, H)
             t = (1.0_dp - ax(i)%top) * H - decor_top(ax(i))
-            bt = (1.0_dp - ax(i)%bottom) * H + decor_bottom(ax(i))
+            bt = (1.0_dp - ax(i)%bottom) * H + decor_bottom(ax(i), W, H)
             x0 = min(x0, l)
             x1 = max(x1, r)
             y0 = min(y0, t)
@@ -2197,11 +2212,12 @@ contains
         call contourf(z, levels, cmap, extent)
     end subroutine ax_contourf
 
-    subroutine ax_colorbar(self, label)
+    subroutine ax_colorbar(self, label, orientation, fraction, pad, shrink, aspect)
         class(axes), intent(in) :: self
-        character(len=*), intent(in), optional :: label
+        character(len=*), intent(in), optional :: label, orientation
+        real(dp), intent(in), optional :: fraction, pad, shrink, aspect
         call ax_sca(self)
-        call colorbar(label)
+        call colorbar(label, orientation, fraction, pad, shrink, aspect)
     end subroutine ax_colorbar
 
     subroutine ax_margins(self, m, x, y)
@@ -4772,17 +4788,72 @@ contains
         end if
     end function quantile
 
-    subroutine colorbar(label)
-        character(len=*), intent(in), optional :: label
+    subroutine colorbar(label, orientation, fraction, pad, shrink, aspect)
+        character(len=*), intent(in), optional :: label, orientation
+        real(dp), intent(in), optional :: fraction, pad, shrink, aspect
+        real(dp) :: keep
         call ensure_fig()
         if (.not. ax(cur_i)%has_cmap_src) return
         if (ax(cur_i)%cbar_on) return
         ax(cur_i)%cbar_on = .true.
         if (present(label)) ax(cur_i)%cbar_label = label
-        ! Same split matplotlib uses: the axes keeps 80% of its width and the
-        ! bar sits in the gap that frees up.
-        ax(cur_i)%right = ax(cur_i)%left + CBAR_SHRINK * (ax(cur_i)%right - ax(cur_i)%left)
+        if (present(orientation)) then
+            select case (lower(orientation))
+            case ("vertical")
+            case ("horizontal")
+                ax(cur_i)%cbar_horiz = .true.
+                ! matplotlib leaves more room under a horizontal bar,
+                ! because its tick labels sit under it too.
+                ax(cur_i)%cbar_pad = 0.15_dp
+            case default
+                error stop "fplot: colorbar orientation must be vertical or horizontal"
+            end select
+        end if
+        if (present(fraction)) ax(cur_i)%cbar_frac = fraction
+        if (present(pad)) ax(cur_i)%cbar_pad = pad
+        if (present(shrink)) ax(cur_i)%cbar_shrink = shrink
+        if (present(aspect)) ax(cur_i)%cbar_aspect = aspect
+
+        ! The bar is cut out of the axes box, as in matplotlib: the axes
+        ! keeps what is left of the width, or of the height.
+        keep = 1.0_dp - ax(cur_i)%cbar_frac - ax(cur_i)%cbar_pad
+        if (ax(cur_i)%cbar_horiz) then
+            ax(cur_i)%bottom = ax(cur_i)%top - keep * (ax(cur_i)%top - ax(cur_i)%bottom)
+        else
+            ax(cur_i)%right = ax(cur_i)%left + keep * (ax(cur_i)%right - ax(cur_i)%left)
+        end if
     end subroutine colorbar
+
+    ! Where the bar is drawn, in canvas points. The axes was already shrunk
+    ! to make room for it, and the fractions are measured against the box it
+    ! was cut from, so that box has to be recovered first.
+    subroutine cbar_box(a, W, H, bx, by, bw, bh)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: W, H
+        real(dp), intent(out) :: bx, by, bw, bh
+        real(dp) :: keep, l0, w0, b0, h0, full
+
+        keep = 1.0_dp - a%cbar_frac - a%cbar_pad
+        if (keep < 0.05_dp) keep = 0.05_dp
+        if (a%cbar_horiz) then
+            h0 = (a%top - a%bottom) / keep
+            b0 = a%top - h0
+            full = (a%right - a%left) * W
+            bw = a%cbar_shrink * full
+            bx = a%left * W + 0.5_dp * (full - bw)
+            bh = bw / a%cbar_aspect
+            ! The bar hangs from the top of the strip it was given.
+            by = H - (b0 + a%cbar_frac * h0) * H
+        else
+            l0 = a%left * W
+            w0 = (a%right * W - l0) / keep
+            full = (a%top - a%bottom) * H
+            bh = a%cbar_shrink * full
+            bx = l0 + (1.0_dp - a%cbar_frac) * w0
+            by = (1.0_dp - a%top) * H + 0.5_dp * (full - bh)
+            bw = bh / a%cbar_aspect
+        end if
+    end subroutine cbar_box
 
     ! Vertical bars of the given heights, centred on x and drawn from y = 0.
     ! bottom stacks this series on top of another; colors gives every bar
@@ -7871,43 +7942,36 @@ contains
         type(axes_t), intent(in) :: a
         integer, intent(in) :: idx
         real(dp), intent(in) :: W, H
-        real(dp) :: bx, bw, bt, bb, bh, y0, y1, t, v, py
+        real(dp) :: bx, bw, bt, bb, bh, y0, y1, t, v, py, px
         real(dp) :: cb_ticks(MAX_TICKS), lo, hi
         integer :: i, nt, ln, dec
         character(len=64) :: lbl
         character(len=512) :: esc
-        real(dp) :: w0, l0
 
-        ! The axes was already shrunk by colorbar(), so recover the original
-        ! box that the bar fractions are defined against.
-        l0 = a%left * W
-        w0 = (a%right * W - l0) / CBAR_SHRINK
-        bx = l0 + CBAR_X * w0
-        bw = CBAR_W * w0
-        bt = (1.0_dp - a%top) * H
-        bb = (1.0_dp - a%bottom) * H
-        bh = bb - bt
+        call cbar_box(a, W, H, bx, bt, bw, bh)
+        bb = bt + bh
 
         ! Slices are grown slightly so they abut without seams, so keep them
         ! inside the bar.
         call set_clip(bx, bt, bw, bh)
         if (allocated(a%img_bounds)) then
-            ! One block per band, as tall as the band is wide in the data.
+            ! One block per band, as long as the band is wide in the data.
             lo = a%img_bounds(1)
             hi = a%img_bounds(size(a%img_bounds))
             do i = 1, size(a%img_bounds) - 1
-                y1 = bb - (a%img_bounds(i) - lo) / (hi - lo) * bh
-                y0 = bb - (a%img_bounds(i + 1) - lo) / (hi - lo) * bh
+                y0 = (a%img_bounds(i) - lo) / (hi - lo)
+                y1 = (a%img_bounds(i + 1) - lo) / (hi - lo)
                 v = 0.5_dp * (a%img_bounds(i) + a%img_bounds(i + 1))
-                call append_cell(b, bx, y0, bw, y1 - y0, &
-                                 cmap_color(a%img_cmap, cmap_t(a, v)))
+                call cbar_band(b, a%cbar_horiz, bx, bt, bw, bh, y0, y1, &
+                               cmap_color(a%img_cmap, cmap_t(a, v)))
             end do
         else
             do i = 1, CBAR_SLICES
-                y1 = bb - real(i - 1, dp) * bh / real(CBAR_SLICES, dp)
-                y0 = bb - real(i, dp) * bh / real(CBAR_SLICES, dp)
+                y0 = real(i - 1, dp) / real(CBAR_SLICES, dp)
+                y1 = real(i, dp) / real(CBAR_SLICES, dp)
                 t = (real(i, dp) - 0.5_dp) / real(CBAR_SLICES, dp)
-                call append_cell(b, bx, y0, bw, y1 - y0, cmap_color(a%img_cmap, t))
+                call cbar_band(b, a%cbar_horiz, bx, bt, bw, bh, y0, y1, &
+                               cmap_color(a%img_cmap, t))
             end do
         end if
         call clear_clip()
@@ -7922,6 +7986,9 @@ contains
             cb_ticks(1:nt) = a%img_bounds(1:nt)
         else if (a%img_log_norm) then
             call log_ticks(lo, hi, cb_ticks, nt)
+        else if (a%cbar_horiz) then
+            call linear_ticks(lo, hi, tick_space(bw, a%xtick_size, .true.), &
+                              cb_ticks, nt)
         else
             call linear_ticks(lo, hi, tick_space(bh, a%ytick_size, .false.), &
                               cb_ticks, nt)
@@ -7932,23 +7999,53 @@ contains
         do i = 1, nt
             v = cb_ticks(i)
             if (v < lo .or. v > hi) cycle
-            py = bb - (v - lo) / (hi - lo) * bh
-            if (a%img_log_norm) py = bb - cmap_t(a, v) * bh
-            call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
+            t = (v - lo) / (hi - lo)
+            if (a%img_log_norm) t = cmap_t(a, v)
             if (a%img_log_norm) then
                 call format_tick_to(v, .true., lbl, ln)
             else
                 call format_tick_fixed(v, dec, lbl, ln)
             end if
-            call append_text(b, bx + bw + 7.0_dp, py + 3.5_dp, lbl(1:ln), &
-                             "left", a%ytick_size, rc_text_color)
+            if (a%cbar_horiz) then
+                px = bx + t * bw
+                call append_tick(b, px, bb, px, bb + 3.5_dp)
+                call append_text(b, px, bb + xtick_gap(a), lbl(1:ln), &
+                                 "middle", a%xtick_size, rc_text_color)
+            else
+                py = bb - t * bh
+                call append_tick(b, bx + bw, py, bx + bw + 3.5_dp, py)
+                call append_text(b, bx + bw + 7.0_dp, py + 3.5_dp, lbl(1:ln), &
+                                 "left", a%ytick_size, rc_text_color)
+            end if
         end do
 
         if (len_trim(a%cbar_label) > 0) then
-            call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), trim(a%cbar_label), &
-                             "center", a%ylabel_size, rc_text_color, 90.0_dp)
+            if (a%cbar_horiz) then
+                call append_text(b, bx + 0.5_dp * bw, bb + xtick_gap(a) &
+                                 + LABEL_BOX * a%xlabel_size, trim(a%cbar_label), &
+                                 "middle", a%xlabel_size, rc_text_color)
+            else
+                call append_text(b, bx + bw + 34.0_dp, 0.5_dp * (bt + bb), &
+                                 trim(a%cbar_label), "center", a%ylabel_size, &
+                                 rc_text_color, 90.0_dp)
+            end if
         end if
     end subroutine append_colorbar
+
+    ! One slice of the bar, covering the fractions u0 to u1 of its length.
+    ! A vertical bar runs from the bottom up, a horizontal one left to
+    ! right, which is all that separates the two.
+    subroutine cbar_band(b, horiz, bx, by, bw, bh, u0, u1, col)
+        class(renderer_t), intent(inout) :: b
+        logical, intent(in) :: horiz
+        real(dp), intent(in) :: bx, by, bw, bh, u0, u1
+        character(len=*), intent(in) :: col
+        if (horiz) then
+            call append_cell(b, bx + u0 * bw, by, (u1 - u0) * bw, bh, col)
+        else
+            call append_cell(b, bx, by + (1.0_dp - u1) * bh, bw, (u1 - u0) * bh, col)
+        end if
+    end subroutine cbar_band
 
     function fmt_pt(v) result(t)
         real(dp), intent(in) :: v

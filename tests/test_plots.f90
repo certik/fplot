@@ -850,6 +850,18 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 93) a colorbar lying on its side
+    call clf()
+    call subplot(1, 2, 1)
+    call imshow(zimg, cmap="viridis", aspect="auto")
+    call colorbar(orientation="horizontal", label="value")
+    call title("horizontal")
+    call subplot(1, 2, 2)
+    call imshow(zimg, cmap="viridis", aspect="auto")
+    call colorbar(shrink=0.6_dp, aspect=10.0_dp)
+    call title("shrunk")
+    call save_all("colorbar_orient")
+
 ! 92) how much room the data is given
     call clf()
     call subplot(1, 2, 1)

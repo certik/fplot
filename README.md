@@ -42,7 +42,8 @@ call suptitle("figure title")
   `rotation=`, `va=`, a `bbox_facecolor=` box behind them and lines broken
   at `achar(10)`; `figtext` places on the canvas instead of in the axes
 - `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
-  `aspect`, plus `colorbar`
+  `aspect`, plus `colorbar(label=, orientation=, fraction=, pad=, shrink=,
+  aspect=)`, upright or lying on its side
 - `contour` and `contourf` with automatic or explicit `levels`
 - Colormaps: `viridis`, `plasma`, `inferno`, `magma`, `gray`, `coolwarm`
 - Format strings: colors `bgrcmykw` / `C0`–`C9`, linestyles `-` `--` `:` `-.`,
