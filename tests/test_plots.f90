@@ -58,6 +58,9 @@ program test_plots
     real(dp), parameter :: yedge(nzr + 1) = [ &
         0.0_dp, 1.0_dp, 2.0_dp, 4.0_dp, 6.0_dp, 6.5_dp, 7.0_dp, 8.0_dp, 10.0_dp]
     real(dp) :: svals(ns), cvals(ns)
+    integer, parameter :: nst = 12
+    real(dp) :: stx(nst), sty(3, nst)
+    character(len=4), parameter :: stlab(3) = ["low ", "mid ", "high"]
     real(dp), parameter :: pi = 3.14159265358979323846_dp
 
     ! Shared data
@@ -846,6 +849,24 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 91) stacked bands, a band along y, and an endless line
+    call clf()
+    do i = 1, nst
+        stx(i) = real(i - 1, dp)
+        sty(1, i) = 1.0_dp + 0.5_dp * real(i - 1, dp)
+        sty(2, i) = 2.0_dp + sin(0.5_dp * stx(i))
+        sty(3, i) = 3.0_dp - 0.1_dp * real(i - 1, dp)
+    end do
+    call subplot(1, 2, 1)
+    call stackplot(stx, sty, labels=stlab)
+    call legend(loc="upper left")
+    call title("stackplot")
+    call subplot(1, 2, 2)
+    call fill_betweenx(x, y - 1.5_dp, y2 + 1.5_dp, color="tab:orange", alpha=0.5_dp)
+    call axline([0.0_dp, 0.0_dp], slope=1.5_dp, color="tab:red", linestyle="--")
+    call title("fill_betweenx and axline")
+    call save_all("fills")
 
 ! 90) a background colour for one axes only
     call clf()

@@ -22,7 +22,8 @@ module fplot
     public :: dp
     public :: plot, scatter, semilogx, semilogy, loglog
     public :: set_xscale, set_yscale
-    public :: bar, barh, hist, fill_between, errorbar, axhline, axvline
+    public :: bar, barh, hist, fill_between, fill_betweenx, stackplot
+    public :: errorbar, axhline, axvline, axline
     public :: pcolormesh, pcolor, hist2d, hexbin
     public :: matshow, eventplot, broken_barh, streamplot, table
     public :: add_axes, secondary_xaxis, secondary_yaxis
@@ -159,6 +160,9 @@ module fplot
     integer, parameter :: SERIES_LINE3D = 18
     integer, parameter :: SERIES_SCATTER3D = 19
     integer, parameter :: SERIES_SURFACE = 20
+    ! AXLINE: an endless line through the two points in x(1:2), y(1:2). It
+    ! is drawn to the edges of the axes and takes no part in the limits.
+    integer, parameter :: SERIES_AXLINE = 21
     ! The most points one streamline may have.
     integer, parameter :: MAX_STREAM_PTS = 20000
 
@@ -199,6 +203,9 @@ module fplot
         ! Most patches never ask for room of their own; the ones a plotting
         ! call makes for itself, such as broken_barh, do.
         logical :: patch_scales = .false.
+        ! FILL: set by fill_betweenx, where x holds the independent
+        ! coordinate and y, y2 the two edges, all with the axes swapped.
+        logical :: horiz = .false.
         ! QUIVER: the vector at each point, and how it is drawn. A negative
         ! scale or width means matplotlib's autoscale.
         real(dp), allocatable :: qu(:), qv(:)
@@ -459,6 +466,8 @@ module fplot
         procedure :: bar_label => ax_bar_label
         procedure :: hist => ax_hist
         procedure :: fill_between => ax_fill_between
+        procedure :: fill_betweenx => ax_fill_betweenx
+        procedure :: stackplot => ax_stackplot
         procedure :: errorbar => ax_errorbar
         procedure :: step => ax_step
         procedure :: stem => ax_stem
@@ -479,6 +488,7 @@ module fplot
         procedure :: colorbar => ax_colorbar
         procedure :: axhline => ax_axhline
         procedure :: axvline => ax_axvline
+        procedure :: axline => ax_axline
         procedure :: axhspan => ax_axhspan
         procedure :: axvspan => ax_axvspan
         procedure :: hlines => ax_hlines
@@ -1772,6 +1782,26 @@ contains
         call fill_between(x, y1, y2, color, label, alpha, where)
     end subroutine ax_fill_between
 
+    subroutine ax_fill_betweenx(self, y, x1, x2, color, label, alpha, where)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y(:), x1(:)
+        real(dp), intent(in), optional :: x2(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        logical, intent(in), optional :: where(:)
+        call ax_sca(self)
+        call fill_betweenx(y, x1, x2, color, label, alpha, where)
+    end subroutine ax_fill_betweenx
+
+    subroutine ax_stackplot(self, x, y, labels, colors, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:, :)
+        character(len=*), intent(in), optional :: labels(:), colors(:)
+        real(dp), intent(in), optional :: alpha
+        call ax_sca(self)
+        call stackplot(x, y, labels, colors, alpha)
+    end subroutine ax_stackplot
+
     subroutine ax_errorbar(self, x, y, yerr, fmt, color, label, capsize, &
                            marker, xerr, yerr_lo, yerr_hi, xerr_lo, xerr_hi)
         class(axes), intent(in) :: self
@@ -2222,6 +2252,16 @@ contains
         call ax_sca(self)
         call axvline(x, color, linestyle, lw, label)
     end subroutine ax_axvline
+
+    subroutine ax_axline(self, xy1, xy2, slope, color, linestyle, lw, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xy1(2)
+        real(dp), intent(in), optional :: xy2(2), slope
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call axline(xy1, xy2, slope, color, linestyle, lw, label)
+    end subroutine ax_axline
 
     subroutine ax_text(self, x, y, s, color, fontsize, ha, fontweight, fontstyle)
         class(axes), intent(in) :: self
@@ -4901,6 +4941,29 @@ contains
         character(len=*), intent(in), optional :: color, label
         real(dp), intent(in), optional :: alpha
         logical, intent(in), optional :: where(:)
+        call fill_core(.false., x, y1, y2, color, label, alpha, where)
+    end subroutine fill_between
+
+    ! The same band, but between two curves in x, run along y. The stored
+    ! series carries the independent coordinate in x and the two edges in
+    ! y and y2 exactly as fill_between does; only `horiz` says which way
+    ! round the limits and the polygon are read.
+    subroutine fill_betweenx(y, x1, x2, color, label, alpha, where)
+        real(dp), intent(in) :: y(:), x1(:)
+        real(dp), intent(in), optional :: x2(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        logical, intent(in), optional :: where(:)
+        call fill_core(.true., y, x1, x2, color, label, alpha, where)
+    end subroutine fill_betweenx
+
+    subroutine fill_core(horiz, x, y1, y2, color, label, alpha, where)
+        logical, intent(in) :: horiz
+        real(dp), intent(in) :: x(:), y1(:)
+        real(dp), intent(in), optional :: y2(:)
+        character(len=*), intent(in), optional :: color, label
+        real(dp), intent(in), optional :: alpha
+        logical, intent(in), optional :: where(:)
         integer :: n, i, j, k
         character(len=7) :: col
         logical :: first
@@ -4909,7 +4972,7 @@ contains
         n = min(size(x), size(y1))
         if (n < 1) return
         if (.not. present(where)) then
-            call add_fill(x(1:n), y1(1:n), y2, color, label, alpha)
+            call add_fill(horiz, x(1:n), y1(1:n), y2, color, label, alpha)
             return
         end if
 
@@ -4929,9 +4992,9 @@ contains
                 j = j + 1
             end do
             if (first) then
-                call add_fill(x(i:j), y1(i:j), slice(y2, i, j), color, label, alpha)
+                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), color, label, alpha)
             else
-                call add_fill(x(i:j), y1(i:j), slice(y2, i, j), col, alpha=alpha)
+                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), col, alpha=alpha)
             end if
             k = ax(cur_i)%n_series
             if (first .and. k >= 1) then
@@ -4942,7 +5005,42 @@ contains
             end if
             i = j + 1
         end do
-    end subroutine fill_between
+    end subroutine fill_core
+
+    ! matplotlib's stackplot: every row of y is one layer, drawn as a band
+    ! from the sum of the layers below it to that sum plus its own values.
+    subroutine stackplot(x, y, labels, colors, alpha)
+        real(dp), intent(in) :: x(:), y(:, :)
+        character(len=*), intent(in), optional :: labels(:), colors(:)
+        real(dp), intent(in), optional :: alpha
+        real(dp), allocatable :: lo(:), hi(:)
+        integer :: n, nl, k
+        logical :: has_c, has_l
+
+        call ensure_fig()
+        n = min(size(x), size(y, 2))
+        nl = size(y, 1)
+        if (n < 2 .or. nl < 1) return
+        allocate (lo(n), hi(n))
+        lo = 0.0_dp
+        do k = 1, nl
+            hi = lo + y(k, 1:n)
+            has_c = .false.
+            has_l = .false.
+            if (present(colors)) has_c = k <= size(colors)
+            if (present(labels)) has_l = k <= size(labels)
+            if (has_c .and. has_l) then
+                call add_fill(.false., x(1:n), hi, lo, colors(k), labels(k), alpha)
+            else if (has_c) then
+                call add_fill(.false., x(1:n), hi, lo, colors(k), alpha=alpha)
+            else if (has_l) then
+                call add_fill(.false., x(1:n), hi, lo, label=labels(k), alpha=alpha)
+            else
+                call add_fill(.false., x(1:n), hi, lo, alpha=alpha)
+            end if
+            lo = hi
+        end do
+    end subroutine stackplot
 
     ! y2(i:j) if it is there at all, which keeps the optional optional.
     function slice(v, i, j) result(w)
@@ -4957,7 +5055,8 @@ contains
         end if
     end function slice
 
-    subroutine add_fill(x, y1, y2, color, label, alpha)
+    subroutine add_fill(horiz, x, y1, y2, color, label, alpha)
+        logical, intent(in) :: horiz
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
         character(len=*), intent(in), optional :: color, label
@@ -4966,6 +5065,7 @@ contains
 
         is = new_shape_series(SERIES_FILL, x, y1, color, label, alpha)
         if (is < 1) return
+        ax(cur_i)%series(is)%horiz = horiz
         n = ax(cur_i)%series(is)%n
         allocate (ax(cur_i)%series(is)%y2(n))
         ax(cur_i)%series(is)%y2(1:n) = 0.0_dp
@@ -5040,6 +5140,38 @@ contains
         real(dp), intent(in), optional :: lw
         call add_ref_line(SERIES_VLINE, x, color, linestyle, lw, label)
     end subroutine axvline
+
+    ! An endless line through xy1, either through xy2 or with the given
+    ! slope. Like matplotlib's axline it is drawn to the edges of the axes
+    ! and does not stretch them. slope is meaningless on a log axis, and
+    ! matplotlib refuses it there; here it is simply taken literally.
+    subroutine axline(xy1, xy2, slope, color, linestyle, lw, label)
+        real(dp), intent(in) :: xy1(2)
+        real(dp), intent(in), optional :: xy2(2), slope
+        character(len=*), intent(in), optional :: color, linestyle, label
+        real(dp), intent(in), optional :: lw
+        real(dp) :: p2(2)
+        integer :: is
+
+        call ensure_fig()
+        if (present(xy2)) then
+            p2 = xy2
+        else if (present(slope)) then
+            p2 = [xy1(1) + 1.0_dp, xy1(2) + slope]
+        else
+            return
+        end if
+        is = new_shape_series(SERIES_AXLINE, [xy1(1), p2(1)], [xy1(2), p2(2)], &
+                              color, label)
+        if (is < 1) return
+        if (.not. present(color)) then
+            ax(cur_i)%series(is)%color = "#000000"
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        end if
+        if (present(linestyle)) ax(cur_i)%series(is)%linestyle = linestyle_from_str(linestyle)
+        ax(cur_i)%series(is)%linewidth = 1.5_dp
+        if (present(lw)) ax(cur_i)%series(is)%linewidth = lw
+    end subroutine axline
 
     subroutine add_ref_line(kd, v, color, linestyle, lw, label)
         integer, intent(in) :: kd
@@ -5374,6 +5506,25 @@ contains
             ! A pie sets its own limits, and horizontal bars use the two axes
             ! the other way round, so neither fits the loop below.
             if (a%series(i)%kind == SERIES_PIE) cycle
+            ! An endless line has no extent of its own: it is drawn to
+            ! whatever the rest of the plot decided the limits are.
+            if (a%series(i)%kind == SERIES_AXLINE) cycle
+            ! A band drawn along y reads the same three arrays with the
+            ! axes the other way round.
+            if (a%series(i)%kind == SERIES_FILL .and. a%series(i)%horiz) then
+                do j = 1, a%series(i)%n
+                    if (.not. (finite(a%series(i)%x(j)) .and. &
+                               finite(a%series(i)%y(j)) .and. &
+                               finite(a%series(i)%y2(j)))) cycle
+                    anyx = .true.
+                    anyy = .true.
+                    xmin = min(xmin, a%series(i)%y(j), a%series(i)%y2(j))
+                    xmax = max(xmax, a%series(i)%y(j), a%series(i)%y2(j))
+                    ymin = min(ymin, a%series(i)%x(j))
+                    ymax = max(ymax, a%series(i)%x(j))
+                end do
+                cycle
+            end if
             ! A patch widens the limits but never asks for any of its own:
             ! matplotlib leaves an axes holding nothing but patches at its
             ! default square, and only stretches to them once something
@@ -6638,17 +6789,76 @@ contains
             np = j1 - j0 + 1
             if (np >= 2) then
                 do j = 1, np
-                    px(j) = map_x(s%x(j0 + j - 1), xmin, xmax, ax_l, ax_w, xsc)
-                    py(j) = map_y(s%y(j0 + j - 1), ymin, ymax, ax_b, ax_h, ysc)
-                    ! Return along the lower edge to close the band.
-                    px(2*np - j + 1) = px(j)
-                    py(2*np - j + 1) = map_y(s%y2(j0 + j - 1), ymin, ymax, ax_b, ax_h, ysc)
+                    if (s%horiz) then
+                        px(j) = map_x(s%y(j0 + j - 1), xmin, xmax, ax_l, ax_w, xsc)
+                        py(j) = map_y(s%x(j0 + j - 1), ymin, ymax, ax_b, ax_h, ysc)
+                        px(2*np - j + 1) = map_x(s%y2(j0 + j - 1), xmin, xmax, ax_l, ax_w, xsc)
+                        py(2*np - j + 1) = py(j)
+                    else
+                        px(j) = map_x(s%x(j0 + j - 1), xmin, xmax, ax_l, ax_w, xsc)
+                        py(j) = map_y(s%y(j0 + j - 1), ymin, ymax, ax_b, ax_h, ysc)
+                        ! Return along the lower edge to close the band.
+                        px(2*np - j + 1) = px(j)
+                        py(2*np - j + 1) = map_y(s%y2(j0 + j - 1), ymin, ymax, ax_b, ax_h, ysc)
+                    end if
                 end do
                 call append_polygon(b, px, py, 2 * np, trim(s%color), s%alpha)
             end if
             j0 = j1 + 1
         end do
     end subroutine append_fill
+
+    ! An endless line, clipped to the axes rectangle in pixels by Liang and
+    ! Barsky's parameter test, which needs no special case for a line that
+    ! happens to be vertical or horizontal.
+    subroutine append_axline(b, s, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp) :: x1, y1, x2, y2, dx, dy, t0, t1
+
+        x1 = map_x(s%x(1), xmin, xmax, ax_l, ax_w, xsc)
+        y1 = map_y(s%y(1), ymin, ymax, ax_b, ax_h, ysc)
+        x2 = map_x(s%x(2), xmin, xmax, ax_l, ax_w, xsc)
+        y2 = map_y(s%y(2), ymin, ymax, ax_b, ax_h, ysc)
+        dx = x2 - x1
+        dy = y2 - y1
+        if (abs(dx) < 1.0e-9_dp .and. abs(dy) < 1.0e-9_dp) return
+
+        t0 = -1.0e9_dp
+        t1 = 1.0e9_dp
+        call slab(-dx, x1 - ax_l, t0, t1)
+        call slab(dx, ax_l + ax_w - x1, t0, t1)
+        call slab(-dy, y1 - (ax_b - ax_h), t0, t1)
+        call slab(dy, ax_b - y1, t0, t1)
+        if (t0 > t1) return
+        call append_line(b, x1 + t0*dx, y1 + t0*dy, x1 + t1*dx, y1 + t1*dy, &
+                         trim(s%color), s%linewidth, s%linestyle, s%alpha)
+    end subroutine append_axline
+
+    ! One edge of the clipping rectangle: p is the outward component of the
+    ! direction, q the distance to the edge. p < 0 means the line enters
+    ! through this edge, p > 0 that it leaves through it.
+    subroutine slab(p, q, t0, t1)
+        real(dp), intent(in) :: p, q
+        real(dp), intent(inout) :: t0, t1
+        real(dp) :: r
+        if (abs(p) < 1.0e-12_dp) then
+            ! Parallel to the edge: either wholly inside it, or nothing.
+            if (q < 0.0_dp) then
+                t0 = 1.0_dp
+                t1 = 0.0_dp
+            end if
+            return
+        end if
+        r = q/p
+        if (p < 0.0_dp) then
+            t0 = max(t0, r)
+        else
+            t1 = min(t1, r)
+        end if
+    end subroutine slab
 
     ! Vertical error bar with caps for point j.
     subroutine append_errorbar(b, s, j, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
@@ -8689,6 +8899,10 @@ contains
                 call append_line(b, px, ax_b, px, ax_b - ax_h, &
                                  trim(a%series(i)%color), a%series(i)%linewidth, &
                                  a%series(i)%linestyle, a%series(i)%alpha)
+                cycle
+            case (SERIES_AXLINE)
+                call append_axline(b, a%series(i), xmin, xmax, ymin, ymax, &
+                                   ax_l, ax_w, ax_b, ax_h, xsc, ysc)
                 cycle
             case (SERIES_HLINES)
                 do j = 1, n

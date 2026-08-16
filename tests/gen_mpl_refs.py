@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "fills",
     "axes_facecolor",
     "marker_detail",
     "text_options",
@@ -861,6 +862,18 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 91 stacked bands, a band along y, and an endless line
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    stx = np.arange(12.0)
+    sty = np.vstack([1.0 + 0.5 * stx, 2.0 + np.sin(0.5 * stx), 3.0 - 0.1 * stx])
+    axs[0].stackplot(stx, sty, labels=["low", "mid", "high"])
+    axs[0].legend(loc="upper left")
+    axs[0].set_title("stackplot")
+    axs[1].fill_betweenx(x, y - 1.5, np.cos(x) + 1.5, color="tab:orange", alpha=0.5)
+    axs[1].axline((0.0, 0.0), slope=1.5, color="tab:red", linestyle="--")
+    axs[1].set_title("fill_betweenx and axline")
+    save(fig, "fills")
 
     # 90 a background colour for one axes only
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
