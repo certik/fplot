@@ -35,16 +35,23 @@ call suptitle("figure title")
   scalar-or-array the way matplotlib's `s=` and `c=` do)
 - `step`, `stem`, `barh`, `pie`, `boxplot`, `violinplot`
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`
+- `fill_betweenx` for a band along y, `stackplot` for layers summed on top
+  of each other, and `axline` for an endless line through two points or
+  through one with a `slope=`
 - `text` and `annotate` (with a leader line to the annotated point), with
   `rotation=`, `va=`, a `bbox_facecolor=` box behind them and lines broken
   at `achar(10)`; `figtext` places on the canvas instead of in the axes
 - `imshow` with `cmap`, `extent`, `origin`, `vmin`/`vmax` and square-pixel
-  `aspect`, plus `colorbar`
+  `aspect`, plus `colorbar(label=, orientation=, fraction=, pad=, shrink=,
+  aspect=)`, upright or lying on its side
 - `contour` and `contourf` with automatic or explicit `levels`
 - Colormaps: `viridis`, `plasma`, `inferno`, `magma`, `gray`, `coolwarm`
 - Format strings: colors `bgrcmykw` / `C0`–`C9`, linestyles `-` `--` `:` `-.`,
   markers `o x . s ^ v < > * + D`
 - Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
+- `hatch=` on bars, fills and patches: `/`, `\`, `|`, `-`, `+` and `x`,
+  repeated to pack the lines closer, ruled across the shape and clipped
+  to it (matplotlib's dotted hatches are not drawn)
 - Marker and line detail on `plot`: `markersize=`, `markerfacecolor=`,
   `markeredgecolor=`, `markeredgewidth=`, `markevery=`, `drawstyle=` and
   a `dashes=` pattern of your own
@@ -56,6 +63,9 @@ call suptitle("figure title")
 - `savefig(file, transparent=, facecolor=)`; the extension picks the format,
   one of `.svg`, `.png`, `.pdf` or `.eps`, and `dpi=` sizes the PNG raster
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
+- `margins(m)` or `margins(x=, y=)` for the room left past the data, and
+  `autoscale(enable, axis=, tight=)`; `autoscale(.false.)` pins the limits
+  where the data has put them so far, so nothing drawn later moves them
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
 - `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
@@ -90,8 +100,9 @@ call suptitle("figure title")
 - `hist2d` and `hexbin` for counting points into square or hexagonal bins
 - `imshow(interpolation="bilinear")` to smooth an image instead of
   showing it as blocks
-- 3D axes: `plot3d`, `scatter3d` and `plot_surface`, with `view_init`,
-  `zlabel` and `zlim`, drawn with mplot3d's camera, panes and lighting
+- 3D axes: `plot3d`, `scatter3d`, `plot_surface` (flat or `cmap=`) and
+  `plot_wireframe`, with `view_init`, `zlabel` and `zlim`, drawn with
+  mplot3d's camera, panes and lighting
 - Polar axes: `polar(theta, r)`, or `set_polar()` on an axes, with the
   angular grid, the degree labels and the radial labels along 22.5°
 - Layered like matplotlib: images below patches, the grid above the
@@ -116,9 +127,11 @@ call suptitle("figure title")
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
   same number of ticks for the space available, and one decimal count
   shared by the whole axis
-- Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$` in any label, laid out
-  once and drawn by every backend, with the letters sloped and the rest
-  upright as TeX sets them
+- Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$`, `$\frac{a}{b}$`,
+  `$\sqrt{x}$` and the greek letters in any label, laid out once and
+  drawn by every backend, with the letters sloped and the rest upright as
+  TeX sets them. Text is UTF-8; PDF and EPS fill the greek as outlines,
+  since no core font has it
 - `fontweight=` and `fontstyle=` on `title`, `suptitle`, `xlabel`,
   `ylabel`, `text` and `annotate`: real bold and oblique faces, not a
   smeared or sheared regular one

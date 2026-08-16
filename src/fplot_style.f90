@@ -36,11 +36,76 @@ module fplot_style
     public :: is_hex_color
     public :: default_linewidth
     public :: default_markersize
+    public :: utf8_next, utf8_char
 
     real(dp), parameter :: default_linewidth = 1.5_dp
     real(dp), parameter :: default_markersize = 6.0_dp
 
 contains
+
+    ! ------------------------------------------------------------------
+    ! Text is UTF-8. Everything a plot says in Latin-1 is one byte and
+    ! comes through unchanged; the greek letters mathtext needs are the
+    ! reason there is a decoder here at all.
+    ! ------------------------------------------------------------------
+
+    ! The code point starting at s(i:i), and how many bytes it took. A
+    ! byte that is not the start of a well formed sequence is taken at
+    ! face value, so a Latin-1 string still says what it meant to say.
+    pure subroutine utf8_next(s, i, code, nb)
+        character(len=*), intent(in) :: s
+        integer, intent(in) :: i
+        integer, intent(out) :: code, nb
+        integer :: c, k, cc
+
+        c = iachar(s(i:i))
+        if (c < 128) then
+            code = c
+            nb = 1
+            return
+        else if (c >= 240) then
+            nb = 4
+            code = iand(c, 7)
+        else if (c >= 224) then
+            nb = 3
+            code = iand(c, 15)
+        else if (c >= 192) then
+            nb = 2
+            code = iand(c, 31)
+        else
+            code = c
+            nb = 1
+            return
+        end if
+        if (i + nb - 1 > len(s)) then
+            code = c
+            nb = 1
+            return
+        end if
+        do k = 1, nb - 1
+            cc = iachar(s(i + k:i + k))
+            if (cc < 128 .or. cc >= 192) then
+                code = c
+                nb = 1
+                return
+            end if
+            code = code*64 + iand(cc, 63)
+        end do
+    end subroutine utf8_next
+
+    ! One code point as UTF-8 bytes.
+    pure function utf8_char(code) result(s)
+        integer, intent(in) :: code
+        character(len=:), allocatable :: s
+        if (code < 128) then
+            s = achar(code)
+        else if (code < 2048) then
+            s = achar(192 + code/64)//achar(128 + iand(code, 63))
+        else
+            s = achar(224 + code/4096)//achar(128 + iand(code/64, 63)) &
+                //achar(128 + iand(code, 63))
+        end if
+    end function utf8_char
 
     pure function is_hex_color(s) result(ok)
         character(len=*), intent(in) :: s
