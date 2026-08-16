@@ -34,6 +34,7 @@ module fplot
     public :: axis, set_aspect, tick_params, spines
     public :: text, annotate
     public :: xticks, yticks, minorticks_on
+    public :: ticklabel_format, tick_format, tick_locator
     public :: imshow, colorbar, contour, contourf, clabel
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
@@ -48,6 +49,14 @@ module fplot
     public :: axes, subplots, sca
     public :: style_use, rc
 
+    ! How the ticks of an axis are written. FMT_AUTO is matplotlib's
+    ! ScalarFormatter, which is what an axis does unless it is told
+    ! otherwise; the rest are its named formatters.
+    integer, parameter :: FMT_AUTO = 0
+    integer, parameter :: FMT_PERCENT = 1
+    integer, parameter :: FMT_COMMA = 2
+    integer, parameter :: FMT_FIXED = 3
+
     ! What one axis agreed to write on its ticks: how many decimals, and
     ! the offset and power of ten factored out of every label and written
     ! once at the end of the axis instead.
@@ -55,6 +64,8 @@ module fplot
         integer :: dec = 0
         real(dp) :: off = 0.0_dp
         integer :: oom = 0
+        integer :: style = FMT_AUTO
+        real(dp) :: whole = 100.0_dp
     end type tickfmt_t
 
     ! Initial slot count for the per-axes series and text arrays; both grow
@@ -275,6 +286,17 @@ module fplot
         ! An axis whose numbers are days since 1970-01-01, and so takes
         ! its ticks and labels from the calendar.
         logical :: x_date = .false., y_date = .false.
+        ! Formatter and locator chosen by the user. A style of FMT_AUTO, a
+        ! decimal count of -1, a base of zero and a bin count of zero all
+        ! mean "whatever matplotlib would have done".
+        integer :: xfmt_style = FMT_AUTO, yfmt_style = FMT_AUTO
+        integer :: xfmt_dec = -1, yfmt_dec = -1
+        real(dp) :: xfmt_whole = 100.0_dp, yfmt_whole = 100.0_dp
+        logical :: x_use_offset = .true., y_use_offset = .true.
+        integer :: x_scilo = -5, x_scihi = 6
+        integer :: y_scilo = -5, y_scihi = 6
+        real(dp) :: xtick_base = 0.0_dp, ytick_base = 0.0_dp
+        integer :: xtick_nbins = 0, ytick_nbins = 0
         logical :: has_mesh = .false.
         real(dp), allocatable :: mesh_x(:), mesh_y(:)
         ! Data units per point in y over the same in x. Zero means auto.
@@ -1187,11 +1209,12 @@ contains
         v = 0.0_dp
         call compute_limits(a, xmin, xmax, ymin, ymax)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        a%ysc, 9, a%y_date, t, nt, du)
+                        a%ysc, nbins_for(a%ytick_nbins, 0.0_dp, a%ytick_size, .false.), &
+                        a%y_date, t, nt, du, a%ytick_base)
         do i = 1, nt
             call tick_label(a%ytick_labeled, a%ytick_lab, i, t(i), a%ysc, &
-                            axis_fmt(t, nt, a%ysc, min(ymin, ymax), max(ymin, ymax)), &
-                            du, lbl, ln)
+                            axis_fmt(t, nt, a, .false., min(ymin, ymax), &
+                                     max(ymin, ymax)), du, lbl, ln)
             if (math_is(lbl(1:ln))) then
                 v = max(v, math_width(lbl(1:ln), a%ytick_size))
             else
@@ -2053,6 +2076,131 @@ contains
             ax(cur_i)%legend_has_bbox = .true.
         end if
     end subroutine legend
+
+
+    ! ------------------------------------------------------------------
+    ! Formatters and locators. matplotlib reaches these through the axis
+    ! object (set_major_formatter, set_major_locator) and a pyplot
+    ! shortcut; there is one shortcut per job here instead, because a
+    ! formatter object of our own would be a class with one method and
+    ! nothing to say.
+    ! ------------------------------------------------------------------
+
+    ! matplotlib's ticklabel_format: whether an axis may factor an offset
+    ! or a power of ten out of its labels, and from where.
+    subroutine ticklabel_format(axis, style, useoffset, scilimits)
+        character(len=*), intent(in), optional :: axis, style
+        logical, intent(in), optional :: useoffset
+        integer, intent(in), optional :: scilimits(2)
+        logical :: dox, doy
+        integer :: lo, hi
+
+        call ensure_fig()
+        call which_axis(axis, dox, doy)
+        if (present(useoffset)) then
+            if (dox) ax(cur_i)%x_use_offset = useoffset
+            if (doy) ax(cur_i)%y_use_offset = useoffset
+        end if
+        lo = -5
+        hi = 6
+        if (present(style)) then
+            select case (lower(style))
+            case ("plain")
+                ! Never factor a power of ten out: no limit is ever met.
+                lo = -huge(1)/2
+                hi = huge(1)/2
+            case ("sci", "scientific")
+                ! Always factor one out, which is what (0, 0) means.
+                lo = 0
+                hi = 0
+            end select
+        end if
+        if (present(scilimits)) then
+            lo = scilimits(1)
+            hi = scilimits(2)
+        end if
+        if (present(style) .or. present(scilimits)) then
+            if (dox) then
+                ax(cur_i)%x_scilo = lo
+                ax(cur_i)%x_scihi = hi
+            end if
+            if (doy) then
+                ax(cur_i)%y_scilo = lo
+                ax(cur_i)%y_scihi = hi
+            end if
+        end if
+    end subroutine ticklabel_format
+
+    ! One of matplotlib's named formatters: "percent" is PercentFormatter,
+    ! "comma" is a StrMethodFormatter with a thousands separator, "fixed"
+    ! is a FormatStrFormatter with a set number of decimals, and "auto" is
+    ! the ScalarFormatter every axis starts with.
+    subroutine tick_format(axis, style, decimals, whole)
+        character(len=*), intent(in) :: style
+        character(len=*), intent(in), optional :: axis
+        integer, intent(in), optional :: decimals
+        real(dp), intent(in), optional :: whole
+        logical :: dox, doy
+        integer :: st, dec
+
+        call ensure_fig()
+        call which_axis(axis, dox, doy)
+        select case (lower(style))
+        case ("percent"); st = FMT_PERCENT
+        case ("comma", "thousands"); st = FMT_COMMA
+        case ("fixed"); st = FMT_FIXED
+        case default; st = FMT_AUTO
+        end select
+        dec = -1
+        if (present(decimals)) dec = decimals
+        ! A percentage with no decimals asked for is written whole, which
+        ! is what PercentFormatter defaults to.
+        if (st == FMT_PERCENT .and. dec < 0) dec = 0
+        if (dox) then
+            ax(cur_i)%xfmt_style = st
+            ax(cur_i)%xfmt_dec = dec
+            if (present(whole)) ax(cur_i)%xfmt_whole = whole
+        end if
+        if (doy) then
+            ax(cur_i)%yfmt_style = st
+            ax(cur_i)%yfmt_dec = dec
+            if (present(whole)) ax(cur_i)%yfmt_whole = whole
+        end if
+    end subroutine tick_format
+
+    ! base is MultipleLocator, nbins is MaxNLocator. Neither moves the
+    ! limits; they only decide where the ticks land inside them.
+    subroutine tick_locator(axis, base, nbins)
+        character(len=*), intent(in), optional :: axis
+        real(dp), intent(in), optional :: base
+        integer, intent(in), optional :: nbins
+        logical :: dox, doy
+
+        call ensure_fig()
+        call which_axis(axis, dox, doy)
+        if (present(base)) then
+            if (dox) ax(cur_i)%xtick_base = base
+            if (doy) ax(cur_i)%ytick_base = base
+        end if
+        if (present(nbins)) then
+            if (dox) ax(cur_i)%xtick_nbins = nbins
+            if (doy) ax(cur_i)%ytick_nbins = nbins
+        end if
+    end subroutine tick_locator
+
+    ! "x", "y" or "both", the way every matplotlib call that takes an axis
+    ! name spells it. Absent means both.
+    subroutine which_axis(axis, dox, doy)
+        character(len=*), intent(in), optional :: axis
+        logical, intent(out) :: dox, doy
+        dox = .true.
+        doy = .true.
+        if (.not. present(axis)) return
+        select case (lower(axis))
+        case ("x"); doy = .false.
+        case ("y"); dox = .false.
+        end select
+    end subroutine which_axis
 
     subroutine xticks(vals, labels)
         real(dp), intent(in) :: vals(:)
@@ -5696,8 +5844,28 @@ contains
         end if
     end function tick_space
 
+    ! How many intervals to ask the locator for: what the user asked for
+    ! with MaxNLocator, else as many as the axis is long enough to label.
+    ! A length of zero is the layout pass, which has no geometry yet and
+    ! uses matplotlib's own default of nine.
+    pure function nbins_for(nbins, length, size, horizontal) result(n)
+        integer, intent(in) :: nbins
+        real(dp), intent(in) :: length, size
+        logical, intent(in) :: horizontal
+        integer :: n
+        if (nbins > 0) then
+            n = nbins
+        else if (length <= 0.0_dp) then
+            n = 9
+        else
+            n = tick_space(length, size, horizontal)
+        end if
+    end function nbins_for
+
+    ! base, when it is positive, is MultipleLocator: ticks every base
+    ! units rather than wherever the automatic locator would put them.
     subroutine axis_ticks(n_user, user_pos, vmin, vmax, sc, nbins, is_date, &
-                          t, nt, date_unit)
+                          t, nt, date_unit, base)
         integer, intent(in) :: n_user
         real(dp), intent(in) :: user_pos(MAX_TICKS), vmin, vmax
         type(scale_t), intent(in) :: sc
@@ -5706,8 +5874,15 @@ contains
         real(dp), intent(out) :: t(MAX_TICKS)
         integer, intent(out) :: nt
         integer, intent(out) :: date_unit
+        real(dp), intent(in), optional :: base
 
         date_unit = 0
+        if (present(base)) then
+            if (base > 0.0_dp .and. n_user == 0) then
+                call multiple_ticks(vmin, vmax, base, t, nt)
+                return
+            end if
+        end if
         if (n_user < 0) then
             nt = 0
         else if (n_user > 0) then
@@ -6687,7 +6862,14 @@ contains
         else if (sc%kind == SCALE_LOG) then
             call format_tick_to(v, .true., out, n)
         else
-            call format_tick_fixed((v - f%off)/10.0_dp**f%oom, f%dec, out, n)
+            select case (f%style)
+            case (FMT_PERCENT)
+                call format_percent(v, f%whole, f%dec, out, n)
+            case (FMT_COMMA)
+                call format_grouped(v, f%dec, out, n)
+            case default
+                call format_tick_fixed((v - f%off)/10.0_dp**f%oom, f%dec, out, n)
+            end select
         end if
     end subroutine tick_label
 
@@ -6708,17 +6890,40 @@ contains
     ! The same for an axis that may factor an offset or a power of ten out
     ! of its labels. Only a linear axis does; a log or date axis writes its
     ! own labels and has nothing to factor.
-    function axis_fmt(t, nt, sc, vmin, vmax) result(f)
+    function axis_fmt(t, nt, a, is_x, vmin, vmax) result(f)
         real(dp), intent(in) :: t(MAX_TICKS), vmin, vmax
         integer, intent(in) :: nt
-        type(scale_t), intent(in) :: sc
+        type(axes_t), intent(in) :: a
+        logical, intent(in) :: is_x
         type(tickfmt_t) :: f
+        type(scale_t) :: sc
+
+        sc = a%ysc
+        if (is_x) sc = a%xsc
         if (sc%kind /= SCALE_LINEAR) then
             f%dec = -1
             return
         end if
-        call tick_offset(t, nt, vmin, vmax, f%off, f%oom)
+        if (is_x) then
+            f%style = a%xfmt_style
+            f%whole = a%xfmt_whole
+            call tick_offset(t, nt, vmin, vmax, f%off, f%oom, &
+                             a%x_use_offset, a%x_scilo, a%x_scihi)
+        else
+            f%style = a%yfmt_style
+            f%whole = a%yfmt_whole
+            call tick_offset(t, nt, vmin, vmax, f%off, f%oom, &
+                             a%y_use_offset, a%y_scilo, a%y_scihi)
+        end if
+        ! A named formatter writes the value itself, so nothing may be
+        ! taken out of it first.
+        if (f%style /= FMT_AUTO) then
+            f%off = 0.0_dp
+            f%oom = 0
+        end if
         f%dec = tick_decimals_at(t, nt, f%off, f%oom)
+        if (is_x .and. a%xfmt_dec >= 0) f%dec = a%xfmt_dec
+        if (.not. is_x .and. a%yfmt_dec >= 0) f%dec = a%yfmt_dec
     end function axis_fmt
 
     ! A polar axes. The box holds the largest circle that fits: the angle
@@ -7346,13 +7551,13 @@ contains
         ysc = a%ysc
 
         call axis_ticks(a%n_xticks, a%xtick_pos, xmin, xmax, xsc, &
-                        tick_space(ax_w, a%xtick_size, .true.), a%x_date, &
-                        xticks, nxt, x_unit)
+                        nbins_for(a%xtick_nbins, ax_w, a%xtick_size, .true.), a%x_date, &
+                        xticks, nxt, x_unit, a%xtick_base)
         call axis_ticks(a%n_yticks, a%ytick_pos, min(ymin, ymax), max(ymin, ymax), &
-                        ysc, tick_space(ax_h, a%ytick_size, .false.), a%y_date, &
-                        yticks, nyt, y_unit)
-        xfmt = axis_fmt(xticks, nxt, xsc, xmin, xmax)
-        yfmt = axis_fmt(yticks, nyt, ysc, min(ymin, ymax), max(ymin, ymax))
+                        ysc, nbins_for(a%ytick_nbins, ax_h, a%ytick_size, .false.), &
+                        a%y_date, yticks, nyt, y_unit, a%ytick_base)
+        xfmt = axis_fmt(xticks, nxt, a, .true., xmin, xmax)
+        yfmt = axis_fmt(yticks, nyt, a, .false., min(ymin, ymax), max(ymin, ymax))
         if (a%minor_ticks) then
             call minor_positions(xticks, nxt, xmin, xmax, xsc, xminor, nxm)
             call minor_positions(yticks, nyt, ymin, ymax, ysc, yminor, nym)

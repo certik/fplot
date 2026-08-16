@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 from matplotlib.colors import LogNorm
 import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle, Circle, Ellipse, Polygon
@@ -74,6 +75,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "formatters",
     "offset_text",
     "surface3d",
     "line3d",
@@ -844,6 +846,15 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 78 named formatters and a locator
+    fig, ax = setup_fig()
+    ax.plot(1000 * np.arange(len(x)), 50 + 40 * y)
+    ax.yaxis.set_major_formatter(mticker.PercentFormatter())
+    ax.xaxis.set_major_formatter(mticker.StrMethodFormatter("{x:,.0f}"))
+    ax.yaxis.set_major_locator(mticker.MultipleLocator(25))
+    ax.set_title("formatters")
+    save(fig, "formatters")
 
     # 77 a large y axis and an offset x axis
     fig, ax = setup_fig()

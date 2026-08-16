@@ -844,6 +844,20 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 78) named formatters and a locator: a percentage on y, thousands on x,
+!     and ticks every 250 units
+    call clf()
+    do i = 1, n
+        big(i) = 1000.0_dp*real(i - 1, dp)
+        bigy(i) = 50.0_dp + 40.0_dp*y(i)
+    end do
+    call plot(big, bigy)
+    call tick_format("y", "percent")
+    call tick_format("x", "comma")
+    call tick_locator("y", base=25.0_dp)
+    call title("formatters")
+    call save_all("formatters")
+
 ! 77) a large y axis and an offset x axis: what the tick labels leave out
 !     is written once at the end of each axis
     call clf()

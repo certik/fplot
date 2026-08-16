@@ -14,6 +14,7 @@ module fplot_ticks
     public :: tick_decimals
     public :: format_tick_fixed
     public :: tick_offset, tick_decimals_at, format_offset_text
+    public :: multiple_ticks, format_percent, format_grouped
 
 contains
 
@@ -444,25 +445,37 @@ contains
         r = floor(v/10.0_dp**k)
     end function decade_floor
 
-    pure subroutine tick_offset(locs, n, vmin, vmax, off, oom)
+    ! use_off and the power limits are what ticklabel_format sets; their
+    ! defaults are the rcParams ones, axes.formatter.useoffset and .limits.
+    pure subroutine tick_offset(locs, n, vmin, vmax, off, oom, use_off, plo, phi)
         real(dp), intent(in) :: locs(:), vmin, vmax
         integer, intent(in) :: n
         real(dp), intent(out) :: off
         integer, intent(out) :: oom
-        ! rcParams axes.formatter.offset_threshold and .limits.
-        integer, parameter :: THRESHOLD = 4, PLO = -5, PHI = 6
+        logical, intent(in), optional :: use_off
+        integer, intent(in), optional :: plo, phi
+        ! rcParams axes.formatter.offset_threshold.
+        integer, parameter :: THRESHOLD = 4
         real(dp) :: lmin, lmax, amin, amax, sgn, span
-        integer :: k, kmax
+        integer :: k, kmax, lo_lim, hi_lim
+        logical :: want_off
 
         off = 0.0_dp
         oom = 0
+        want_off = .true.
+        if (present(use_off)) want_off = use_off
+        lo_lim = -5
+        hi_lim = 6
+        if (present(plo)) lo_lim = plo
+        if (present(phi)) hi_lim = phi
         if (n < 1) return
         lmin = minval(locs(1:n))
         lmax = maxval(locs(1:n))
 
         ! An offset is only worth it when the ticks all have the same sign,
         ! and only when it saves at least four digits.
-        if (lmin /= lmax .and. .not. (lmin <= 0.0_dp .and. lmax >= 0.0_dp)) then
+        if (want_off .and. lmin /= lmax .and. &
+            .not. (lmin <= 0.0_dp .and. lmax >= 0.0_dp)) then
             amin = min(abs(lmin), abs(lmax))
             amax = max(abs(lmin), abs(lmax))
             sgn = sign(1.0_dp, lmin)
@@ -497,7 +510,7 @@ contains
             amax = maxval(abs(locs(1:n)))
             if (amax > 0.0_dp) oom = floor(log10(amax))
         end if
-        if (oom > PLO .and. oom < PHI) oom = 0
+        if (oom > lo_lim .and. oom < hi_lim) oom = 0
     end subroutine tick_offset
 
     ! The decimals the labels need once the offset and the power of ten
@@ -572,5 +585,81 @@ contains
         end if
         n = len_trim(s)
     end subroutine format_offset_text
+
+
+    ! Ticks every base units, which is matplotlib's MultipleLocator.
+    pure subroutine multiple_ticks(vmin, vmax, base, t, n)
+        real(dp), intent(in) :: vmin, vmax, base
+        real(dp), intent(out) :: t(MAX_TICKS)
+        integer, intent(out) :: n
+        integer :: k, k0, k1
+
+        n = 0
+        if (base <= 0.0_dp) return
+        k0 = ceiling(min(vmin, vmax)/base - 1.0e-9_dp)
+        k1 = floor(max(vmin, vmax)/base + 1.0e-9_dp)
+        do k = k0, k1
+            if (n >= MAX_TICKS) exit
+            n = n + 1
+            t(n) = real(k, dp)*base
+        end do
+    end subroutine multiple_ticks
+
+    ! A percentage, as matplotlib's PercentFormatter writes it: the value
+    ! is a fraction of whole, and whole is 100 when the data already is a
+    ! percentage.
+    pure subroutine format_percent(v, whole, dec, s, n)
+        real(dp), intent(in) :: v, whole
+        integer, intent(in) :: dec
+        character(len=*), intent(out) :: s
+        integer, intent(out) :: n
+        character(len=32) :: tmp
+        character(len=16) :: fmt
+
+        if (dec <= 0) then
+            write (tmp, "(I0)") nint(v/whole*100.0_dp)
+        else
+            write (fmt, "(A,I0,A)") "(F24.", dec, ")"
+            write (tmp, fmt) v/whole*100.0_dp
+        end if
+        s = trim(adjustl(tmp))//"%"
+        n = len_trim(s)
+    end subroutine format_percent
+
+    ! The integer part in groups of three, which is what a reader wants of
+    ! an axis counting people or dollars.
+    pure subroutine format_grouped(v, dec, s, n)
+        real(dp), intent(in) :: v
+        integer, intent(in) :: dec
+        character(len=*), intent(out) :: s
+        integer, intent(out) :: n
+        character(len=48) :: tmp, out
+        character(len=16) :: fmt
+        integer :: i, k, dot, first, d
+
+        d = max(0, dec)
+        if (d == 0) then
+            write (tmp, "(I0)") nint(abs(v))
+        else
+            write (fmt, "(A,I0,A)") "(F32.", d, ")"
+            write (tmp, fmt) abs(v)
+        end if
+        tmp = adjustl(tmp)
+        dot = index(tmp, ".")
+        if (dot == 0) dot = len_trim(tmp) + 1
+
+        out = ""
+        k = 0
+        first = dot - 1
+        do i = first, 1, -1
+            out = tmp(i:i)//trim(out)
+            k = k + 1
+            if (mod(k, 3) == 0 .and. i > 1) out = ","//trim(out)
+        end do
+        if (dot <= len_trim(tmp)) out = trim(out)//tmp(dot:len_trim(tmp))
+        if (v < 0.0_dp) out = "-"//trim(out)
+        s = trim(out)
+        n = len_trim(s)
+    end subroutine format_grouped
 
 end module fplot_ticks

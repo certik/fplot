@@ -51,6 +51,11 @@ call suptitle("figure title")
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
 - `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
   `xticks` / `yticks` with optional labels, `minorticks_on`
+- Formatters and locators: `tick_format(axis, "percent"/"comma"/"fixed")`,
+  `tick_locator(axis, base=, nbins=)` and `ticklabel_format(style=,
+  useoffset=, scilimits=)`. An axis whose labels would otherwise repeat
+  themselves factors the shared offset and power of ten out into a single
+  label at its end, as matplotlib's ScalarFormatter does
 - Font sizes: `fontsize=` on `title` / `xlabel` / `ylabel` / `suptitle`, and
   `set_fontsize(size=, title=, labels=, ticks=, legend=)` to set them globally
 - `savefig(dpi=, bbox_inches="tight", pad_inches=)` to crop to the drawing
