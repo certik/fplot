@@ -7,21 +7,9 @@
 module fplot_artist
     use fplot_colors
     use fplot_style
-    use fplot_scale
-    use fplot_cmap
-    use fplot_contour
-    use fplot_tri, only: delaunay
-    use fplot_ticks
-    use fplot_svg
     use fplot_render
-    use fplot_backend_svg
-    use fplot_backend_pdf
-    use fplot_backend_eps
-    use fplot_gif, only: gif_encode
-    use fplot_proj3d
-    use fplot_backend_png
+    use fplot_state
     use fplot_mathtext
-    use fplot_dates
     use fplot_state
     use fplot_state
     implicit none
