@@ -127,6 +127,13 @@ module fplot
 
     ! What a series draws. LINE covers plot/scatter/semilog*; the rest are
     ! the shape-based plot types.
+    ! How a value is turned into a place on the colormap.
+    integer, parameter :: NORM_LINEAR = 0
+    integer, parameter :: NORM_LOG = 1
+    integer, parameter :: NORM_CENTER = 2
+    integer, parameter :: NORM_POWER = 3
+    integer, parameter :: NORM_SYMLOG = 4
+
     integer, parameter :: SERIES_LINE = 0
     integer, parameter :: SERIES_BAR = 1
     integer, parameter :: SERIES_FILL = 2
@@ -345,7 +352,10 @@ module fplot
         real(dp) :: img_vmin = 0.0_dp, img_vmax = 1.0_dp
         ! How a value is placed on the colormap: linearly, or by its
         ! logarithm, matplotlib's LogNorm.
-        logical :: img_log_norm = .false.
+        ! How values are mapped onto the colormap.
+        integer :: img_norm = NORM_LINEAR
+        real(dp) :: img_vcenter = 0.0_dp, img_gamma = 1.0_dp
+        real(dp) :: img_linthresh = 1.0_dp
         ! BoundaryNorm: the edges of the bands the data is sorted into. The
         ! image then takes one flat color per band rather than a ramp.
         real(dp), allocatable :: img_bounds(:)
@@ -2233,15 +2243,17 @@ contains
     end subroutine ax_stem
 
     subroutine ax_imshow(self, z, cmap, vmin, vmax, extent, origin, aspect, &
-                         norm, interpolation, boundaries)
+                         norm, interpolation, boundaries, vcenter, gamma, &
+                         linthresh)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: z(:, :)
         character(len=*), intent(in), optional :: cmap, origin, aspect, norm
         character(len=*), intent(in), optional :: interpolation
         real(dp), intent(in), optional :: vmin, vmax, extent(4), boundaries(:)
+        real(dp), intent(in), optional :: vcenter, gamma, linthresh
         call ax_sca(self)
         call imshow(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
-                    interpolation, boundaries)
+                    interpolation, boundaries, vcenter, gamma, linthresh)
     end subroutine ax_imshow
 
     subroutine ax_imshow_rgb(self, z, extent, origin, aspect)
@@ -2265,13 +2277,14 @@ contains
         call yaxis_date()
     end subroutine ax_yaxis_date
 
-    subroutine ax_pcolormesh(self, x, y, c, cmap, vmin, vmax, norm)
+    subroutine ax_pcolormesh(self, x, y, c, cmap, vmin, vmax, norm, vcenter, &
+                             gamma, linthresh)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y(:), c(:, :)
         character(len=*), intent(in), optional :: cmap, norm
-        real(dp), intent(in), optional :: vmin, vmax
+        real(dp), intent(in), optional :: vmin, vmax, vcenter, gamma, linthresh
         call ax_sca(self)
-        call pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+        call pcolormesh(x, y, c, cmap, vmin, vmax, norm, vcenter, gamma, linthresh)
     end subroutine ax_pcolormesh
 
     subroutine ax_clabel(self, fontsize)
@@ -3320,10 +3333,11 @@ contains
     ! origin="upper", row 1 is drawn at the top, which is why that case gives
     ! a descending y axis exactly as matplotlib does.
     subroutine imshow_z(z, cmap, vmin, vmax, extent, origin, aspect, norm, &
-                        interpolation, boundaries)
+                        interpolation, boundaries, vcenter, gamma, linthresh)
         real(dp), intent(in) :: z(:, :)
         character(len=*), intent(in), optional :: cmap, origin, aspect, norm, interpolation
         real(dp), intent(in), optional :: vmin, vmax, extent(4), boundaries(:)
+        real(dp), intent(in), optional :: vcenter, gamma, linthresh
         integer :: nr, nc
         real(dp) :: lo, hi
 
@@ -3345,8 +3359,9 @@ contains
         if (present(interpolation)) &
             ax(cur_i)%img_bilinear = trim(interpolation) == "bilinear"
 
-        ax(cur_i)%img_log_norm = .false.
-        if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
+        ax(cur_i)%img_norm = NORM_LINEAR
+        if (present(norm)) ax(cur_i)%img_norm = norm_from_str(norm)
+        call norm_params(vcenter, gamma, linthresh)
 
         if (allocated(ax(cur_i)%img_bounds)) deallocate (ax(cur_i)%img_bounds)
         if (present(boundaries)) then
@@ -3356,7 +3371,7 @@ contains
             end if
         end if
 
-        if (ax(cur_i)%img_log_norm) then
+        if (ax(cur_i)%img_norm == NORM_LOG) then
             ! A log scale cannot start at zero, so the smallest positive
             ! sample sets the bottom of the range.
             lo = huge(1.0_dp)
@@ -3422,7 +3437,7 @@ contains
         ax(cur_i)%has_cmap_src = .false.
         ax(cur_i)%has_mesh = .false.
         ax(cur_i)%img_bilinear = .false.
-        ax(cur_i)%img_log_norm = .false.
+        ax(cur_i)%img_norm = NORM_LINEAR
 
         ax(cur_i)%img_origin_upper = .true.
         if (present(origin)) ax(cur_i)%img_origin_upper = trim(origin) /= "lower"
@@ -4130,10 +4145,11 @@ contains
     ! y are the edges, one more than the samples along that direction; if
     ! they are the same length as the samples they are taken as centres,
     ! which is matplotlib's shading="nearest".
-    subroutine pcolormesh(x, y, c, cmap, vmin, vmax, norm)
+    subroutine pcolormesh(x, y, c, cmap, vmin, vmax, norm, vcenter, gamma, &
+                          linthresh)
         real(dp), intent(in) :: x(:), y(:), c(:, :)
         character(len=*), intent(in), optional :: cmap, norm
-        real(dp), intent(in), optional :: vmin, vmax
+        real(dp), intent(in), optional :: vmin, vmax, vcenter, gamma, linthresh
         integer :: nr, nc
         real(dp) :: lo, hi
 
@@ -4158,10 +4174,11 @@ contains
 
         ax(cur_i)%img_cmap = CMAP_VIRIDIS
         if (present(cmap)) ax(cur_i)%img_cmap = cmap_from_str(cmap)
-        ax(cur_i)%img_log_norm = .false.
-        if (present(norm)) ax(cur_i)%img_log_norm = trim(norm) == "log"
+        ax(cur_i)%img_norm = NORM_LINEAR
+        if (present(norm)) ax(cur_i)%img_norm = norm_from_str(norm)
+        call norm_params(vcenter, gamma, linthresh)
 
-        if (ax(cur_i)%img_log_norm) then
+        if (ax(cur_i)%img_norm == NORM_LOG) then
             lo = huge(1.0_dp)
             if (any(c > 0.0_dp)) lo = minval(c, mask=(c > 0.0_dp))
             hi = maxval(c)
@@ -8591,7 +8608,7 @@ contains
             ! A tick at every band edge, which is what the bands mean.
             nt = min(MAX_TICKS, size(a%img_bounds))
             cb_ticks(1:nt) = a%img_bounds(1:nt)
-        else if (a%img_log_norm) then
+        else if (a%img_norm == NORM_LOG) then
             call log_ticks(lo, hi, cb_ticks, nt)
         else if (a%cbar_horiz) then
             call linear_ticks(lo, hi, tick_space(bw, a%xtick_size, .true.), &
@@ -8601,14 +8618,16 @@ contains
                               cb_ticks, nt)
         end if
         dec = -1
-        if (.not. a%img_log_norm) dec = tick_decimals(cb_ticks, nt)
+        if (.not. a%img_norm == NORM_LOG) dec = tick_decimals(cb_ticks, nt)
 
         do i = 1, nt
             v = cb_ticks(i)
             if (v < lo .or. v > hi) cycle
-            t = (v - lo) / (hi - lo)
-            if (a%img_log_norm) t = cmap_t(a, v)
-            if (a%img_log_norm) then
+            t = (v - lo)/(hi - lo)
+            ! Bands place their ticks at the edges they stand for; every
+            ! other norm puts a tick where the norm puts the value.
+            if (.not. allocated(a%img_bounds)) t = cmap_t(a, v)
+            if (a%img_norm == NORM_LOG) then
                 call format_tick_to(v, .true., lbl, ln)
             else
                 call format_tick_fixed(v, dec, lbl, ln)
@@ -8663,6 +8682,41 @@ contains
     end function fmt_pt
 
     ! Per-point color when scatter mapped c values, otherwise the series color.
+    ! The knobs the nonlinear norms turn. A centred norm needs a centre;
+    ! without one it would be the plain linear norm anyway.
+    subroutine norm_params(vcenter, gamma, linthresh)
+        real(dp), intent(in), optional :: vcenter, gamma, linthresh
+        if (present(vcenter)) ax(cur_i)%img_vcenter = vcenter
+        if (present(gamma)) ax(cur_i)%img_gamma = gamma
+        if (present(linthresh)) ax(cur_i)%img_linthresh = linthresh
+    end subroutine norm_params
+
+    pure function norm_from_str(s) result(k)
+        character(len=*), intent(in) :: s
+        integer :: k
+        select case (trim(s))
+        case ("log"); k = NORM_LOG
+        case ("centered", "twoslope"); k = NORM_CENTER
+        case ("power"); k = NORM_POWER
+        case ("symlog"); k = NORM_SYMLOG
+        case default; k = NORM_LINEAR
+        end select
+    end function norm_from_str
+
+    ! matplotlib's SymLogNorm with base 10 and linscale 1: linear within
+    ! linthresh of zero, logarithmic outside it, and continuous at the join.
+    pure function symlog_fwd(v, linthresh) result(u)
+        real(dp), intent(in) :: v, linthresh
+        real(dp) :: u, adj, lt
+        lt = max(linthresh, tiny(1.0_dp))
+        adj = 1.0_dp/(1.0_dp - exp(-1.0_dp))
+        if (abs(v) <= lt) then
+            u = v*adj
+        else
+            u = sign(lt*(adj + log10(abs(v)/lt)), v)
+        end if
+    end function symlog_fwd
+
     ! Where a value sits on the colormap, in [0, 1].
     pure function cmap_t(a, v) result(t)
         type(axes_t), intent(in) :: a
@@ -8689,17 +8743,41 @@ contains
             end if
             return
         end if
-        if (a%img_log_norm) then
+        select case (a%img_norm)
+        case (NORM_LOG)
             ! Anything at or below zero has no logarithm, so it takes the
             ! bottom of the map, as matplotlib's LogNorm does.
             if (v <= 0.0_dp .or. lo <= 0.0_dp .or. hi <= lo) then
                 t = 0.0_dp
             else
-                t = (log10(v) - log10(lo)) / (log10(hi) - log10(lo))
+                t = (log10(v) - log10(lo))/(log10(hi) - log10(lo))
             end if
-        else
-            t = (v - lo) / (hi - lo)
-        end if
+        case (NORM_CENTER)
+            ! TwoSlopeNorm: the centre lands in the middle of the map, and
+            ! each side is stretched to fill its half.
+            if (v < a%img_vcenter) then
+                t = 0.0_dp
+                if (a%img_vcenter > lo) &
+                    t = 0.5_dp*(v - lo)/(a%img_vcenter - lo)
+            else
+                t = 1.0_dp
+                if (hi > a%img_vcenter) &
+                    t = 0.5_dp + 0.5_dp*(v - a%img_vcenter)/(hi - a%img_vcenter)
+            end if
+        case (NORM_POWER)
+            t = (v - lo)/(hi - lo)
+            t = max(0.0_dp, min(1.0_dp, t))**a%img_gamma
+        case (NORM_SYMLOG)
+            t = symlog_fwd(hi, a%img_linthresh) - symlog_fwd(lo, a%img_linthresh)
+            if (t <= 0.0_dp) then
+                t = 0.0_dp
+            else
+                t = (symlog_fwd(v, a%img_linthresh) &
+                     - symlog_fwd(lo, a%img_linthresh))/t
+            end if
+        case default
+            t = (v - lo)/(hi - lo)
+        end select
     end function cmap_t
 
     ! matplotlib layers artists rather than drawing them in call order: an

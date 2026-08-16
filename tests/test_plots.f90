@@ -17,6 +17,7 @@ program test_plots
     real(dp) :: x(n), y(n), y2(n), y3(n)
     real(dp) :: lo, hi
     real(dp) :: rgbim(8, 12, 3)
+    real(dp) :: zn(16, 16)
     character(len=64) :: buf
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
@@ -852,6 +853,24 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 105) three ways of spreading values over a colormap
+    call clf()
+    do i = 1, 16
+        do j = 1, 16
+            zn(i, j) = real(j - 8, dp)*real(i, dp)/4.0_dp
+        end do
+    end do
+    call subplot(1, 3, 1)
+    call imshow(zn, cmap="coolwarm", norm="centered", vcenter=0.0_dp)
+    call title("centered")
+    call subplot(1, 3, 2)
+    call imshow(abs(zn), cmap="viridis", norm="power", gamma=0.5_dp)
+    call title("power")
+    call subplot(1, 3, 3)
+    call imshow(zn, cmap="coolwarm", norm="symlog", linthresh=1.0_dp)
+    call title("symlog")
+    call save_all("norms")
 
 ! 104) an image whose colours are given outright
     call clf()

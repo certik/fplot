@@ -152,6 +152,8 @@ call suptitle("figure title")
 - `imshow(norm="log")` for a logarithmic color scale, and
   `imshow(boundaries=)` for matplotlib's `BoundaryNorm`: one flat color
   per band, and a colorbar of blocks to match
+- `norm="centered"` with `vcenter=`, `norm="power"` with `gamma=` and
+  `norm="symlog"` with `linthresh=`, on `imshow` and `pcolormesh`
 - `errorbar` with `xerr=` and asymmetric `yerr_lo=`/`yerr_hi=` arms
 - `fill_between(where=)` to shade only where a condition holds
 - `hist(bins=, bin_edges=, density=, cumulative=, histtype="step"/"stepfilled",

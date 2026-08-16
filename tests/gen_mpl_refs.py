@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "norms",
     "imshow_rgb",
     "hist_orient",
     "title_loc",
@@ -875,6 +876,24 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 105 three ways of spreading values over a colormap
+    from matplotlib.colors import TwoSlopeNorm, PowerNorm, SymLogNorm
+    zn = np.zeros((16, 16))
+    for i in range(16):
+        for j in range(16):
+            zn[i, j] = (j - 7) * (i + 1) / 4.0
+    fig, axs = plt.subplots(1, 3, figsize=(6.4, 4.8))
+    axs[0].imshow(zn, cmap="coolwarm",
+                  norm=TwoSlopeNorm(vcenter=0.0, vmin=zn.min(), vmax=zn.max()))
+    axs[0].set_title("centered")
+    axs[1].imshow(np.abs(zn), cmap="viridis", norm=PowerNorm(gamma=0.5))
+    axs[1].set_title("power")
+    axs[2].imshow(zn, cmap="coolwarm",
+                  norm=SymLogNorm(linthresh=1.0, base=10,
+                                  vmin=zn.min(), vmax=zn.max()))
+    axs[2].set_title("symlog")
+    save(fig, "norms")
 
     # 104 an image whose colours are given outright
     rgbim = np.zeros((8, 12, 3))
