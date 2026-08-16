@@ -21,6 +21,11 @@ module fplot_mathtext
 
     ! One run of plain text: draw s(1:n) at size, offset by (dx, dy) from
     ! the origin of the whole string. dy grows downwards, as the canvas does.
+    !
+    ! A run with line = .true. is not text at all but a straight stroke of
+    ! width lw from (dx, dy) to (x2, y2): the bar of a fraction and the
+    ! radical of a root are drawn, not set, and there is no sensible glyph
+    ! to borrow for either.
     integer, parameter, public :: MAX_RUNS = 64
     type :: mrun_t
         character(len=64) :: s = ""
@@ -29,6 +34,10 @@ module fplot_mathtext
         real(dp) :: dy = 0.0_dp
         real(dp) :: size = 10.0_dp
         logical :: italic = .false.
+        logical :: line = .false.
+        real(dp) :: x2 = 0.0_dp
+        real(dp) :: y2 = 0.0_dp
+        real(dp) :: lw = 0.0_dp
     end type mrun_t
 
     ! matplotlib's mathtext constants: a script is 0.7 of its parent, a
@@ -38,6 +47,22 @@ module fplot_mathtext
     real(dp), parameter :: SUP_RISE = 0.44_dp
     real(dp), parameter :: SUB_DROP = 0.20_dp
     real(dp), parameter :: MIN_SIZE = 0.4_dp
+    ! Fractions and roots, measured off matplotlib's own output at 20 pt
+    ! and written here as fractions of the size. The bar of a fraction is
+    ! RULE thick and sits AXIS above the baseline, which is TeX's axis
+    ! height; the two halves are set a script smaller, PAD clear of the
+    ! ends of the bar.
+    real(dp), parameter :: RULE = 0.0625_dp
+    real(dp), parameter :: AXIS = 0.2544_dp
+    real(dp), parameter :: NUM_RISE = 0.3581_dp
+    real(dp), parameter :: DEN_DROP = 0.3712_dp
+    real(dp), parameter :: PAD = 0.0625_dp
+    ! The root sign: how wide it is, how far it reaches above and below
+    ! the baseline, and the gap it leaves around what is under it.
+    real(dp), parameter :: ROOT_W = 0.62_dp
+    real(dp), parameter :: ROOT_TOP = 1.08_dp
+    real(dp), parameter :: ROOT_BOT = 0.22_dp
+    real(dp), parameter :: ROOT_PAD = 0.125_dp
     ! Spelled this way because a backslash inside a string literal is not
     ! portable: some compilers read it as the start of an escape.
     character, parameter :: BS = achar(92)
@@ -241,6 +266,15 @@ contains
             return
         end select
 
+        if (cmd_name(s) == "frac") then
+            call layout_frac(s, size, x0, y0, runs, nr, xend, mm)
+            return
+        end if
+        if (cmd_name(s) == "sqrt") then
+            call layout_sqrt(s, size, x0, y0, runs, nr, xend, mm)
+            return
+        end if
+
         ! \mathrm{...} and its relatives: lay the group out as it is, and
         ! upright, which is the only reason \mathrm is ever written.
         j = index(s, "{")
@@ -254,9 +288,137 @@ contains
         end if
     end subroutine layout_command
 
-    ! ------------------------------------------------------------------
-    ! Scanning helpers
-    ! ------------------------------------------------------------------
+    ! \frac{a}{b}: the two halves a script smaller, each centred over the
+    ! bar. They are laid out at the left edge and then slid across, which
+    ! is the only way to centre something whose width is not known until
+    ! it has been laid out.
+    recursive subroutine layout_frac(s, size, x0, y0, runs, nr, xend, math)
+        character(len=*), intent(in) :: s
+        real(dp), intent(in) :: size, x0, y0
+        type(mrun_t), intent(inout) :: runs(MAX_RUNS)
+        integer, intent(inout) :: nr
+        real(dp), intent(out) :: xend
+        logical, intent(in) :: math
+        integer :: n0, n1, d0, d1, kn, kd
+        real(dp) :: ssize, xl, xn, xd, wn, wd, w, yb
+
+        call cmd_arg(s, 1, n0, n1)
+        call cmd_arg(s, 2, d0, d1)
+        ssize = max(size*SCRIPT, MIN_SIZE*size)
+        xl = x0 + PAD*size
+
+        kn = nr + 1
+        call layout_math(s(n0:n1), ssize, xl, y0 - NUM_RISE*size, runs, nr, xn, math)
+        wn = xn - xl
+        kd = nr + 1
+        call layout_math(s(d0:d1), ssize, xl, y0 + DEN_DROP*size, runs, nr, xd, math)
+        wd = xd - xl
+
+        w = max(wn, wd)
+        call shift_runs(runs, kn, kd - 1, 0.5_dp*(w - wn))
+        call shift_runs(runs, kd, nr, 0.5_dp*(w - wd))
+
+        yb = y0 - AXIS*size
+        call emit_line(xl, yb, xl + w, yb, RULE*size, runs, nr)
+        xend = xl + w + PAD*size
+    end subroutine layout_frac
+
+    ! \sqrt{a}: the sign is drawn rather than set, since the text font has
+    ! no radical in it, and the bar over it is one more stroke.
+    recursive subroutine layout_sqrt(s, size, x0, y0, runs, nr, xend, math)
+        character(len=*), intent(in) :: s
+        real(dp), intent(in) :: size, x0, y0
+        type(mrun_t), intent(inout) :: runs(MAX_RUNS)
+        integer, intent(inout) :: nr
+        real(dp), intent(out) :: xend
+        logical, intent(in) :: math
+        integer :: a0, a1
+        real(dp) :: top, bot, wr, th, xb, xe
+
+        call cmd_arg(s, 1, a0, a1)
+        th = RULE*size
+        wr = ROOT_W*size
+        top = y0 - ROOT_TOP*size
+        bot = y0 + ROOT_BOT*size
+        xb = x0 + wr + ROOT_PAD*size
+        call layout_math(s(a0:a1), size, xb, y0, runs, nr, xe, math)
+
+        ! The sign itself: a short rise to the foot, a long rise to the
+        ! top, then the bar across whatever is under the root.
+        call emit_line(x0, y0 - 0.35_dp*size, x0 + 0.24_dp*wr, bot, th, runs, nr)
+        call emit_line(x0 + 0.24_dp*wr, bot, x0 + wr, top, th, runs, nr)
+        call emit_line(x0 + wr, top, xe + ROOT_PAD*size, top, th, runs, nr)
+        xend = xe + ROOT_PAD*size
+    end subroutine layout_sqrt
+
+    ! Slide runs k0..k1 across by dx, once their width is known.
+    pure subroutine shift_runs(runs, k0, k1, dx)
+        type(mrun_t), intent(inout) :: runs(MAX_RUNS)
+        integer, intent(in) :: k0, k1
+        real(dp), intent(in) :: dx
+        integer :: k
+        do k = max(k0, 1), min(k1, MAX_RUNS)
+            runs(k)%dx = runs(k)%dx + dx
+            runs(k)%x2 = runs(k)%x2 + dx
+        end do
+    end subroutine shift_runs
+
+    subroutine emit_line(x1, y1, x2, y2, lw, runs, nr)
+        real(dp), intent(in) :: x1, y1, x2, y2, lw
+        type(mrun_t), intent(inout) :: runs(MAX_RUNS)
+        integer, intent(inout) :: nr
+        if (nr >= MAX_RUNS) return
+        nr = nr + 1
+        runs(nr)%n = 0
+        runs(nr)%line = .true.
+        runs(nr)%dx = x1
+        runs(nr)%dy = y1
+        runs(nr)%x2 = x2
+        runs(nr)%y2 = y2
+        runs(nr)%lw = lw
+    end subroutine emit_line
+
+
+    ! The letters of the command that s starts with, without the backslash.
+    pure function cmd_name(s) result(name)
+        character(len=*), intent(in) :: s
+        character(len=16) :: name
+        integer :: j
+        name = ""
+        j = 2
+        do while (j <= len(s))
+            if (.not. is_alpha(s(j:j))) exit
+            j = j + 1
+        end do
+        if (j > 2 .and. j - 2 <= len(name)) name = s(2:j - 1)
+    end function cmd_name
+
+    ! The k-th braced argument of a command, empty when there is no such
+    ! argument. i0:i1 is the text inside the braces.
+    pure subroutine cmd_arg(s, k, i0, i1)
+        character(len=*), intent(in) :: s
+        integer, intent(in) :: k
+        integer, intent(out) :: i0, i1
+        integer :: i, j, seen
+        i0 = 1
+        i1 = 0
+        seen = 0
+        i = 2
+        do while (i <= len(s))
+            if (s(i:i) == "{") then
+                call group_end(s, i, j)
+                seen = seen + 1
+                if (seen == k) then
+                    i0 = i + 1
+                    i1 = j - 1
+                    return
+                end if
+                i = j + 1
+            else
+                i = i + 1
+            end if
+        end do
+    end subroutine cmd_arg
 
     ! End of the group that starts at s(i:i) == "{".
     pure subroutine group_end(s, i, j)
@@ -281,7 +443,7 @@ contains
         character(len=*), intent(in) :: s
         integer, intent(in) :: i
         integer, intent(out) :: j
-        integer :: k
+        integer :: k, a, nargs
         if (i + 1 > len(s)) then
             j = i
             return
@@ -295,12 +457,15 @@ contains
             if (.not. is_alpha(s(j + 1:j + 1))) exit
             j = j + 1
         end do
-        if (j < len(s)) then
-            if (s(j + 1:j + 1) == "{") then
-                call group_end(s, j + 1, k)
-                j = k
-            end if
-        end if
+        ! One braced argument, or two for the commands that take two.
+        nargs = 1
+        if (s(i + 1:j) == "frac") nargs = 2
+        do a = 1, nargs
+            if (j >= len(s)) exit
+            if (s(j + 1:j + 1) /= "{") exit
+            call group_end(s, j + 1, k)
+            j = k
+        end do
     end subroutine command_end
 
     ! End of the unit that starts at index i, for a script argument.
@@ -383,6 +548,7 @@ contains
         runs(nr)%dy = y0
         runs(nr)%size = size
         runs(nr)%italic = italic
+        runs(nr)%line = .false.
     end subroutine emit_run
 
     function run_width(s, size) result(w)
