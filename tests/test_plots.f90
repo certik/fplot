@@ -854,6 +854,15 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 108) one legend for the whole figure
+    call clf()
+    call subplot(1, 2, 1)
+    call plot(x, y, "b-", label="sin")
+    call subplot(1, 2, 2)
+    call plot(x, y2, "r--", label="cos")
+    call figlegend(loc="upper right")
+    call save_all("figlegend")
+
 ! 107) minor ticks placed by hand, and a pruned locator
     call clf()
     call subplot(2, 1, 1)

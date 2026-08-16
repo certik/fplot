@@ -78,6 +78,8 @@ call suptitle("figure title")
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
 - `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
+  `figlegend(loc=, fontsize=, ncol=, frameon=, title=)` for one legend
+  covering every panel,
   `xticks` / `yticks` with optional labels, `minorticks_on`,
   `xticks(vals, minor=.true.)` to place minor ticks by hand, and
   `locator_params(axis=, nbins=, prune=)`

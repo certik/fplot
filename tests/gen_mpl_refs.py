@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "figlegend",
     "tick_locator",
     "cmap_special",
     "norms",
@@ -878,6 +879,13 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 108 one legend for the whole figure
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].plot(x, y, "b-", label="sin")
+    axs[1].plot(x, y2, "r--", label="cos")
+    fig.legend(loc="upper right")
+    save(fig, "figlegend")
 
     # 107 minor ticks placed by hand, and a pruned locator
     fig, axs = plt.subplots(2, 1, figsize=(6.4, 4.8))

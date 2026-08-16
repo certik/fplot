@@ -43,6 +43,7 @@ module fplot
     public :: xlim, ylim, clf, savefig, show, figure
     public :: get_xlim, get_ylim, invert_xaxis, invert_yaxis
     public :: set_bad, set_under, set_over, set_cmap_colors
+    public :: figlegend
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
@@ -2736,6 +2737,42 @@ contains
     ! just outside the right-hand edge. When it is given, loc names which
     ! corner of the legend sits on the anchor rather than a position in the
     ! axes, exactly as matplotlib treats it.
+    ! One legend for the whole figure: an invisible axes covering the
+    ! canvas, carrying a copy of every labelled series in the figure. The
+    ! ordinary legend machinery then places it against the figure rather
+    ! than against any one panel, which is exactly what figlegend means.
+    subroutine figlegend(loc, fontsize, ncol, frameon, title)
+        character(len=*), intent(in), optional :: loc, title
+        real(dp), intent(in), optional :: fontsize
+        integer, intent(in), optional :: ncol
+        logical, intent(in), optional :: frameon
+        integer :: i, j, is, host, n_before
+        type(axes) :: h
+
+        call ensure_fig()
+        n_before = n_ax
+        h = add_axes([0.0_dp, 0.0_dp, 1.0_dp, 1.0_dp])
+        host = h%idx
+        ax(host)%patch_off = .true.
+        ax(host)%frame_off = .true.
+        do i = 1, n_before
+            do j = 1, ax(i)%n_series
+                if (len_trim(ax(i)%series(j)%label) == 0) cycle
+                call push_series(ax(host), is)
+                ax(host)%series(is) = ax(i)%series(j)
+                ! The copy is there for its label alone; nothing of it is
+                ! drawn, and an empty axes autoscales to the unit square.
+                if (allocated(ax(host)%series(is)%x)) &
+                    deallocate (ax(host)%series(is)%x)
+                if (allocated(ax(host)%series(is)%y)) &
+                    deallocate (ax(host)%series(is)%y)
+                ax(host)%series(is)%n = 0
+            end do
+        end do
+        call legend(loc, fontsize, ncol, frameon, title)
+        cur_i = 1
+    end subroutine figlegend
+
     subroutine legend(loc, fontsize, ncol, frameon, title, bbox_to_anchor)
         character(len=*), intent(in), optional :: loc, title
         real(dp), intent(in), optional :: fontsize, bbox_to_anchor(2)
