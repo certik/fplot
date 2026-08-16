@@ -161,6 +161,8 @@ call suptitle("figure title")
   same triangles, with matplotlib's rounded levels and a colorbar
 - `plot_trisurf`: those triangles lifted into three dimensions and lit by
   the same light source `plot_surface` uses
+- `bar3d`: boxes standing on the xy plane, six lit faces each, painted
+  back to front with everything else in the axes
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
   same number of ticks for the space available, and one decimal count
   shared by the whole axis. A log axis writes its decades as powers, and

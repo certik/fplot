@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "bar3d",
     "trisurf",
     "tricontourf",
     "tricontour",
@@ -903,6 +904,18 @@ def main() -> None:
             tpy.append(j + 0.35 * np.cos(5.0 * k))
             tpz.append(tpx[-1] * tpy[-1])
     tx, ty, tz = np.array(tpx), np.array(tpy), np.array(tpz)
+
+    # 123 boxes standing on the xy plane
+    kb = np.arange(1, 13)
+    b3x = ((kb - 1) % 4).astype(float)
+    b3y = ((kb - 1) // 4).astype(float)
+    b3z = np.zeros(12)
+    b3d = 1.0 + np.sin(kb.astype(float))
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a = fig.add_subplot(projection="3d")
+    a.bar3d(b3x, b3y, b3z, 0.6, 0.6, b3d)
+    a.set_title("bar3d")
+    save(fig, "bar3d")
 
     # 122 a surface over scattered points
     ks = np.arange(1, 61)

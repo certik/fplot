@@ -26,6 +26,8 @@ program test_plots
     real(dp) :: tx2(ntc), ty2(ntc), tz2(ntc)
     integer, parameter :: nts = 60
     real(dp) :: usx(nts), usy(nts), usz(nts)
+    integer, parameter :: nb3 = 12
+    real(dp) :: b3x(nb3), b3y(nb3), b3z(nb3), b3d(nb3)
     integer, parameter :: ntp = 24
     real(dp) :: tx(ntp), ty(ntp), tz(ntp)
     integer, parameter :: nlg = 60
@@ -863,6 +865,18 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+    ! 123) boxes standing on the xy plane
+    call clf()
+    do k = 1, nb3
+        b3x(k) = real(mod(k - 1, 4), dp)
+        b3y(k) = real((k - 1)/4, dp)
+        b3z(k) = 0.0_dp
+        b3d(k) = 1.0_dp + sin(real(k, dp))
+    end do
+    call bar3d(b3x, b3y, b3z, 0.6_dp, 0.6_dp, b3d)
+    call title("bar3d")
+    call save_all("bar3d")
 
     ! 122) a surface over scattered points
     call clf()

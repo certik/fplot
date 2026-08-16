@@ -49,7 +49,7 @@ module fplot
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
-    public :: plot_trisurf
+    public :: plot_trisurf, bar3d
     public :: view_init, zlabel, zlim
     public :: subplot, subplot2grid, subplot_mosaic, gridspec, suptitle
     public :: subplots_adjust, tight_layout, constrained_layout
@@ -178,6 +178,8 @@ module fplot
     integer, parameter :: SERIES_AXLINE = 21
     ! TRISURF: points in x, y and z joined by the triangles in tri.
     integer, parameter :: SERIES_TRISURF = 22
+    ! BAR3D: boxes standing on (x, y, z), dx by dy wide and z2 - z tall.
+    integer, parameter :: SERIES_BAR3D = 23
     ! The most points one streamline may have.
     integer, parameter :: MAX_STREAM_PTS = 20000
 
@@ -289,6 +291,9 @@ module fplot
         real(dp), allocatable :: z(:)
         real(dp), allocatable :: zg(:, :)
         integer, allocatable :: tri(:, :)
+        ! 3D bars: the top of each box, and the footprint they all share.
+        real(dp), allocatable :: z2(:)
+        real(dp) :: d3x = 1.0_dp, d3y = 1.0_dp
         character(len=128) :: label = ""
     end type series_t
 
@@ -636,6 +641,7 @@ module fplot
         procedure :: plot_surface => ax_plot_surface
         procedure :: plot_wireframe => ax_plot_wireframe
         procedure :: plot_trisurf => ax_plot_trisurf
+        procedure :: bar3d => ax_bar3d
         procedure :: view_init => ax_view_init
         procedure :: set_zlabel => ax_set_zlabel
         procedure :: set_zlim => ax_set_zlim
@@ -2322,6 +2328,15 @@ contains
         call ax_sca(self)
         call plot_trisurf(x, y, z, color, alpha, cmap)
     end subroutine ax_plot_trisurf
+
+    subroutine ax_bar3d(self, x, y, z, dx, dy, dz, color, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), z(:), dx, dy, dz(:)
+        character(len=*), intent(in), optional :: color
+        real(dp), intent(in), optional :: alpha
+        call ax_sca(self)
+        call bar3d(x, y, z, dx, dy, dz, color, alpha)
+    end subroutine ax_bar3d
 
     subroutine ax_plot_wireframe(self, x, y, z, color, alpha, lw)
         class(axes), intent(in) :: self
@@ -4646,6 +4661,36 @@ contains
         if (present(cmap)) ax(cur_i)%series(is)%scmap = cmap_from_str(cmap)
         if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
     end subroutine plot_trisurf
+
+    ! Boxes standing on the xy plane. Each is dx by dy wide and dz tall,
+    ! and is drawn as six lit faces, which is what mplot3d does.
+    subroutine bar3d(x, y, z, dx, dy, dz, color, alpha)
+        real(dp), intent(in) :: x(:), y(:), z(:), dx, dy, dz(:)
+        character(len=*), intent(in), optional :: color
+        real(dp), intent(in), optional :: alpha
+        integer :: is, n
+
+        call axes3d()
+        n = min(min(size(x), size(y)), min(size(z), size(dz)))
+        if (n < 1) return
+        call push_series(ax(cur_i), is)
+        ax(cur_i)%series(is)%kind = SERIES_BAR3D
+        ax(cur_i)%series(is)%n = n
+        allocate (ax(cur_i)%series(is)%x(n), ax(cur_i)%series(is)%y(n))
+        allocate (ax(cur_i)%series(is)%z(n), ax(cur_i)%series(is)%z2(n))
+        ax(cur_i)%series(is)%x = x(1:n)
+        ax(cur_i)%series(is)%y = y(1:n)
+        ax(cur_i)%series(is)%z = z(1:n)
+        ax(cur_i)%series(is)%z2 = z(1:n) + dz(1:n)
+        ax(cur_i)%series(is)%d3x = dx
+        ax(cur_i)%series(is)%d3y = dy
+        ax(cur_i)%series(is)%color = resolve_color(color)
+        if (len_trim(ax(cur_i)%series(is)%color) == 0) then
+            ax(cur_i)%series(is)%color = cycle_color(ax(cur_i)%color_cycle)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
+        end if
+        if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
+    end subroutine bar3d
 
     ! The same grid, ruled rather than filled. matplotlib draws every line
     ! of the mesh whether it is in front or behind, and so does this.
@@ -10403,6 +10448,14 @@ contains
                     hi(3) = max(hi(3), a%series(i)%z(k))
                 end do
                 have = .true.
+            case (SERIES_BAR3D)
+                lo(1) = min(lo(1), minval(a%series(i)%x))
+                hi(1) = max(hi(1), maxval(a%series(i)%x) + a%series(i)%d3x)
+                lo(2) = min(lo(2), minval(a%series(i)%y))
+                hi(2) = max(hi(2), maxval(a%series(i)%y) + a%series(i)%d3y)
+                lo(3) = min(lo(3), minval(a%series(i)%z))
+                hi(3) = max(hi(3), maxval(a%series(i)%z2))
+                have = .true.
             case (SERIES_SURFACE)
                 lo(1) = min(lo(1), minval(a%series(i)%x))
                 hi(1) = max(hi(1), maxval(a%series(i)%x))
@@ -10723,6 +10776,8 @@ contains
                 call render_surface(b, a%series(i), M, bl, bt, side)
             case (SERIES_TRISURF)
                 call render_trisurf(b, a%series(i), M, bl, bt, side)
+            case (SERIES_BAR3D)
+                call render_bar3d(b, a%series(i), M, bl, bt, side)
             end select
         end do
     end subroutine render_series3d
@@ -10869,6 +10924,61 @@ contains
         if (nl > 0.0_dp) shade = dot_product(nrm/nl, dir)
         f = 0.3_dp + 0.7_dp*(shade + 1.0_dp)/2.0_dp
     end function facet_light
+
+    ! Six faces per box, all of them wound anticlockwise seen from outside
+    ! so that the light falls on them the way mplot3d's does, and the whole
+    ! lot painted back to front together.
+    subroutine render_bar3d(b, s, M, bl, bt, side)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: M(4, 4), bl, bt, side
+        ! The unit cube's faces: -z, +z, -y, +y, -x, +x.
+        integer, parameter :: FACE(3, 4, 6) = reshape([ &
+            0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, &
+            0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, &
+            0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, &
+            0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, &
+            0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 0, &
+            1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1], [3, 4, 6])
+        real(dp), allocatable :: fx(:, :), fy(:, :), depth(:), light(:)
+        integer, allocatable :: idx(:)
+        real(dp) :: cx(4), cy(4), cz(4), ux, uy, uz
+        integer :: nf, f, i, k, c, rgb(3)
+        character(len=7) :: col
+
+        nf = 6*s%n
+        if (nf < 1) return
+        allocate (fx(4, nf), fy(4, nf), depth(nf), light(nf), idx(nf))
+        rgb = hex_rgb(s%color)
+        f = 0
+        do i = 1, s%n
+            do k = 1, 6
+                f = f + 1
+                do c = 1, 4
+                    cx(c) = s%x(i) + s%d3x*real(FACE(1, c, k), dp)
+                    cy(c) = s%y(i) + s%d3y*real(FACE(2, c, k), dp)
+                    cz(c) = s%z(i) + (s%z2(i) - s%z(i))*real(FACE(3, c, k), dp)
+                end do
+                light(f) = facet_light(cx, cy, cz)
+                depth(f) = 0.0_dp
+                do c = 1, 4
+                    call dev3(M, bl, bt, side, cx(c), cy(c), cz(c), ux, uy, uz)
+                    fx(c, f) = ux
+                    fy(c, f) = uy
+                    depth(f) = depth(f) + 0.25_dp*uz
+                end do
+            end do
+        end do
+
+        call order_far_first(depth, nf, idx)
+        do f = 1, nf
+            col = "#"//hex_pair(nint(rgb(1)*light(idx(f)))) &
+                  //hex_pair(nint(rgb(2)*light(idx(f)))) &
+                  //hex_pair(nint(rgb(3)*light(idx(f))))
+            call append_polygon(b, fx(:, idx(f)), fy(:, idx(f)), 4, col, s%alpha, .true.)
+        end do
+        deallocate (fx, fy, depth, light, idx)
+    end subroutine render_bar3d
 
     ! Every line of the mesh, in front and behind alike: matplotlib hides
     ! nothing in a wireframe either.
