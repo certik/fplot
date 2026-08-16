@@ -850,6 +850,20 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 94) hatched fills
+    call clf()
+    call subplot(1, 2, 1)
+    call bar(xb, hb, hatch="/")
+    call bar(xb, hb2, bottom=hb, hatch="\\")
+    call title("hatched bars")
+    call subplot(1, 2, 2)
+    call fill_between(x, y, hatch="x", color="tab:green", alpha=0.4_dp, &
+                      edgecolor="tab:green")
+    call add_rectangle([1.0_dp, -0.8_dp], 2.0_dp, 0.6_dp, facecolor="white", &
+                       edgecolor="black", hatch="|||")
+    call title("hatched fill")
+    call save_all("hatch")
+
 ! 93) a colorbar lying on its side
     call clf()
     call subplot(1, 2, 1)

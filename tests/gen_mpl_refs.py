@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "hatch",
     "colorbar_orient",
     "margins",
     "fills",
@@ -864,6 +865,21 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 94 hatched fills
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    hx6 = np.arange(1.0, 7.0)
+    hh1 = np.array([3.0, 5.0, 2.0, 7.0, 4.0, 6.0])
+    hh2 = np.array([1.0, 2.0, 4.0, 1.0, 3.0, 2.0])
+    axs[0].bar(hx6, hh1, hatch="/")
+    axs[0].bar(hx6, hh2, bottom=hh1, hatch="\\\\")
+    axs[0].set_title("hatched bars")
+    axs[1].fill_between(x, y, hatch="x", color="tab:green", alpha=0.4,
+                        edgecolor="tab:green")
+    axs[1].add_patch(Rectangle((1.0, -0.8), 2.0, 0.6,
+                     facecolor="white", edgecolor="black", hatch="|||"))
+    axs[1].set_title("hatched fill")
+    save(fig, "hatch")
 
     # 93 a colorbar lying on its side
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
