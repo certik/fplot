@@ -22,6 +22,8 @@ program test_plots
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
     real(dp) :: xs(ns), ys(ns)
+    integer, parameter :: ntc = 120
+    real(dp) :: tx2(ntc), ty2(ntc), tz2(ntc)
     integer, parameter :: ntp = 24
     real(dp) :: tx(ntp), ty(ntp), tz(ntp)
     integer, parameter :: nlg = 60
@@ -859,6 +861,26 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! A denser scatter for the contours, matching what matplotlib is given.
+    do k = 1, ntc
+        tx2(k) = 3.0_dp*(1.0_dp + sin(real(7*k, dp)))
+        ty2(k) = 3.0_dp*(1.0_dp + cos(real(11*k, dp)))
+        tz2(k) = sin(tx2(k))*cos(ty2(k))
+    end do
+
+    ! 121) the bands between those lines, filled
+    call clf()
+    call tricontourf(tx2, ty2, tz2)
+    call colorbar()
+    call title("tricontourf")
+    call save_all("tricontourf")
+
+! 120) level lines over the triangles
+    call clf()
+    call tricontour(tx2, ty2, tz2)
+    call title("tricontour")
+    call save_all("tricontour")
 
 ! Points on a jittered grid, the same ones matplotlib is given.
     k = 0

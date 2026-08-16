@@ -157,6 +157,8 @@ call suptitle("figure title")
 - `triplot` and `tripcolor`: scattered points joined into triangles by
   the same Delaunay triangulation matplotlib gets from Qhull, drawn as
   edges or filled by value
+- `tricontour` and `tricontourf`: level lines and filled bands over those
+  same triangles, with matplotlib's rounded levels and a colorbar
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
   same number of ticks for the space available, and one decimal count
   shared by the whole axis. A log axis writes its decades as powers, and

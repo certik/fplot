@@ -40,7 +40,7 @@ module fplot
     public :: xticks, yticks, minorticks_on, locator_params
     public :: ticklabel_format, tick_format, tick_locator
     public :: imshow, colorbar, contour, contourf, clabel
-    public :: triplot, tripcolor
+    public :: triplot, tripcolor, tricontour, tricontourf
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
     public :: get_xlim, get_ylim, invert_xaxis, invert_yaxis
@@ -370,6 +370,8 @@ module fplot
         real(dp), allocatable :: clev(:)
         integer :: cont_cmap = CMAP_VIRIDIS
         real(dp) :: cont_ext(4) = [0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp]
+        ! A contour set autoscales tight, so the data fills the frame.
+        logical :: tight_lim = .false.
         logical :: has_img = .false.
         ! imshow(interpolation=): "nearest", the default, hands the samples
         ! over as they are; "bilinear" resamples them at the size the image
@@ -4703,6 +4705,101 @@ contains
         ax(cur_i)%img_vmax = hi
     end subroutine tripcolor
 
+    ! The level lines of a field known at scattered points. Linear
+    ! interpolation over a triangle crosses a level in one segment, so the
+    ! same geometry that serves contour serves here.
+    subroutine tricontour(x, y, z, levels, cmap, lw)
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        real(dp), intent(in), optional :: levels(:), lw
+        character(len=*), intent(in), optional :: cmap
+        call add_tricontour(x, y, z, levels, cmap, lw, filled=.false.)
+    end subroutine tricontour
+
+    ! The same, with the bands between the levels filled.
+    subroutine tricontourf(x, y, z, levels, cmap)
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        real(dp), intent(in), optional :: levels(:)
+        character(len=*), intent(in), optional :: cmap
+        call add_tricontour(x, y, z, levels, cmap, filled=.true.)
+    end subroutine tricontourf
+
+    subroutine add_tricontour(x, y, z, levels, cmap, lw, filled)
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        real(dp), intent(in), optional :: levels(:)
+        character(len=*), intent(in), optional :: cmap
+        real(dp), intent(in), optional :: lw
+        logical, intent(in) :: filled
+        integer, allocatable :: tri(:, :)
+        real(dp), allocatable :: lev(:), sx(:), sy(:)
+        real(dp) :: t(MAX_TICKS), tx(3), ty(3), tv(3)
+        real(dp) :: qx(MAX_POLY), qy(MAX_POLY), ex(2), ey(2), nan, zero
+        integer :: nt, nlev, i, k, ns, np, nq, cm
+
+        call ensure_fig()
+        call delaunay(x, y, tri, nt)
+        if (nt < 1) return
+        cm = CMAP_VIRIDIS
+        if (present(cmap)) cm = cmap_from_str(cmap)
+        if (present(levels)) then
+            allocate (lev(size(levels)))
+            lev = levels
+        else
+            call contour_levels(minval(z), maxval(z), 8, t, nlev)
+            allocate (lev(nlev))
+            lev = t(1:nlev)
+        end if
+        nlev = size(lev)
+        if (nlev < 2) return
+        zero = 0.0_dp
+        nan = zero/zero
+
+        if (filled) then
+            do k = 1, nlev - 1
+                do i = 1, nt
+                    tx = x(tri(:, i))
+                    ty = y(tri(:, i))
+                    tv = z(tri(:, i))
+                    call tri_band(tx, ty, tv, lev(k), lev(k + 1), qx, qy, nq)
+                    if (nq < 3) cycle
+                    call add_polygon(qx(1:nq), qy(1:nq), &
+                        facecolor=cmap_color(cm, (real(k, dp) - 0.5_dp)/real(nlev - 1, dp)))
+                    ax(cur_i)%series(ax(cur_i)%n_series)%patch_scales = .true.
+                    ax(cur_i)%series(ax(cur_i)%n_series)%patch_seal = .true.
+                end do
+            end do
+        else
+            ! Three points per segment: the two ends and a break, which is
+            ! enough because the segments need not be joined up to be drawn.
+            allocate (sx(3*nt), sy(3*nt))
+            do k = 1, nlev
+                ns = 0
+                do i = 1, nt
+                    tx = x(tri(:, i))
+                    ty = y(tri(:, i))
+                    tv = z(tri(:, i))
+                    call tri_level(tx, ty, tv, lev(k), ex, ey, np)
+                    if (np /= 2) cycle
+                    sx(ns + 1:ns + 2) = ex
+                    sy(ns + 1:ns + 2) = ey
+                    sx(ns + 3) = nan
+                    sy(ns + 3) = nan
+                    ns = ns + 3
+                end do
+                if (ns == 0) cycle
+                call plot(sx(1:ns), sy(1:ns), lw=lw, &
+                          color=cmap_color(cm, real(k - 1, dp)/real(nlev - 1, dp)))
+                ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+            end do
+        end if
+
+        ax(cur_i)%has_cmap_src = .true.
+        ax(cur_i)%img_cmap = cm
+        ax(cur_i)%img_vmin = lev(1)
+        ax(cur_i)%img_vmax = lev(nlev)
+        ax(cur_i)%cont_ext = [minval(x), maxval(x), minval(y), maxval(y)]
+        ax(cur_i)%tight_lim = .true.
+    end subroutine add_tricontour
+
     subroutine contour(z, levels, cmap, extent)
         real(dp), intent(in) :: z(:, :)
         real(dp), intent(in), optional :: levels(:), extent(4)
@@ -6930,7 +7027,7 @@ contains
             end if
         end do
 
-        if (a%has_cont) then
+        if (a%has_cont .or. a%tight_lim) then
             anyx = .true.
             anyy = .true.
             xmin = min(xmin, a%cont_ext(1))
@@ -7001,7 +7098,7 @@ contains
             end if
         end if
 
-        if (a%has_cont) then
+        if (a%has_cont .or. a%tight_lim) then
             if (.not. a%xlim_set) then
                 xmin = a%cont_ext(1)
                 xmax = a%cont_ext(2)

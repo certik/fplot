@@ -23,6 +23,8 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "tricontourf",
+    "tricontour",
     "tripcolor",
     "triplot",
     "log_minor_labels",
@@ -900,6 +902,24 @@ def main() -> None:
             tpy.append(j + 0.35 * np.cos(5.0 * k))
             tpz.append(tpx[-1] * tpy[-1])
     tx, ty, tz = np.array(tpx), np.array(tpy), np.array(tpz)
+
+    kk = np.arange(1, 121)
+    tx2 = 3.0 * (1.0 + np.sin(7.0 * kk))
+    ty2 = 3.0 * (1.0 + np.cos(11.0 * kk))
+    tz2 = np.sin(tx2) * np.cos(ty2)
+
+    # 121 the bands between those lines, filled
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    tcf = a.tricontourf(tx2, ty2, tz2)
+    fig.colorbar(tcf, ax=a)
+    a.set_title("tricontourf")
+    save(fig, "tricontourf")
+
+    # 120 level lines over the triangles
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    a.tricontour(tx2, ty2, tz2)
+    a.set_title("tricontour")
+    save(fig, "tricontour")
 
     # 119 the same triangles, filled by value
     fig, a = plt.subplots(figsize=(6.4, 4.8))
