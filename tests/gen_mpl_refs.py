@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "axes_facecolor",
     "marker_detail",
     "text_options",
     "font_faces",
@@ -860,6 +861,14 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 90 a background colour for one axes only
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].plot(x, y)
+    axs[0].set_facecolor("#eeeeee")
+    axs[0].grid(True, color="white")
+    axs[1].plot(x, y)
+    save(fig, "axes_facecolor")
 
     # 89 marker and line detail
     fig, ax = setup_fig()

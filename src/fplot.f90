@@ -33,7 +33,7 @@ module fplot
     public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
     public :: axis, set_aspect, tick_params, spines
-    public :: text, annotate, figtext
+    public :: text, annotate, figtext, set_facecolor
     public :: xticks, yticks, minorticks_on
     public :: ticklabel_format, tick_format, tick_locator
     public :: imshow, colorbar, contour, contourf, clabel
@@ -274,6 +274,9 @@ module fplot
         character(len=256) :: xlabel = ""
         character(len=256) :: ylabel = ""
         logical :: grid_on = .false.
+        ! Empty means the style sheet's axes colour.
+        character(len=7) :: facecolor = ""
+        real(dp) :: face_alpha = 1.0_dp
         ! Empty or negative means "whatever the style sheet says".
         character(len=8) :: grid_axis = "both"
         character(len=8) :: grid_which = "major"
@@ -493,6 +496,7 @@ module fplot
         procedure :: set_yticks => ax_set_yticks
         procedure :: set_aspect => ax_set_aspect
         procedure :: grid => ax_grid
+        procedure :: set_facecolor => ax_set_facecolor
         procedure :: legend => ax_legend
         procedure :: tick_params => ax_tick_params
         procedure :: spines => ax_spines
@@ -2322,6 +2326,14 @@ contains
         call set_aspect(ratio, adjustable)
     end subroutine ax_set_aspect
 
+    subroutine ax_set_facecolor(self, color, alpha)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: color
+        real(dp), intent(in), optional :: alpha
+        call ax_sca(self)
+        call set_facecolor(color, alpha)
+    end subroutine ax_set_facecolor
+
     subroutine ax_grid(self, on, axis, which, color, linestyle, lw, alpha)
         class(axes), intent(in) :: self
         logical, intent(in) :: on
@@ -2474,6 +2486,15 @@ contains
             ax(i)%legend_size = def_legend
         end do
     end subroutine set_fontsize
+
+    ! The background of one axes, where rc(axes_facecolor=) sets them all.
+    subroutine set_facecolor(color, alpha)
+        character(len=*), intent(in) :: color
+        real(dp), intent(in), optional :: alpha
+        call ensure_fig()
+        ax(cur_i)%facecolor = resolve_color(color)
+        if (present(alpha)) ax(cur_i)%face_alpha = alpha
+    end subroutine set_facecolor
 
     subroutine grid(on, axis, which, color, linestyle, lw, alpha)
         logical, intent(in) :: on
@@ -8555,7 +8576,12 @@ contains
 
         ! axes face
         if (.not. clear .and. .not. a%patch_off) then
-            call append_rect(b, ax_l, ax_t, ax_w, ax_h, rc_axes_face)
+            if (len_trim(a%facecolor) > 0) then
+                call append_rect(b, ax_l, ax_t, ax_w, ax_h, trim(a%facecolor), &
+                                 a%face_alpha)
+            else
+                call append_rect(b, ax_l, ax_t, ax_w, ax_h, rc_axes_face)
+            end if
         end if
 
         if (a%has_img .or. a%has_cont) then

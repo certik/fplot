@@ -847,6 +847,15 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 90) a background colour for one axes only
+    call clf()
+    call subplots(1, 2, axs)
+    call axs(1, 1)%plot(x, y)
+    call axs(1, 1)%set_facecolor("#eeeeee")
+    call axs(1, 1)%grid(.true., color="white")
+    call axs(1, 2)%plot(x, y)
+    call save_all("axes_facecolor")
+
 ! 89) marker and line detail
     call clf()
     call plot(x, y, marker="o", markevery=8, markerfacecolor="white", &

@@ -49,6 +49,7 @@ call suptitle("figure title")
   `markeredgecolor=`, `markeredgewidth=`, `markevery=`, `drawstyle=` and
   a `dashes=` pattern of your own
 - Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure(figsize=, dpi=)`
+- `set_facecolor(color, alpha=)` for the background of one axes
 - `grid(on, axis=, which=, color=, linestyle=, lw=, alpha=)` for one axis
   only, for the minor ticks, or in a colour of your own; log axes carry
   minor ticks without being asked, as matplotlib's do
