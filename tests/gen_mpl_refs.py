@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "colorbar_orient",
     "margins",
     "fills",
     "axes_facecolor",
@@ -863,6 +864,16 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 93 a colorbar lying on its side
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    im = axs[0].imshow(zimg, cmap="viridis", aspect="auto")
+    fig.colorbar(im, ax=axs[0], orientation="horizontal", label="value")
+    axs[0].set_title("horizontal")
+    im = axs[1].imshow(zimg, cmap="viridis", aspect="auto")
+    fig.colorbar(im, ax=axs[1], shrink=0.6, aspect=10.0)
+    axs[1].set_title("shrunk")
+    save(fig, "colorbar_orient")
 
     # 92 how much room the data is given
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
