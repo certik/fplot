@@ -236,13 +236,13 @@ call display_data("image/svg+xml", render_svg())
 fplot is measured against matplotlib rather than described as similar to it:
 every feature has a case in `tests/test_plots.f90` and a matplotlib reference
 in `tests/gen_mpl_refs.py`, and the comparisons above put a number on the
-difference. As of this writing, over 75 cases:
+difference. As of this writing, over 100 cases:
 
 | format | cases | mean difference |
 | --- | --- | --- |
-| PNG | 75 | 1.55/255 |
-| PDF | 74 | 1.99/255 |
-| EPS | 75 | 3.61/255 |
+| PNG | 108 | 1.51/255 |
+| PDF | 107 | 2.06/255 |
+| EPS | 108 | 3.58/255 |
 | GIF | 20 frames | 0.60/255 |
 
 What is left is mostly antialiasing along edges, and text: fplot draws with
