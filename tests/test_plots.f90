@@ -30,6 +30,8 @@ program test_plots
     real(dp) :: b3x(nb3), b3y(nb3), b3z(nb3), b3d(nb3)
     integer, parameter :: nq3 = 9
     real(dp) :: q3x(nq3), q3y(nq3), q3z(nq3), q3u(nq3), q3v(nq3), q3w(nq3)
+    integer, parameter :: nc3 = 21
+    real(dp) :: c3x(nc3), c3y(nc3), c3z(nc3, nc3)
     integer, parameter :: ntp = 24
     real(dp) :: tx(ntp), ty(ntp), tz(ntp)
     integer, parameter :: nlg = 60
@@ -867,6 +869,21 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+    ! 125) level lines drawn in space
+    call clf()
+    do i = 1, nc3
+        c3x(i) = -3.0_dp + 6.0_dp*real(i - 1, dp)/real(nc3 - 1, dp)
+        c3y(i) = c3x(i)
+    end do
+    do i = 1, nc3
+        do j = 1, nc3
+            c3z(i, j) = sin(c3x(j))*cos(c3y(i))
+        end do
+    end do
+    call contour3d(c3x, c3y, c3z)
+    call title("contour3d")
+    call save_all("contour3d")
 
     ! 124) arrows in space
     call clf()

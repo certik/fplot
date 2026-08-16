@@ -49,7 +49,7 @@ module fplot
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
-    public :: plot_trisurf, bar3d, quiver3d
+    public :: plot_trisurf, bar3d, quiver3d, contour3d
     public :: view_init, zlabel, zlim
     public :: subplot, subplot2grid, subplot_mosaic, gridspec, suptitle
     public :: subplots_adjust, tight_layout, constrained_layout
@@ -646,6 +646,7 @@ module fplot
         procedure :: plot_trisurf => ax_plot_trisurf
         procedure :: bar3d => ax_bar3d
         procedure :: quiver3d => ax_quiver3d
+        procedure :: contour3d => ax_contour3d
         procedure :: view_init => ax_view_init
         procedure :: set_zlabel => ax_set_zlabel
         procedure :: set_zlim => ax_set_zlim
@@ -2351,6 +2352,15 @@ contains
         call ax_sca(self)
         call quiver3d(x, y, z, u, v, w, length, normalize, color, lw)
     end subroutine ax_quiver3d
+
+    subroutine ax_contour3d(self, x, y, z, levels, cmap)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), z(:, :)
+        real(dp), intent(in), optional :: levels(:)
+        character(len=*), intent(in), optional :: cmap
+        call ax_sca(self)
+        call contour3d(x, y, z, levels, cmap)
+    end subroutine ax_contour3d
 
     subroutine ax_plot_wireframe(self, x, y, z, color, alpha, lw)
         class(axes), intent(in) :: self
@@ -4786,6 +4796,83 @@ contains
         r(2) = xp*yp*(1.0_dp - c)*d(1) + (c + yp*yp*(1.0_dp - c))*d(2) - xp*s*d(3)
         r(3) = -yp*s*d(1) + xp*s*d(2) + c*d(3)
     end function rotate_about
+
+    ! Level lines of a grid, each drawn in space at the height of its own
+    ! level. mplot3d does the same, and takes its limits from the grid
+    ! rather than from the rounded levels.
+    subroutine contour3d(x, y, z, levels, cmap)
+        real(dp), intent(in) :: x(:), y(:), z(:, :)
+        real(dp), intent(in), optional :: levels(:)
+        character(len=*), intent(in), optional :: cmap
+        real(dp), allocatable :: lev(:), ex(:, :), ey(:, :), vx(:), vy(:), vz(:)
+        logical, allocatable :: used(:)
+        real(dp) :: t(MAX_TICKS), gx(2), gy(2), tx(3), ty(3), tv(3), sx(2), sy(2)
+        real(dp) :: tol, cx(2), cy(2), cz(2)
+        integer :: nr, nc, nlev, nseg, ns, nv, i, j, k, c, np, cm, id
+
+        call axes3d()
+        nr = size(z, 1)
+        nc = size(z, 2)
+        if (nr < 2 .or. nc < 2) return
+        if (size(x) < nc .or. size(y) < nr) return
+        cm = CMAP_VIRIDIS
+        if (present(cmap)) cm = cmap_from_str(cmap)
+        if (present(levels)) then
+            allocate (lev(size(levels)))
+            lev = levels
+        else
+            call contour_levels(minval(z), maxval(z), 8, t, nlev)
+            allocate (lev(nlev))
+            lev = t(1:nlev)
+        end if
+        nlev = size(lev)
+        if (nlev < 1) return
+
+        nseg = 2*(nr - 1)*(nc - 1)
+        allocate (ex(2, nseg), ey(2, nseg), used(nseg))
+        allocate (vx(nseg + 1), vy(nseg + 1), vz(nseg + 1))
+        tol = 1.0e-9_dp*(abs(x(nc) - x(1))/real(nc - 1, dp) &
+                         + abs(y(nr) - y(1))/real(nr - 1, dp))
+
+        do k = 1, nlev
+            ns = 0
+            do i = 1, nr - 1
+                gy = [y(i), y(i + 1)]
+                do j = 1, nc - 1
+                    gx = [x(j), x(j + 1)]
+                    do c = 1, 2
+                        call cell_triangle(z, i, j, gx, gy, c, tx, ty, tv)
+                        call tri_level(tx, ty, tv, lev(k), sx, sy, np)
+                        if (np /= 2) cycle
+                        ns = ns + 1
+                        ex(:, ns) = sx
+                        ey(:, ns) = sy
+                    end do
+                end do
+            end do
+            if (ns == 0) cycle
+
+            used(1:ns) = .false.
+            do
+                call chain_polyline(ex, ey, used, ns, tol, id, vx, vy, nv)
+                if (nv == 0) exit
+                vz(1:nv) = lev(k)
+                call plot3d(vx(1:nv), vy(1:nv), vz(1:nv), lw=1.5_dp, &
+                            color=cmap_color(cm, real(k - 1, dp)/real(max(nlev - 1, 1), dp)))
+                ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+                ax(cur_i)%series(ax(cur_i)%n_series)%nolim = .true.
+            end do
+        end do
+
+        ! The corners of the grid, so that the box holds the data and not
+        ! only the levels that happened to cross it.
+        cx = [x(1), x(nc)]
+        cy = [y(1), y(nr)]
+        cz = [minval(z), maxval(z)]
+        call plot3d(cx, cy, cz, linestyle="none")
+        ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+        deallocate (ex, ey, used, vx, vy, vz)
+    end subroutine contour3d
 
     ! The same grid, ruled rather than filled. matplotlib draws every line
     ! of the mesh whether it is in front or behind, and so does this.

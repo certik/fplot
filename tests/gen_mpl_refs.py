@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "contour3d",
     "quiver3d",
     "bar3d",
     "trisurf",
@@ -905,6 +906,16 @@ def main() -> None:
             tpy.append(j + 0.35 * np.cos(5.0 * k))
             tpz.append(tpx[-1] * tpy[-1])
     tx, ty, tz = np.array(tpx), np.array(tpy), np.array(tpz)
+
+    # 125 level lines drawn in space
+    c3 = np.linspace(-3, 3, 21)
+    c3x, c3y = np.meshgrid(c3, c3)
+    c3z = np.sin(c3x) * np.cos(c3y)
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a = fig.add_subplot(projection="3d")
+    a.contour(c3x, c3y, c3z)
+    a.set_title("contour3d")
+    save(fig, "contour3d")
 
     # 124 arrows in space
     q3x, q3y, q3z, q3u, q3v, q3w = [], [], [], [], [], []

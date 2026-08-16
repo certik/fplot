@@ -165,6 +165,8 @@ call suptitle("figure title")
   back to front with everything else in the axes
 - `quiver3d`: arrows in space, a shaft and two barbs turned fifteen
   degrees off it, with the limits taken from where the arrows start
+- `contour3d`: level lines of a grid drawn in space, each at the height
+  of its own level
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
   same number of ticks for the space available, and one decimal count
   shared by the whole axis. A log axis writes its decades as powers, and
