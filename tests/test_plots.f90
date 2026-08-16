@@ -847,6 +847,19 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 86) the grid: which ticks it follows and what it looks like
+    call clf()
+    call subplot(1, 2, 1)
+    call plot(x, y)
+    call grid(.true., which="both", color="0.7", linestyle=":", lw=0.6_dp)
+    call minorticks_on()
+    call title("both")
+    call subplot(1, 2, 2)
+    call plot(x, y)
+    call grid(.true., axis="y", color="tab:blue", linestyle="--", alpha=0.4_dp)
+    call title("y only")
+    call save_all("grid_options")
+
 ! 85) the same calls, reached through an axes handle rather than the
 ! current axes
     call clf()

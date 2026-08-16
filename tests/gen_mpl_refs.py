@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "grid_options",
     "axes_handles2",
     "zorder",
     "nan_gap",
@@ -856,6 +857,17 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 86 the grid: which ticks it follows and what it looks like
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].plot(x, y)
+    axs[0].grid(True, which="both", color="0.7", linestyle=":", linewidth=0.6)
+    axs[0].minorticks_on()
+    axs[0].set_title("both")
+    axs[1].plot(x, y)
+    axs[1].grid(True, axis="y", color="tab:blue", linestyle="--", alpha=0.4)
+    axs[1].set_title("y only")
+    save(fig, "grid_options")
 
     # 85 the same calls, reached through an axes handle
     fig, axs = plt.subplots(2, 2, figsize=(6.4, 4.8))

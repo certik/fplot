@@ -44,6 +44,9 @@ call suptitle("figure title")
   markers `o x . s ^ v < > * + D`
 - Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
 - Title, axis labels, grid, `xlim` / `ylim`, `clf` / `figure(figsize=, dpi=)`
+- `grid(on, axis=, which=, color=, linestyle=, lw=, alpha=)` for one axis
+  only, for the minor ticks, or in a colour of your own; log axes carry
+  minor ticks without being asked, as matplotlib's do
 - `savefig(file, transparent=, facecolor=)`; the extension picks the format,
   one of `.svg`, `.png`, `.pdf` or `.eps`, and `dpi=` sizes the PNG raster
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`

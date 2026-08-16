@@ -253,6 +253,13 @@ module fplot
         character(len=256) :: xlabel = ""
         character(len=256) :: ylabel = ""
         logical :: grid_on = .false.
+        ! Empty or negative means "whatever the style sheet says".
+        character(len=8) :: grid_axis = "both"
+        character(len=8) :: grid_which = "major"
+        character(len=16) :: grid_color = ""
+        integer :: grid_ls = -1
+        real(dp) :: grid_lw = -1.0_dp
+        real(dp) :: grid_alpha = -1.0_dp
         logical :: legend_on = .false.
         character(len=16) :: legend_loc = "upper right"
         logical :: minor_ticks = .false.
@@ -2273,11 +2280,13 @@ contains
         call set_aspect(ratio, adjustable)
     end subroutine ax_set_aspect
 
-    subroutine ax_grid(self, on)
+    subroutine ax_grid(self, on, axis, which, color, linestyle, lw, alpha)
         class(axes), intent(in) :: self
         logical, intent(in) :: on
+        character(len=*), intent(in), optional :: axis, which, color, linestyle
+        real(dp), intent(in), optional :: lw, alpha
         call ax_sca(self)
-        call grid(on)
+        call grid(on, axis, which, color, linestyle, lw, alpha)
     end subroutine ax_grid
 
     subroutine ax_legend(self, loc, fontsize, ncol, frameon, title, bbox_to_anchor)
@@ -2397,10 +2406,18 @@ contains
         end do
     end subroutine set_fontsize
 
-    subroutine grid(on)
+    subroutine grid(on, axis, which, color, linestyle, lw, alpha)
         logical, intent(in) :: on
+        character(len=*), intent(in), optional :: axis, which, color, linestyle
+        real(dp), intent(in), optional :: lw, alpha
         call ensure_fig()
         ax(cur_i)%grid_on = on
+        if (present(axis)) ax(cur_i)%grid_axis = axis
+        if (present(which)) ax(cur_i)%grid_which = which
+        if (present(color)) ax(cur_i)%grid_color = color
+        if (present(linestyle)) ax(cur_i)%grid_ls = linestyle_from_str(linestyle)
+        if (present(lw)) ax(cur_i)%grid_lw = lw
+        if (present(alpha)) ax(cur_i)%grid_alpha = alpha
     end subroutine grid
 
     ! bbox_to_anchor is in axes coordinates, so (1.02, 1.0) with the default
@@ -7164,30 +7181,68 @@ contains
 
     ! The grid lines of an axes, drawn between the patches and the lines
     ! because that is where matplotlib's axes.axisbelow="line" puts them.
-    subroutine append_grid(b, a, xt, nxt, yt, nyt, xmin, xmax, ymin, ymax, &
+    subroutine append_grid(b, a, xt, nxt, yt, nyt, xm, nxm, ym, nym, &
+                           xmin, xmax, ymin, ymax, &
                            ax_l, ax_r, ax_t, ax_b, ax_w, ax_h, xsc, ysc)
         class(renderer_t), intent(inout) :: b
         type(axes_t), intent(in) :: a
-        real(dp), intent(in) :: xt(:), yt(:)
-        integer, intent(in) :: nxt, nyt
+        real(dp), intent(in) :: xt(:), yt(:), xm(:), ym(:)
+        integer, intent(in) :: nxt, nyt, nxm, nym
         real(dp), intent(in) :: xmin, xmax, ymin, ymax
         real(dp), intent(in) :: ax_l, ax_r, ax_t, ax_b, ax_w, ax_h
         type(scale_t), intent(in) :: xsc, ysc
-        real(dp) :: p
-        integer :: i
+        character(len=7) :: col
+        real(dp) :: p, lw, alpha, a2
+        integer :: i, ls
 
         if (.not. a%grid_on) return
-        do i = 1, nxt
-            p = map_x(xt(i), xmin, xmax, ax_l, ax_w, xsc)
-            call append_line(b, p, ax_t, p, ax_b, rc_grid_color, rc_grid_lw, &
-                             LINE_SOLID, 1.0_dp)
-        end do
-        do i = 1, nyt
-            p = map_y(yt(i), ymin, ymax, ax_b, ax_h, ysc)
-            call append_line(b, ax_l, p, ax_r, p, rc_grid_color, rc_grid_lw, &
-                             LINE_SOLID, 1.0_dp)
-        end do
+        col = rc_grid_color
+        alpha = 1.0_dp
+        if (len_trim(a%grid_color) > 0) col = resolve_color(trim(a%grid_color), a2)
+        lw = rc_grid_lw
+        if (a%grid_lw >= 0.0_dp) lw = a%grid_lw
+        ls = LINE_SOLID
+        if (a%grid_ls >= 0) ls = a%grid_ls
+        if (a%grid_alpha >= 0.0_dp) alpha = a%grid_alpha
+        if (grid_does(a, "major")) then
+            call grid_lines(b, xt, nxt, yt, nyt)
+        end if
+        if (grid_does(a, "minor")) then
+            call grid_lines(b, xm, nxm, ym, nym)
+        end if
+    contains
+        subroutine grid_lines(bb, gx, ngx, gy, ngy)
+            class(renderer_t), intent(inout) :: bb
+            real(dp), intent(in) :: gx(:), gy(:)
+            integer, intent(in) :: ngx, ngy
+            if (a%grid_axis /= "y") then
+                do i = 1, ngx
+                    p = map_x(gx(i), xmin, xmax, ax_l, ax_w, xsc)
+                    call append_line(bb, p, ax_t, p, ax_b, col, lw, ls, alpha)
+                end do
+            end if
+            if (a%grid_axis /= "x") then
+                do i = 1, ngy
+                    p = map_y(gy(i), ymin, ymax, ax_b, ax_h, ysc)
+                    call append_line(bb, ax_l, p, ax_r, p, col, lw, ls, alpha)
+                end do
+            end if
+        end subroutine grid_lines
     end subroutine append_grid
+
+    ! Does the grid cover this tier of ticks?
+    pure logical function grid_does(a, which)
+        type(axes_t), intent(in) :: a
+        character(len=*), intent(in) :: which
+        grid_does = a%grid_which == which .or. a%grid_which == "both"
+    end function grid_does
+
+    ! Minor ticks are wanted whenever they are asked for outright or the
+    ! grid is drawn through them.
+    pure logical function wants_minor(a)
+        type(axes_t), intent(in) :: a
+        wants_minor = a%minor_ticks .or. (a%grid_on .and. grid_does(a, "minor"))
+    end function wants_minor
 
     ! Vertical gradient strip plus its own frame, ticks and labels.
     subroutine append_colorbar(b, a, idx, W, H)
@@ -8183,7 +8238,8 @@ contains
                         a%y_date, yticks, nyt, y_unit, a%ytick_base)
         xfmt = axis_fmt(xticks, nxt, a, .true., xmin, xmax)
         yfmt = axis_fmt(yticks, nyt, a, .false., min(ymin, ymax), max(ymin, ymax))
-        if (a%minor_ticks) then
+        if (wants_minor(a) .or. a%xsc%kind == SCALE_LOG .or. &
+            a%ysc%kind == SCALE_LOG) then
             call minor_positions(xticks, nxt, xmin, xmax, xsc, xminor, nxm)
             call minor_positions(yticks, nyt, ymin, ymax, ysc, yminor, nym)
         else
@@ -8236,7 +8292,8 @@ contains
         do ii = 1, a%n_series
             i = ord(ii)
             if (.not. grid_done .and. series_z(a%series(i)) >= Z_GRID) then
-                call append_grid(b, a, xticks, nxt, yticks, nyt, xmin, xmax, &
+                call append_grid(b, a, xticks, nxt, yticks, nyt, xminor, nxm, &
+                                 yminor, nym, xmin, xmax, &
                                  ymin, ymax, ax_l, ax_r, ax_t, ax_b, ax_w, ax_h, &
                                  xsc, ysc)
                 grid_done = .true.
@@ -8410,7 +8467,8 @@ contains
             end if
         end do
         if (.not. grid_done) &
-            call append_grid(b, a, xticks, nxt, yticks, nyt, xmin, xmax, &
+            call append_grid(b, a, xticks, nxt, yticks, nyt, xminor, nxm, &
+                                 yminor, nym, xmin, xmax, &
                              ymin, ymax, ax_l, ax_r, ax_t, ax_b, ax_w, ax_h, xsc, ysc)
         ! annotations, in data coordinates
         do i = 1, a%n_texts
@@ -8452,8 +8510,8 @@ contains
         end if
         if (a%yaxis_off) nyt = 0
         if (a%xaxis_off) nxt = 0
-        if (a%xaxis_off) nxm = 0
-        if (a%yaxis_off) nym = 0
+        if (a%xaxis_off .or. .not. (a%minor_ticks .or. xsc%kind == SCALE_LOG)) nxm = 0
+        if (a%yaxis_off .or. .not. (a%minor_ticks .or. ysc%kind == SCALE_LOG)) nym = 0
 
         do i = 1, nxt
             px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
