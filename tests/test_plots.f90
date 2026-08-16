@@ -15,6 +15,8 @@ program test_plots
     integer, parameter :: nh = 20
     integer, parameter :: ne = 8
     real(dp) :: x(n), y(n), y2(n), y3(n)
+    real(dp) :: lo, hi
+    character(len=64) :: buf
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
     real(dp) :: xs(ns), ys(ns)
@@ -849,6 +851,17 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 100) axes that count down, and limits read back out
+    call clf()
+    call plot(x, y, "b-")
+    call invert_xaxis()
+    call invert_yaxis()
+    call get_xlim(lo, hi)
+    write (buf, '(a,f6.2,a,f6.2)') "x from ", lo, " to ", hi
+    call text(0.05_dp, 0.1_dp, trim(buf), transform="axes")
+    call title("inverted axes")
+    call save_all("invert_axes")
 
 ! 99) an annotation with a real arrow head
     call clf()

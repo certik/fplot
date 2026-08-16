@@ -41,6 +41,7 @@ module fplot
     public :: imshow, colorbar, contour, contourf, clabel
     public :: title, xlabel, ylabel, grid, legend
     public :: xlim, ylim, clf, savefig, show, figure
+    public :: get_xlim, get_ylim, invert_xaxis, invert_yaxis
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
@@ -458,6 +459,7 @@ module fplot
         character(len=32) :: cbar_label = ""
         type(scale_t) :: xsc
         type(scale_t) :: ysc
+        logical :: x_inv = .false., y_inv = .false.
         logical :: xlim_set = .false.
         logical :: ylim_set = .false.
         real(dp) :: xmin_user = 0.0_dp, xmax_user = 1.0_dp
@@ -528,6 +530,10 @@ module fplot
         procedure :: set_ylabel => ax_set_ylabel
         procedure :: set_xlim => ax_set_xlim
         procedure :: set_ylim => ax_set_ylim
+        procedure :: get_xlim => ax_get_xlim
+        procedure :: get_ylim => ax_get_ylim
+        procedure :: invert_xaxis => ax_invert_xaxis
+        procedure :: invert_yaxis => ax_invert_yaxis
         procedure :: set_xscale => ax_set_xscale
         procedure :: set_yscale => ax_set_yscale
         procedure :: set_xticks => ax_set_xticks
@@ -2413,6 +2419,32 @@ contains
         call ylim(ymin, ymax)
     end subroutine ax_set_ylim
 
+    subroutine ax_get_xlim(self, xmin, xmax)
+        class(axes), intent(in) :: self
+        real(dp), intent(out) :: xmin, xmax
+        call ax_sca(self)
+        call get_xlim(xmin, xmax)
+    end subroutine ax_get_xlim
+
+    subroutine ax_get_ylim(self, ymin, ymax)
+        class(axes), intent(in) :: self
+        real(dp), intent(out) :: ymin, ymax
+        call ax_sca(self)
+        call get_ylim(ymin, ymax)
+    end subroutine ax_get_ylim
+
+    subroutine ax_invert_xaxis(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call invert_xaxis()
+    end subroutine ax_invert_xaxis
+
+    subroutine ax_invert_yaxis(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call invert_yaxis()
+    end subroutine ax_invert_yaxis
+
     subroutine ax_set_xscale(self, name, linthresh, linscale)
         class(axes), intent(in) :: self
         character(len=*), intent(in) :: name
@@ -2844,6 +2876,33 @@ contains
         ax(cur_i)%ymax_user = ymax
         ax(cur_i)%ylim_set = .true.
     end subroutine ylim
+
+    ! The limits actually in force, autoscaling included, so that a caller
+    ! can place something relative to what the axes ended up showing.
+    subroutine get_xlim(xmin, xmax)
+        real(dp), intent(out) :: xmin, xmax
+        real(dp) :: ylo, yhi
+        call ensure_fig()
+        call compute_limits(ax(cur_i), xmin, xmax, ylo, yhi)
+    end subroutine get_xlim
+
+    subroutine get_ylim(ymin, ymax)
+        real(dp), intent(out) :: ymin, ymax
+        real(dp) :: xlo, xhi
+        call ensure_fig()
+        call compute_limits(ax(cur_i), xlo, xhi, ymin, ymax)
+    end subroutine get_ylim
+
+    ! Turn an axis round, so that it counts down instead of up.
+    subroutine invert_xaxis()
+        call ensure_fig()
+        ax(cur_i)%x_inv = .not. ax(cur_i)%x_inv
+    end subroutine invert_xaxis
+
+    subroutine invert_yaxis()
+        call ensure_fig()
+        ax(cur_i)%y_inv = .not. ax(cur_i)%y_inv
+    end subroutine invert_yaxis
 
     ! matplotlib's artist.set_zorder, applied to the artist just drawn.
     ! Fortran has no artist objects to hang a keyword off, so rather than
@@ -6068,6 +6127,11 @@ contains
         ! up and a feature at one x is at the same place in all of them.
         if (a%link_x > 0) call union_limits(a%link_x, .true., xmin, xmax)
         if (a%link_y > 0) call union_limits(a%link_y, .false., ymin, ymax)
+        ! An inverted axis is simply one whose limits run the other way; the
+        ! data-to-device mapping and the tick locators already cope, since
+        ! origin="upper" images have always produced a descending y.
+        if (a%x_inv) call swap(xmin, xmax)
+        if (a%y_inv) call swap(ymin, ymax)
     end subroutine compute_limits
 
     ! The limits of one axis across a share group. Each member is measured

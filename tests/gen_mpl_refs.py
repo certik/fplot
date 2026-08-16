@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "invert_axes",
     "annotate_arrow",
     "transform_axes",
     "plot_y",
@@ -870,6 +871,16 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 100 axes that count down, and limits read back out
+    fig, ax = setup_fig()
+    ax.plot(x, y, "b-")
+    ax.invert_xaxis()
+    ax.invert_yaxis()
+    lo, hi = ax.get_xlim()
+    ax.text(0.05, 0.1, "x from %6.2f to %6.2f" % (lo, hi), transform=ax.transAxes)
+    ax.set_title("inverted axes")
+    save(fig, "invert_axes")
 
     # 99 an annotation with a real arrow head
     fig, ax = setup_fig()
