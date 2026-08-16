@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "mathtext_frac",
     "hatch",
     "colorbar_orient",
     "margins",
@@ -865,6 +866,14 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 95 fractions and roots
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.set_xlabel(r"$\frac{x}{2}$")
+    ax.set_ylabel(r"$\sqrt{y}$")
+    ax.set_title(r"$T = 2\sqrt{\frac{L}{g}}$")
+    save(fig, "mathtext_frac")
 
     # 94 hatched fills
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))

@@ -126,9 +126,9 @@ call suptitle("figure title")
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
   same number of ticks for the space available, and one decimal count
   shared by the whole axis
-- Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$` in any label, laid out
-  once and drawn by every backend, with the letters sloped and the rest
-  upright as TeX sets them
+- Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$`, `$\frac{a}{b}$` and
+  `$\sqrt{x}$` in any label, laid out once and drawn by every backend,
+  with the letters sloped and the rest upright as TeX sets them
 - `fontweight=` and `fontstyle=` on `title`, `suptitle`, `xlabel`,
   `ylabel`, `text` and `annotate`: real bold and oblique faces, not a
   smeared or sheared regular one

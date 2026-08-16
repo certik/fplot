@@ -6440,6 +6440,7 @@ contains
         integer, intent(in) :: anchor
         type(mrun_t) :: runs(MAX_RUNS)
         type(font_t) :: rf
+        type(paint_t) :: lp
         integer :: nr, i
         real(dp) :: w, x0, ca, sa, rad
 
@@ -6454,6 +6455,21 @@ contains
         sa = sin(rad)
         rf = f
         do i = 1, nr
+            if (runs(i)%line) then
+                lp = p
+                lp%filled = .false.
+                lp%stroked = .true.
+                lp%stroke_rgb = p%fill_rgb
+                lp%stroke_alpha = p%fill_alpha
+                lp%line_width = runs(i)%lw
+                lp%cap = CAP_BUTT
+                call b%draw_path([x + (x0 + runs(i)%dx)*ca - runs(i)%dy*sa, &
+                                  x + (x0 + runs(i)%x2)*ca - runs(i)%y2*sa], &
+                                 [y + (x0 + runs(i)%dx)*sa + runs(i)%dy*ca, &
+                                  y + (x0 + runs(i)%x2)*sa + runs(i)%y2*ca], &
+                                 [VERB_MOVE, VERB_LINE], 2, lp)
+                cycle
+            end if
             rf%size = runs(i)%size
             rf%slant = SLANT_ROMAN
             if (runs(i)%italic) rf%slant = SLANT_ITALIC

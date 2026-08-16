@@ -850,6 +850,14 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 95) fractions and roots
+    call clf()
+    call plot(x, y)
+    call xlabel("$\frac{x}{2}$")
+    call ylabel("$\sqrt{y}$")
+    call title("$T = 2\sqrt{\frac{L}{g}}$")
+    call save_all("mathtext_frac")
+
 ! 94) hatched fills
     call clf()
     call subplot(1, 2, 1)
