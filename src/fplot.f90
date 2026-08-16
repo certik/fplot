@@ -238,6 +238,10 @@ module fplot
         real(dp) :: bar_pad = 3.0_dp
         real(dp) :: bar_label_size = 10.0_dp
         character(len=16) :: bar_fmt = ""
+        ! matplotlib's hatch: the lines ruled over the fill, and the colour
+        ! they are ruled in, black unless an edge colour was named.
+        character(len=8) :: hatch = ""
+        character(len=7) :: hcolor = ""
         character(len=7) :: edgecolor = "#ffffff"
         real(dp) :: edgewidth = 0.5_dp
         ! 3D: the third coordinate of a line or scatter, and the grid of a
@@ -1791,26 +1795,28 @@ contains
                   cumulative, histtype)
     end subroutine ax_hist
 
-    subroutine ax_fill_between(self, x, y1, y2, color, label, alpha, where)
+    subroutine ax_fill_between(self, x, y1, y2, color, label, alpha, where, &
+                               hatch, edgecolor)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
-        character(len=*), intent(in), optional :: color, label
+        character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
         logical, intent(in), optional :: where(:)
         call ax_sca(self)
-        call fill_between(x, y1, y2, color, label, alpha, where)
+        call fill_between(x, y1, y2, color, label, alpha, where, hatch, edgecolor)
     end subroutine ax_fill_between
 
-    subroutine ax_fill_betweenx(self, y, x1, x2, color, label, alpha, where)
+    subroutine ax_fill_betweenx(self, y, x1, x2, color, label, alpha, where, &
+                                hatch, edgecolor)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: y(:), x1(:)
         real(dp), intent(in), optional :: x2(:)
-        character(len=*), intent(in), optional :: color, label
+        character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
         logical, intent(in), optional :: where(:)
         call ax_sca(self)
-        call fill_betweenx(y, x1, x2, color, label, alpha, where)
+        call fill_betweenx(y, x1, x2, color, label, alpha, where, hatch, edgecolor)
     end subroutine ax_fill_betweenx
 
     subroutine ax_stackplot(self, x, y, labels, colors, alpha)
@@ -1852,14 +1858,15 @@ contains
     end subroutine ax_set_polar
 
     subroutine ax_add_rectangle(self, xy, width, height, angle, facecolor, &
-                                edgecolor, lw, alpha, fill)
+                                edgecolor, lw, alpha, fill, hatch)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: xy(2), width, height
         real(dp), intent(in), optional :: angle, lw, alpha
-        character(len=*), intent(in), optional :: facecolor, edgecolor
+        character(len=*), intent(in), optional :: facecolor, edgecolor, hatch
         logical, intent(in), optional :: fill
         call ax_sca(self)
-        call add_rectangle(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+        call add_rectangle(xy, width, height, angle, facecolor, edgecolor, lw, &
+                           alpha, fill, hatch)
     end subroutine ax_add_rectangle
 
     subroutine ax_add_circle(self, xy, radius, facecolor, edgecolor, lw, alpha, fill)
@@ -1883,14 +1890,14 @@ contains
         call add_ellipse(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
     end subroutine ax_add_ellipse
 
-    subroutine ax_add_polygon(self, x, y, facecolor, edgecolor, lw, alpha, fill)
+    subroutine ax_add_polygon(self, x, y, facecolor, edgecolor, lw, alpha, fill, hatch)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y(:)
         real(dp), intent(in), optional :: lw, alpha
-        character(len=*), intent(in), optional :: facecolor, edgecolor
+        character(len=*), intent(in), optional :: facecolor, edgecolor, hatch
         logical, intent(in), optional :: fill
         call ax_sca(self)
-        call add_polygon(x, y, facecolor, edgecolor, lw, alpha, fill)
+        call add_polygon(x, y, facecolor, edgecolor, lw, alpha, fill, hatch)
     end subroutine ax_add_polygon
 
     subroutine ax_set_zorder(self, z)
@@ -4225,10 +4232,10 @@ contains
 
     ! Horizontal bars: y locates each bar and width is its length.
     subroutine barh_num(y, width, height, color, label, alpha, left, colors, &
-                        edgecolor, linewidth)
+                        edgecolor, linewidth, hatch)
         real(dp), intent(in) :: y(:), width(:)
         real(dp), intent(in), optional :: height, alpha, left(:), linewidth
-        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: color, label, edgecolor, hatch
         character(len=*), intent(in), optional :: colors(:)
         integer :: is
 
@@ -4236,18 +4243,18 @@ contains
         is = new_shape_series(SERIES_BARH, y, width, color, label, alpha)
         if (is < 1) return
         if (present(height)) ax(cur_i)%series(is)%width = height
-        call bar_options(is, left, colors, edgecolor, linewidth)
+        call bar_options(is, left, colors, edgecolor, linewidth, hatch)
     end subroutine barh_num
 
     subroutine barh_cat(cats, width, height, color, label, alpha, left, &
-                        colors, edgecolor, linewidth)
+                        colors, edgecolor, linewidth, hatch)
         character(len=*), intent(in) :: cats(:)
         real(dp), intent(in) :: width(:)
         real(dp), intent(in), optional :: height, alpha, left(:), linewidth
-        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: color, label, edgecolor, hatch
         character(len=*), intent(in), optional :: colors(:)
         call barh_num(category_positions(size(cats)), width, height, color, &
-                      label, alpha, left, colors, edgecolor, linewidth)
+                      label, alpha, left, colors, edgecolor, linewidth, hatch)
         call yticks(category_positions(size(cats)), cats)
     end subroutine barh_cat
 
@@ -4291,10 +4298,11 @@ contains
     ! different scales leans exactly as matplotlib's does.
     ! ----------------------------------------------------------------------
 
-    subroutine add_rectangle(xy, width, height, angle, facecolor, edgecolor, lw, alpha, fill)
+    subroutine add_rectangle(xy, width, height, angle, facecolor, edgecolor, &
+                             lw, alpha, fill, hatch)
         real(dp), intent(in) :: xy(2), width, height
         real(dp), intent(in), optional :: angle, lw, alpha
-        character(len=*), intent(in), optional :: facecolor, edgecolor
+        character(len=*), intent(in), optional :: facecolor, edgecolor, hatch
         logical, intent(in), optional :: fill
         real(dp) :: px(4), py(4), rx(4), ry(4), a, ca, sa
         integer :: i
@@ -4310,7 +4318,7 @@ contains
             rx(i) = xy(1) + px(i)*ca - py(i)*sa
             ry(i) = xy(2) + px(i)*sa + py(i)*ca
         end do
-        call add_polygon(rx, ry, facecolor, edgecolor, lw, alpha, fill)
+        call add_polygon(rx, ry, facecolor, edgecolor, lw, alpha, fill, hatch)
     end subroutine add_rectangle
 
     subroutine add_circle(xy, radius, facecolor, edgecolor, lw, alpha, fill)
@@ -4345,10 +4353,10 @@ contains
         call add_polygon(px, py, facecolor, edgecolor, lw, alpha, fill)
     end subroutine add_ellipse
 
-    subroutine add_polygon(x, y, facecolor, edgecolor, lw, alpha, fill)
+    subroutine add_polygon(x, y, facecolor, edgecolor, lw, alpha, fill, hatch)
         real(dp), intent(in) :: x(:), y(:)
         real(dp), intent(in), optional :: lw, alpha
-        character(len=*), intent(in), optional :: facecolor, edgecolor
+        character(len=*), intent(in), optional :: facecolor, edgecolor, hatch
         logical, intent(in), optional :: fill
         integer :: is
 
@@ -4366,6 +4374,8 @@ contains
         ax(cur_i)%series(is)%edgewidth = 1.0_dp
         if (present(lw)) ax(cur_i)%series(is)%edgewidth = lw
         if (present(fill)) ax(cur_i)%series(is)%patch_fill = fill
+        if (present(hatch)) ax(cur_i)%series(is)%hatch = hatch
+        if (present(edgecolor)) ax(cur_i)%series(is)%hcolor = resolve_color(edgecolor)
     end subroutine add_polygon
 
     ! matplotlib's Arrow patch: the same unit outline it uses, scaled to the
@@ -4859,10 +4869,10 @@ contains
     ! bottom stacks this series on top of another; colors gives every bar
     ! its own color, as matplotlib's list-valued color does.
     subroutine bar_num(x, height, width, color, label, alpha, bottom, colors, &
-                       edgecolor, linewidth)
+                       edgecolor, linewidth, hatch)
         real(dp), intent(in) :: x(:), height(:)
         real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
-        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: color, label, edgecolor, hatch
         character(len=*), intent(in), optional :: colors(:)
         integer :: is
 
@@ -4870,18 +4880,18 @@ contains
         is = new_shape_series(SERIES_BAR, x, height, color, label, alpha)
         if (is < 1) return
         if (present(width)) ax(cur_i)%series(is)%width = width
-        call bar_options(is, bottom, colors, edgecolor, linewidth)
+        call bar_options(is, bottom, colors, edgecolor, linewidth, hatch)
     end subroutine bar_num
 
     subroutine bar_cat(cats, height, width, color, label, alpha, bottom, &
-                       colors, edgecolor, linewidth)
+                       colors, edgecolor, linewidth, hatch)
         character(len=*), intent(in) :: cats(:)
         real(dp), intent(in) :: height(:)
         real(dp), intent(in), optional :: width, alpha, bottom(:), linewidth
-        character(len=*), intent(in), optional :: color, label, edgecolor
+        character(len=*), intent(in), optional :: color, label, edgecolor, hatch
         character(len=*), intent(in), optional :: colors(:)
         call bar_num(category_positions(size(cats)), height, width, color, &
-                     label, alpha, bottom, colors, edgecolor, linewidth)
+                     label, alpha, bottom, colors, edgecolor, linewidth, hatch)
         call xticks(category_positions(size(cats)), cats)
     end subroutine bar_cat
 
@@ -4895,10 +4905,10 @@ contains
         end do
     end function category_positions
 
-    subroutine bar_options(is, base, colors, edgecolor, linewidth)
+    subroutine bar_options(is, base, colors, edgecolor, linewidth, hatch)
         integer, intent(in) :: is
         real(dp), intent(in), optional :: base(:), linewidth
-        character(len=*), intent(in), optional :: colors(:), edgecolor
+        character(len=*), intent(in), optional :: colors(:), edgecolor, hatch
         integer :: n, j
 
         n = ax(cur_i)%series(is)%n
@@ -4915,8 +4925,12 @@ contains
                     resolve_color(colors(min(j, size(colors))))
             end do
         end if
-        if (present(edgecolor)) ax(cur_i)%series(is)%edgecolor = resolve_color(edgecolor)
+        if (present(edgecolor)) then
+            ax(cur_i)%series(is)%edgecolor = resolve_color(edgecolor)
+            ax(cur_i)%series(is)%hcolor = resolve_color(edgecolor)
+        end if
         if (present(linewidth)) ax(cur_i)%series(is)%edgewidth = linewidth
+        if (present(hatch)) ax(cur_i)%series(is)%hatch = hatch
     end subroutine bar_options
 
     ! Label every bar of the most recent bar series with its value. fmt is a
@@ -5096,33 +5110,33 @@ contains
     ! Shade between y1 and y2 (default 0).
     ! where selects the x range to shade. matplotlib fills each run of true
     ! values as its own polygon, and so does this.
-    subroutine fill_between(x, y1, y2, color, label, alpha, where)
+    subroutine fill_between(x, y1, y2, color, label, alpha, where, hatch, edgecolor)
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
-        character(len=*), intent(in), optional :: color, label
+        character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
         logical, intent(in), optional :: where(:)
-        call fill_core(.false., x, y1, y2, color, label, alpha, where)
+        call fill_core(.false., x, y1, y2, color, label, alpha, where, hatch, edgecolor)
     end subroutine fill_between
 
     ! The same band, but between two curves in x, run along y. The stored
     ! series carries the independent coordinate in x and the two edges in
     ! y and y2 exactly as fill_between does; only `horiz` says which way
     ! round the limits and the polygon are read.
-    subroutine fill_betweenx(y, x1, x2, color, label, alpha, where)
+    subroutine fill_betweenx(y, x1, x2, color, label, alpha, where, hatch, edgecolor)
         real(dp), intent(in) :: y(:), x1(:)
         real(dp), intent(in), optional :: x2(:)
-        character(len=*), intent(in), optional :: color, label
+        character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
         logical, intent(in), optional :: where(:)
-        call fill_core(.true., y, x1, x2, color, label, alpha, where)
+        call fill_core(.true., y, x1, x2, color, label, alpha, where, hatch, edgecolor)
     end subroutine fill_betweenx
 
-    subroutine fill_core(horiz, x, y1, y2, color, label, alpha, where)
+    subroutine fill_core(horiz, x, y1, y2, color, label, alpha, where, hatch, edgecolor)
         logical, intent(in) :: horiz
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
-        character(len=*), intent(in), optional :: color, label
+        character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
         logical, intent(in), optional :: where(:)
         integer :: n, i, j, k
@@ -5133,7 +5147,7 @@ contains
         n = min(size(x), size(y1))
         if (n < 1) return
         if (.not. present(where)) then
-            call add_fill(horiz, x(1:n), y1(1:n), y2, color, label, alpha)
+            call add_fill(horiz, x(1:n), y1(1:n), y2, color, label, alpha, hatch, edgecolor)
             return
         end if
 
@@ -5153,9 +5167,10 @@ contains
                 j = j + 1
             end do
             if (first) then
-                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), color, label, alpha)
+                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), color, label, alpha, hatch, edgecolor)
             else
-                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), col, alpha=alpha)
+                call add_fill(horiz, x(i:j), y1(i:j), slice(y2, i, j), col, alpha=alpha, &
+                              hatch=hatch, edgecolor=edgecolor)
             end if
             k = ax(cur_i)%n_series
             if (first .and. k >= 1) then
@@ -5216,17 +5231,19 @@ contains
         end if
     end function slice
 
-    subroutine add_fill(horiz, x, y1, y2, color, label, alpha)
+    subroutine add_fill(horiz, x, y1, y2, color, label, alpha, hatch, edgecolor)
         logical, intent(in) :: horiz
         real(dp), intent(in) :: x(:), y1(:)
         real(dp), intent(in), optional :: y2(:)
-        character(len=*), intent(in), optional :: color, label
+        character(len=*), intent(in), optional :: color, label, hatch, edgecolor
         real(dp), intent(in), optional :: alpha
         integer :: is, n
 
         is = new_shape_series(SERIES_FILL, x, y1, color, label, alpha)
         if (is < 1) return
         ax(cur_i)%series(is)%horiz = horiz
+        if (present(hatch)) ax(cur_i)%series(is)%hatch = hatch
+        if (present(edgecolor)) ax(cur_i)%series(is)%hcolor = resolve_color(edgecolor)
         n = ax(cur_i)%series(is)%n
         allocate (ax(cur_i)%series(is)%y2(n))
         ax(cur_i)%series(is)%y2(1:n) = 0.0_dp
@@ -6556,6 +6573,147 @@ contains
                          pen(color, lw, alpha, ls))
     end subroutine append_line
 
+    ! matplotlib's hatching: lines ruled across the shape and clipped to
+    ! it. The pattern is anchored to the canvas rather than to the shape,
+    ! so that neighbouring shapes line up, and the spacings are the ones
+    ! matplotlib puts in its 72 point tile. "/", "\", "|", "-", "+" and "x"
+    ! say which way the lines run; repeating a character packs them closer,
+    ! which is what matplotlib's density does.
+    subroutine append_hatch(b, px, py, np, pattern, color, alpha)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: px(:), py(:)
+        integer, intent(in) :: np
+        character(len=*), intent(in) :: pattern, color
+        real(dp), intent(in) :: alpha
+        character(len=7) :: col
+
+        col = "#000000"
+        if (len_trim(color) > 0) col = color
+        call hatch_family(b, px, py, np, 1, char_count(pattern, "|") &
+                          + char_count(pattern, "+"), col, alpha)
+        call hatch_family(b, px, py, np, 2, char_count(pattern, "-") &
+                          + char_count(pattern, "+"), col, alpha)
+        call hatch_family(b, px, py, np, 3, char_count(pattern, "/") &
+                          + char_count(pattern, "x"), col, alpha)
+        call hatch_family(b, px, py, np, 4, char_count(pattern, achar(92)) &
+                          + char_count(pattern, "x"), col, alpha)
+    end subroutine append_hatch
+
+    pure function char_count(s, c) result(n)
+        character(len=*), intent(in) :: s, c
+        integer :: n, i
+        n = 0
+        do i = 1, len_trim(s)
+            if (s(i:i) == c) n = n + 1
+        end do
+    end function char_count
+
+    ! One family of parallel lines. Each line is written as a point and a
+    ! direction, and the family as the offsets c of its members: x for the
+    ! uprights, y for the flats, x+y and x-y for the two diagonals.
+    subroutine hatch_family(b, px, py, np, fam, nrep, color, alpha)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: px(:), py(:)
+        integer, intent(in) :: np, fam, nrep
+        character(len=*), intent(in) :: color
+        real(dp), intent(in) :: alpha
+        real(dp) :: x0, x1, y0, y1, step, c0, cmin, cmax, c, dx, dy, ox, oy
+        integer :: k, k0, k1
+
+        if (nrep < 1 .or. np < 3) return
+        x0 = minval(px(1:np))
+        x1 = maxval(px(1:np))
+        y0 = minval(py(1:np))
+        y1 = maxval(py(1:np))
+
+        select case (fam)
+        case (1)
+            step = 12.0_dp/real(nrep, dp)
+            c0 = 0.5_dp*step
+            cmin = x0
+            cmax = x1
+            dx = 0.0_dp
+            dy = 1.0_dp
+        case (2)
+            step = 12.0_dp/real(nrep, dp)
+            c0 = 0.5_dp*step
+            cmin = y0
+            cmax = y1
+            dx = 1.0_dp
+            dy = 0.0_dp
+        case (3)
+            ! The diagonals are twice as far apart in c as the uprights,
+            ! which is what leaves them the same distance apart on paper.
+            step = 24.0_dp/real(nrep, dp)
+            c0 = 0.0_dp
+            cmin = x0 + y0
+            cmax = x1 + y1
+            dx = 1.0_dp
+            dy = -1.0_dp
+        case default
+            step = 24.0_dp/real(nrep, dp)
+            c0 = 0.0_dp
+            cmin = x0 - y1
+            cmax = x1 - y0
+            dx = 1.0_dp
+            dy = 1.0_dp
+        end select
+
+        k0 = floor((cmin - c0)/step)
+        k1 = ceiling((cmax - c0)/step)
+        do k = k0, k1
+            c = c0 + real(k, dp)*step
+            select case (fam)
+            case (2)
+                ox = 0.0_dp
+                oy = c
+            case default
+                ox = c
+                oy = 0.0_dp
+            end select
+            call hatch_line(b, px, py, np, ox, oy, dx, dy, color, alpha)
+        end do
+    end subroutine hatch_family
+
+    ! One ruled line, cut to the parts of it that lie inside the shape.
+    ! Where the line crosses the outline an odd number of times it is in,
+    ! so the crossings sort into pairs and every pair is one dash.
+    subroutine hatch_line(b, px, py, np, ox, oy, dx, dy, color, alpha)
+        class(renderer_t), intent(inout) :: b
+        real(dp), intent(in) :: px(:), py(:)
+        integer, intent(in) :: np
+        real(dp), intent(in) :: ox, oy, dx, dy
+        character(len=*), intent(in) :: color
+        real(dp), intent(in) :: alpha
+        real(dp) :: ts(np + 1), ex, ey, det, t, s, ax_, ay
+        integer :: i, j, nt
+
+        nt = 0
+        do i = 1, np
+            j = i + 1
+            if (j > np) j = 1
+            ax_ = px(i)
+            ay = py(i)
+            ex = px(j) - ax_
+            ey = py(j) - ay
+            det = -dx*ey + ex*dy
+            if (abs(det) < 1.0e-12_dp) cycle
+            s = (dx*(ay - oy) - dy*(ax_ - ox))/det
+            ! Half open, so a crossing exactly at a vertex counts once.
+            if (s < 0.0_dp .or. s >= 1.0_dp) cycle
+            t = (-(ax_ - ox)*ey + ex*(ay - oy))/det
+            nt = nt + 1
+            ts(nt) = t
+        end do
+        if (nt < 2) return
+        call sort_in_place(ts(1:nt))
+        do i = 1, nt - 1, 2
+            call append_line(b, ox + ts(i)*dx, oy + ts(i)*dy, &
+                             ox + ts(i + 1)*dx, oy + ts(i + 1)*dy, &
+                             color, 1.0_dp, LINE_SOLID, alpha)
+        end do
+    end subroutine hatch_line
+
     ! An axis aligned filled rectangle, optionally outlined.
     subroutine append_rect(b, x, y, w, h, color, alpha, edge, elw)
         class(renderer_t), intent(inout) :: b
@@ -6633,6 +6791,9 @@ contains
         call append_rect(b, min(xa, xb), min(ya, yb), abs(xb - xa), &
                          abs(yb - ya), point_color(s, j), s%alpha, &
                          trim(s%edgecolor), s%edgewidth)
+        if (len_trim(s%hatch) > 0) &
+            call append_hatch(b, [xa, xb, xb, xa], [ya, ya, yb, yb], 4, &
+                              trim(s%hatch), trim(s%hcolor), s%alpha)
         if (s%bar_labels) call append_bar_label(b, s, j, xa, xb, ya, yb)
     end subroutine append_bar
 
@@ -6720,6 +6881,8 @@ contains
         px(s%n + 1) = px(1)
         py(s%n + 1) = py(1)
         if (s%patch_fill) call append_polygon(b, px, py, s%n, trim(s%color), s%alpha)
+        if (len_trim(s%hatch) > 0) &
+            call append_hatch(b, px, py, s%n, trim(s%hatch), trim(s%hcolor), s%alpha)
         if (len_trim(s%edgecolor) > 0) &
             call append_stroke_path(b, px, py, s%n + 1, trim(s%edgecolor), &
                                     s%edgewidth, s%alpha)
@@ -6967,6 +7130,9 @@ contains
                     end if
                 end do
                 call append_polygon(b, px, py, 2 * np, trim(s%color), s%alpha)
+                if (len_trim(s%hatch) > 0) &
+                    call append_hatch(b, px, py, 2 * np, trim(s%hatch), &
+                                      trim(s%hcolor), s%alpha)
             end if
             j0 = j1 + 1
         end do

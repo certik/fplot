@@ -49,6 +49,9 @@ call suptitle("figure title")
 - Format strings: colors `bgrcmykw` / `C0`–`C9`, linestyles `-` `--` `:` `-.`,
   markers `o x . s ^ v < > * + D`
 - Optional `label=`, `lw=`, `color=`, `marker=`, `alpha=`
+- `hatch=` on bars, fills and patches: `/`, `\`, `|`, `-`, `+` and `x`,
+  repeated to pack the lines closer, ruled across the shape and clipped
+  to it (matplotlib's dotted hatches are not drawn)
 - Marker and line detail on `plot`: `markersize=`, `markerfacecolor=`,
   `markeredgecolor=`, `markeredgewidth=`, `markevery=`, `drawstyle=` and
   a `dashes=` pattern of your own
