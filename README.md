@@ -163,6 +163,8 @@ call suptitle("figure title")
   the same light source `plot_surface` uses
 - `bar3d`: boxes standing on the xy plane, six lit faces each, painted
   back to front with everything else in the axes
+- `quiver3d`: arrows in space, a shaft and two barbs turned fifteen
+  degrees off it, with the limits taken from where the arrows start
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
   same number of ticks for the space available, and one decimal count
   shared by the whole axis. A log axis writes its decades as powers, and

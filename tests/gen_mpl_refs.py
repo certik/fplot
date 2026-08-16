@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "quiver3d",
     "bar3d",
     "trisurf",
     "tricontourf",
@@ -904,6 +905,24 @@ def main() -> None:
             tpy.append(j + 0.35 * np.cos(5.0 * k))
             tpz.append(tpx[-1] * tpy[-1])
     tx, ty, tz = np.array(tpx), np.array(tpy), np.array(tpz)
+
+    # 124 arrows in space
+    q3x, q3y, q3z, q3u, q3v, q3w = [], [], [], [], [], []
+    for i in range(3):
+        for j in range(3):
+            qx = -0.8 + 0.8 * i
+            qy = -0.8 + 0.8 * j
+            q3x.append(qx)
+            q3y.append(qy)
+            q3z.append(0.0)
+            q3u.append(np.sin(np.pi * qx) * np.cos(np.pi * qy))
+            q3v.append(-np.cos(np.pi * qx) * np.sin(np.pi * qy))
+            q3w.append(0.5 * np.sin(np.pi * qx))
+    fig = plt.figure(figsize=(6.4, 4.8))
+    a = fig.add_subplot(projection="3d")
+    a.quiver(q3x, q3y, q3z, q3u, q3v, q3w, length=0.4, normalize=True)
+    a.set_title("quiver3d")
+    save(fig, "quiver3d")
 
     # 123 boxes standing on the xy plane
     kb = np.arange(1, 13)

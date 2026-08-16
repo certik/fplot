@@ -49,7 +49,7 @@ module fplot
     public :: render_svg, render_pdf, render_png, render_eps
     public :: add_frame, save_animation
     public :: axes3d, plot3d, scatter3d, plot_surface, plot_wireframe
-    public :: plot_trisurf, bar3d
+    public :: plot_trisurf, bar3d, quiver3d
     public :: view_init, zlabel, zlim
     public :: subplot, subplot2grid, subplot_mosaic, gridspec, suptitle
     public :: subplots_adjust, tight_layout, constrained_layout
@@ -294,6 +294,9 @@ module fplot
         ! 3D bars: the top of each box, and the footprint they all share.
         real(dp), allocatable :: z2(:)
         real(dp) :: d3x = 1.0_dp, d3y = 1.0_dp
+        ! An arrow reaches past the data it belongs to, and mplot3d leaves
+        ! the limits to the points the arrows are drawn at.
+        logical :: nolim = .false.
         character(len=128) :: label = ""
     end type series_t
 
@@ -642,6 +645,7 @@ module fplot
         procedure :: plot_wireframe => ax_plot_wireframe
         procedure :: plot_trisurf => ax_plot_trisurf
         procedure :: bar3d => ax_bar3d
+        procedure :: quiver3d => ax_quiver3d
         procedure :: view_init => ax_view_init
         procedure :: set_zlabel => ax_set_zlabel
         procedure :: set_zlim => ax_set_zlim
@@ -2337,6 +2341,16 @@ contains
         call ax_sca(self)
         call bar3d(x, y, z, dx, dy, dz, color, alpha)
     end subroutine ax_bar3d
+
+    subroutine ax_quiver3d(self, x, y, z, u, v, w, length, normalize, color, lw)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), z(:), u(:), v(:), w(:)
+        real(dp), intent(in), optional :: length, lw
+        logical, intent(in), optional :: normalize
+        character(len=*), intent(in), optional :: color
+        call ax_sca(self)
+        call quiver3d(x, y, z, u, v, w, length, normalize, color, lw)
+    end subroutine ax_quiver3d
 
     subroutine ax_plot_wireframe(self, x, y, z, color, alpha, lw)
         class(axes), intent(in) :: self
@@ -4691,6 +4705,87 @@ contains
         end if
         if (present(alpha)) ax(cur_i)%series(is)%alpha = alpha
     end subroutine bar3d
+
+    ! Arrows in space. Each is three straight lines, the shaft and two
+    ! barbs turned fifteen degrees off it, which is how mplot3d builds one.
+    subroutine quiver3d(x, y, z, u, v, w, length, normalize, color, lw)
+        real(dp), intent(in) :: x(:), y(:), z(:), u(:), v(:), w(:)
+        real(dp), intent(in), optional :: length, lw
+        logical, intent(in), optional :: normalize
+        character(len=*), intent(in), optional :: color
+        real(dp), parameter :: HEAD = 0.3_dp
+        real(dp), parameter :: RANG = 15.0_dp*PI/180.0_dp
+        real(dp) :: len_, d(3), tip(3), xp, yp, nrm, c, sn, barb(3), seg(2)
+        real(dp) :: segx(2), segy(2), segz(2)
+        character(len=32) :: col
+        integer :: n, i, k
+
+        call axes3d()
+        n = min(min(size(x), size(y)), size(z))
+        n = min(n, min(min(size(u), size(v)), size(w)))
+        if (n < 1) return
+        len_ = 1.0_dp
+        if (present(length)) len_ = length
+        col = resolve_color(color)
+        if (len_trim(col) == 0) then
+            col = cycle_color(ax(cur_i)%color_cycle)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle + 1
+        end if
+        c = cos(RANG)
+        sn = sin(RANG)
+
+        do i = 1, n
+            d = [u(i), v(i), w(i)]
+            if (present(normalize)) then
+                if (normalize) then
+                    nrm = sqrt(sum(d**2))
+                    if (nrm > 0.0_dp) d = d/nrm
+                end if
+            end if
+            tip = [x(i), y(i), z(i)] + len_*d
+            segx = [x(i), tip(1)]
+            segy = [y(i), tip(2)]
+            segz = [z(i), tip(3)]
+            call plot3d(segx, segy, segz, color=trim(col), lw=lw)
+            ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+            ax(cur_i)%series(ax(cur_i)%n_series)%nolim = .true.
+
+            ! The axis to turn the shaft about is level and across it.
+            nrm = sqrt(d(1)**2 + d(2)**2)
+            if (nrm > 0.0_dp) then
+                xp = d(2)/nrm
+                yp = -d(1)/nrm
+            else
+                xp = 0.0_dp
+                yp = 1.0_dp
+            end if
+            do k = 1, 2
+                seg(1) = merge(sn, -sn, k == 1)
+                barb = rotate_about(d, xp, yp, c, seg(1))
+                segx = [tip(1), tip(1) - len_*HEAD*barb(1)]
+                segy = [tip(2), tip(2) - len_*HEAD*barb(2)]
+                segz = [tip(3), tip(3) - len_*HEAD*barb(3)]
+                call plot3d(segx, segy, segz, color=trim(col), lw=lw)
+                ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+                ax(cur_i)%series(ax(cur_i)%n_series)%nolim = .true.
+            end do
+        end do
+
+        ! The limits come from where the arrows start, not where they reach.
+        call plot3d(x(1:n), y(1:n), z(1:n), linestyle="none")
+        ax(cur_i)%color_cycle = ax(cur_i)%color_cycle - 1
+    end subroutine quiver3d
+
+    ! Rodrigues' formula for a turn about the level axis (xp, yp, 0), with
+    ! the cosine and sine of the angle given.
+    pure function rotate_about(d, xp, yp, c, s) result(r)
+        real(dp), intent(in) :: d(3), xp, yp, c, s
+        real(dp) :: r(3)
+
+        r(1) = (c + xp*xp*(1.0_dp - c))*d(1) + xp*yp*(1.0_dp - c)*d(2) + yp*s*d(3)
+        r(2) = xp*yp*(1.0_dp - c)*d(1) + (c + yp*yp*(1.0_dp - c))*d(2) - xp*s*d(3)
+        r(3) = -yp*s*d(1) + xp*s*d(2) + c*d(3)
+    end function rotate_about
 
     ! The same grid, ruled rather than filled. matplotlib draws every line
     ! of the mesh whether it is in front or behind, and so does this.
@@ -10439,6 +10534,7 @@ contains
         do i = 1, a%n_series
             select case (a%series(i)%kind)
             case (SERIES_LINE3D, SERIES_SCATTER3D, SERIES_TRISURF)
+                if (a%series(i)%nolim) cycle
                 do k = 1, a%series(i)%n
                     lo(1) = min(lo(1), a%series(i)%x(k))
                     hi(1) = max(hi(1), a%series(i)%x(k))
@@ -10472,10 +10568,17 @@ contains
         end if
 
         do i = 1, 3
+            ! An axis with no spread at all is widened the way matplotlib's
+            ! nonsingular does it: by a twentieth of itself, or to plus and
+            ! minus a twentieth when it sits on zero.
             if (hi(i) <= lo(i)) then
-                c = 0.5_dp*(lo(i) + hi(i))
-                lo(i) = c - 0.5_dp
-                hi(i) = c + 0.5_dp
+                if (abs(lo(i)) + abs(hi(i)) == 0.0_dp) then
+                    lo(i) = -0.05_dp
+                    hi(i) = 0.05_dp
+                else
+                    lo(i) = lo(i) - 0.05_dp*abs(lo(i))
+                    hi(i) = hi(i) + 0.05_dp*abs(hi(i))
+                end if
             end if
             d = hi(i) - lo(i)
             lo(i) = lo(i) - MARG(i)*d

@@ -28,6 +28,8 @@ program test_plots
     real(dp) :: usx(nts), usy(nts), usz(nts)
     integer, parameter :: nb3 = 12
     real(dp) :: b3x(nb3), b3y(nb3), b3z(nb3), b3d(nb3)
+    integer, parameter :: nq3 = 9
+    real(dp) :: q3x(nq3), q3y(nq3), q3z(nq3), q3u(nq3), q3v(nq3), q3w(nq3)
     integer, parameter :: ntp = 24
     real(dp) :: tx(ntp), ty(ntp), tz(ntp)
     integer, parameter :: nlg = 60
@@ -865,6 +867,24 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+    ! 124) arrows in space
+    call clf()
+    k = 0
+    do i = 1, 3
+        do j = 1, 3
+            k = k + 1
+            q3x(k) = -0.8_dp + 0.8_dp*real(i - 1, dp)
+            q3y(k) = -0.8_dp + 0.8_dp*real(j - 1, dp)
+            q3z(k) = 0.0_dp
+            q3u(k) = sin(PI_T*q3x(k))*cos(PI_T*q3y(k))
+            q3v(k) = -cos(PI_T*q3x(k))*sin(PI_T*q3y(k))
+            q3w(k) = 0.5_dp*sin(PI_T*q3x(k))
+        end do
+    end do
+    call quiver3d(q3x, q3y, q3z, q3u, q3v, q3w, length=0.4_dp, normalize=.true.)
+    call title("quiver3d")
+    call save_all("quiver3d")
 
     ! 123) boxes standing on the xy plane
     call clf()
