@@ -156,7 +156,8 @@ call suptitle("figure title")
   choosing, which is what an unevenly sampled field needs
 - matplotlib's tick locator and formatter: the same 1/2/2.5/5 steps, the
   same number of ticks for the space available, and one decimal count
-  shared by the whole axis
+  shared by the whole axis. A log axis writes its decades as powers, and
+  when it spans a decade or less it labels the multiples between them
 - Mathtext: `$10^{-3}$`, `$x_i$`, `$E = mc^2$`, `$\frac{a}{b}$`,
   `$\sqrt{x}$` and the greek letters in any label, laid out once and
   drawn by every backend, with the letters sloped and the rest upright as

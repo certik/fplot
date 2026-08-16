@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "log_minor_labels",
     "annotate_curve",
     "constrained",
     "mosaic",
@@ -887,6 +888,13 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 117 a log axis too short to label by decades alone
+    fig, a = plt.subplots(figsize=(6.4, 4.8))
+    lx = np.linspace(1.0, 8.0, 60)
+    a.loglog(lx, lx**1.5)
+    a.set_xlim(1.0, 8.0)
+    save(fig, "log_minor_labels")
 
     # 116 a bowed connector and a box with round corners
     fig, a = plt.subplots(figsize=(6.4, 4.8))

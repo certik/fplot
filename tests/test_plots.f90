@@ -22,6 +22,8 @@ program test_plots
     real(dp) :: xl(m), yl(m), yl2(m)
     real(dp) :: xm(mk), ym(mk)
     real(dp) :: xs(ns), ys(ns)
+    integer, parameter :: nlg = 60
+    real(dp) :: lgx(nlg), lgy(nlg)
     integer, parameter :: nd = 40
     real(dp) :: dist1(nd), dist2(nd), boxmat(2, nd)
     character(len=8) :: mkeys
@@ -855,6 +857,16 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 117) a log axis too short to label by decades alone
+    call clf()
+    do i = 1, nlg
+        lgx(i) = 1.0_dp + 7.0_dp*real(i - 1, dp)/real(nlg - 1, dp)
+        lgy(i) = lgx(i)**1.5_dp
+    end do
+    call loglog(lgx, lgy)
+    call xlim(1.0_dp, 8.0_dp)
+    call save_all("log_minor_labels")
 
 ! 116) a bowed connector and a box with round corners
     call clf()

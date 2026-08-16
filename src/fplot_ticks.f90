@@ -10,7 +10,7 @@ module fplot_ticks
     public :: nice_number
     public :: log_ticks
     public :: symlog_ticks
-    public :: format_tick_to
+    public :: format_tick_to, format_log_minor_to, log_minor_labelled
     public :: tick_decimals
     public :: format_tick_fixed
     public :: tick_offset, tick_decimals_at, format_offset_text
@@ -256,6 +256,40 @@ contains
         n_ticks = n
     end subroutine log_ticks
 
+    ! A minor tick on a log axis, which matplotlib writes as the multiple
+    ! and the decade: 3x10^-1 and so on.
+    subroutine format_log_minor_to(v, s, n)
+        real(dp), intent(in) :: v
+        character(len=*), intent(out) :: s
+        integer, intent(out) :: n
+        integer :: expn, k
+        character(len=32) :: tmp
+
+        n = 0
+        if (v <= 0.0_dp) return
+        expn = floor(log10(v) + 1.0e-9_dp)
+        k = nint(v/10.0_dp**expn)
+        write (tmp, '("$",I0,"\times10^{",I0,"}$")') k, expn
+        n = len_trim(tmp)
+        s(1:n) = tmp(1:n)
+    end subroutine format_log_minor_to
+
+    ! Which multiples of a decade matplotlib labels, given how many decades
+    ! the axis spans: none at all over a decade, the sparse set down to a
+    ! fifth of one, and every multiple below that.
+    pure function log_minor_labelled(k, decades) result(yes)
+        integer, intent(in) :: k
+        real(dp), intent(in) :: decades
+        logical :: yes
+        yes = .false.
+        if (decades > 1.0_dp) return
+        if (decades > 0.4_dp) then
+            yes = k == 2 .or. k == 3 .or. k == 4 .or. k == 6
+        else
+            yes = k >= 2 .and. k <= 9
+        end if
+    end function log_minor_labelled
+
     subroutine format_tick_to(v, is_log, s, n)
         real(dp), intent(in) :: v
         logical, intent(in) :: is_log
@@ -275,23 +309,15 @@ contains
             end if
             expn = nint(log10(av))
             if (abs(av / (10.0_dp ** expn) - 1.0_dp) < 1.0e-8_dp) then
-                if (expn == 0) then
-                    s = "1"
-                    n = 1
-                else if (expn == 1) then
-                    s = "10"
-                    n = 2
+                ! matplotlib's LogFormatterSciNotation writes every decade
+                ! as a power in mathtext, ten to the nought included.
+                if (v < 0.0_dp) then
+                    write (tmp, '("$-10^{",I0,"}$")') expn
                 else
-                    ! matplotlib's LogFormatterSciNotation writes the
-                    ! power as mathtext, and so do we.
-                    if (v < 0.0_dp) then
-                        write (tmp, '("$-10^{",I0,"}$")') expn
-                    else
-                        write (tmp, '("$10^{",I0,"}$")') expn
-                    end if
-                    n = len_trim(tmp)
-                    s(1:n) = tmp(1:n)
+                    write (tmp, '("$10^{",I0,"}$")') expn
                 end if
+                n = len_trim(tmp)
+                s(1:n) = tmp(1:n)
                 return
             end if
         end if

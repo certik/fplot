@@ -8486,20 +8486,23 @@ contains
         real(dp) :: step, v
 
         nm = 0
+        ! A log axis has its minors between the decades whether or not any
+        ! decade falls inside the view, which a short axis need not.
+        if (sc%kind == SCALE_LOG) then
+            if (vmin <= 0.0_dp .or. vmax <= vmin) return
+            do i = floor(log10(vmin)), floor(log10(vmax))
+                do k = 2, 9
+                    call push_minor(m, nm, real(k, dp)*10.0_dp**i, vmin, vmax)
+                end do
+            end do
+            return
+        end if
         if (nt < 2) return
         do i = 1, nt - 1
-            if (sc%kind == SCALE_LOG) then
-                do k = 2, 9
-                    v = t(i) * real(k, dp)
-                    if (v > t(i + 1)) exit
-                    call push_minor(m, nm, v, vmin, vmax)
-                end do
-            else
-                step = (t(i + 1) - t(i)) / 5.0_dp
-                do k = 1, 4
-                    call push_minor(m, nm, t(i) + real(k, dp) * step, vmin, vmax)
-                end do
-            end if
+            step = (t(i + 1) - t(i)) / 5.0_dp
+            do k = 1, 4
+                call push_minor(m, nm, t(i) + real(k, dp) * step, vmin, vmax)
+            end do
         end do
     end subroutine minor_positions
 
@@ -9949,6 +9952,24 @@ contains
         end if
     end subroutine tick_label
 
+    ! The label for one minor tick, empty unless the axis is logarithmic
+    ! and short enough that matplotlib would label its multiples.
+    subroutine log_minor_label(v, sc, vmin, vmax, out, n)
+        real(dp), intent(in) :: v, vmin, vmax
+        type(scale_t), intent(in) :: sc
+        character(len=*), intent(out) :: out
+        integer, intent(out) :: n
+        integer :: k, expn
+
+        n = 0
+        if (sc%kind /= SCALE_LOG) return
+        if (vmin <= 0.0_dp .or. vmax <= vmin .or. v <= 0.0_dp) return
+        expn = floor(log10(v) + 1.0e-9_dp)
+        k = nint(v/10.0_dp**expn)
+        if (.not. log_minor_labelled(k, log10(vmax/vmin))) return
+        call format_log_minor_to(v, out, n)
+    end subroutine log_minor_label
+
     ! The decimal count for one axis: none when the scale is not linear,
     ! since those label themselves.
     function axis_decimals(t, nt, sc) result(d)
@@ -11028,6 +11049,14 @@ contains
             px = map_x(xminor(i), xmin, xmax, ax_l, ax_w, xsc)
             call append_tick_at(b, px, x_edge, 0.0_dp, x_out, a%xtick_dir, &
                                 MINOR_FRAC * a%xtick_len)
+            ! A log axis spanning a decade or less has too few decades to
+            ! label, so matplotlib labels the multiples between them.
+            if (a%xticklabels_off) cycle
+            call log_minor_label(xminor(i), xsc, xmin, xmax, lbl, ln)
+            if (ln > 0) &
+                call append_tick_text(b, px, x_edge + x_out * xtick_gap(a) - &
+                                      merge(6.0_dp, 0.0_dp, a%x_top), lbl(1:ln), &
+                                      "center", a%xtick_size, a%xtick_rot)
         end do
 
         ! y ticks, on the left unless this is a twinx
@@ -11054,6 +11083,12 @@ contains
             py = map_y(yminor(i), ymin, ymax, ax_b, ax_h, ysc)
             call append_tick_at(b, y_edge, py, y_out, 0.0_dp, a%ytick_dir, &
                                 MINOR_FRAC * a%ytick_len)
+            if (a%yticklabels_off) cycle
+            call log_minor_label(yminor(i), ysc, ymin, ymax, lbl, ln)
+            if (ln > 0) &
+                call append_tick_text(b, y_edge + y_out * 7.0_dp, py + 3.5_dp, &
+                                      lbl(1:ln), merge("left ", "right", a%y_right), &
+                                      a%ytick_size, a%ytick_rot)
         end do
 
         ! What the labels left out, written once at the end of the axis:

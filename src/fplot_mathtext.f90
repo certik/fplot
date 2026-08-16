@@ -540,6 +540,8 @@ contains
         case ("Phi"); code = 934
         case ("Psi"); code = 936
         case ("Omega"); code = 937
+        ! The multiplication sign, which log tick labels are written with.
+        case ("times"); code = 215
         case default; code = 0
         end select
     end function greek_code
