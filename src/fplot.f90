@@ -334,7 +334,7 @@ module fplot
         real(dp) :: grid_lw = -1.0_dp
         real(dp) :: grid_alpha = -1.0_dp
         logical :: legend_on = .false.
-        character(len=16) :: legend_loc = "upper right"
+        character(len=16) :: legend_loc = "best"
         logical :: minor_ticks = .false.
         ! User-specified tick positions and optional labels.
         integer :: n_xticks = 0, n_yticks = 0
@@ -2779,7 +2779,7 @@ contains
         ax(host)%frame_off = .true.
         do i = 1, n_before
             do j = 1, ax(i)%n_series
-                if (len_trim(ax(i)%series(j)%label) == 0) cycle
+                if (.not. in_legend(ax(i)%series(j))) cycle
                 call push_series(ax(host), is)
                 ax(host)%series(is) = ax(i)%series(j)
                 ! The copy is there for its label alone; nothing of it is
@@ -2795,12 +2795,31 @@ contains
         cur_i = 1
     end subroutine figlegend
 
-    subroutine legend(loc, fontsize, ncol, frameon, title, bbox_to_anchor)
+    ! Whether an artist shows up in the legend at all. matplotlib keeps
+    ! out anything whose label starts with an underscore, which is how an
+    ! artist that must carry a name for other reasons stays out of it.
+    pure function in_legend(s) result(yes)
+        type(series_t), intent(in) :: s
+        logical :: yes
+        yes = len_trim(s%label) > 0
+        if (yes) yes = s%label(1:1) /= "_"
+    end function in_legend
+
+    subroutine legend(loc, fontsize, ncol, frameon, title, bbox_to_anchor, labels)
         character(len=*), intent(in), optional :: loc, title
+        character(len=*), intent(in), optional :: labels(:)
         real(dp), intent(in), optional :: fontsize, bbox_to_anchor(2)
         integer, intent(in), optional :: ncol
         logical, intent(in), optional :: frameon
+        integer :: i
         call ensure_fig()
+        ! matplotlib's legend(labels): the names are handed to the artists
+        ! in the order they were added, whatever they were called before.
+        if (present(labels)) then
+            do i = 1, min(ax(cur_i)%n_series, size(labels))
+                ax(cur_i)%series(i)%label = labels(i)
+            end do
+        end if
         ax(cur_i)%legend_on = .true.
         if (present(loc)) ax(cur_i)%legend_loc = loc
         if (present(fontsize)) ax(cur_i)%legend_size = fontsize
@@ -9576,11 +9595,55 @@ contains
         end if
     end subroutine legend_anchor
 
+    ! matplotlib's loc="best": try each of the ten placements in its own
+    ! order and take the one the data runs into least, ties going to the
+    ! earlier candidate. matplotlib counts artist vertices inside the box;
+    ! so does this.
+    function legend_best(a, xmin, xmax, ymin, ymax, xsc, ysc, &
+                         ax_l, ax_r, ax_t, ax_b, leg_w, leg_h) result(loc)
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp), intent(in) :: ax_l, ax_r, ax_t, ax_b, leg_w, leg_h
+        character(len=16) :: loc
+        character(len=16), parameter :: cand(10) = &
+            [character(len=16) :: "upper right", "upper left", "lower left", &
+             "lower right", "center right", "center left", "center right", &
+             "lower center", "upper center", "center"]
+        integer :: k, i, j, bad, best
+        real(dp) :: lx, ly, px, py, ax_w, ax_h
+
+        ax_w = ax_r - ax_l
+        ax_h = ax_b - ax_t
+        loc = cand(1)
+        best = huge(1)
+        do k = 1, 10
+            call legend_origin(cand(k), ax_l, ax_r, ax_t, ax_b, leg_w, leg_h, lx, ly)
+            bad = 0
+            do i = 1, a%n_series
+                if (.not. allocated(a%series(i)%x)) cycle
+                if (.not. allocated(a%series(i)%y)) cycle
+                do j = 1, a%series(i)%n
+                    px = map_x(a%series(i)%x(j), xmin, xmax, ax_l, ax_w, xsc)
+                    py = map_y(a%series(i)%y(j), ymin, ymax, ax_b, ax_h, ysc)
+                    if (px >= lx .and. px <= lx + leg_w .and. &
+                        py >= ly .and. py <= ly + leg_h) bad = bad + 1
+                end do
+            end do
+            if (bad < best) then
+                best = bad
+                loc = cand(k)
+            end if
+            if (best == 0) exit
+        end do
+    end function legend_best
+
     subroutine legend_origin(loc, ax_l, ax_r, ax_t, ax_b, leg_w, leg_h, leg_x, leg_y)
         character(len=*), intent(in) :: loc
         real(dp), intent(in) :: ax_l, ax_r, ax_t, ax_b, leg_w, leg_h
         real(dp), intent(out) :: leg_x, leg_y
-        real(dp), parameter :: pad = 8.0_dp
+        ! matplotlib's borderaxespad: half the legend font size.
+        real(dp), parameter :: pad = 5.0_dp
 
         select case (trim(loc))
         case ("upper left", "left")
@@ -10357,6 +10420,7 @@ contains
         type(scale_t) :: xsc, ysc
         integer :: n_leg, k, max_lbl, n_col, n_row, lc, lr
         real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h, col_w, ttl_h, leg_x0
+        character(len=16) :: leg_loc
         real(dp), allocatable :: lx(:), ly(:), mkx(:), mky(:)
         logical, allocatable :: lstart(:)
         integer, allocatable :: ord(:)
@@ -10852,7 +10916,7 @@ contains
             n_leg = 0
             max_lbl = 0
             do i = 1, a%n_series
-                if (len_trim(a%series(i)%label) > 0) then
+                if (in_legend(a%series(i))) then
                     n_leg = n_leg + 1
                     max_lbl = max(max_lbl, len_trim(a%series(i)%label))
                 end if
@@ -10875,7 +10939,11 @@ contains
                                        leg_x, leg_y)
                 else
                     leg_w = min(leg_w, ax_w - 16.0_dp)
-                    call legend_origin(a%legend_loc, ax_l, ax_r, ax_t, ax_b, &
+                    leg_loc = a%legend_loc
+                    if (trim(leg_loc) == "best") &
+                        leg_loc = legend_best(a, xmin, xmax, ymin, ymax, xsc, ysc, &
+                                              ax_l, ax_r, ax_t, ax_b, leg_w, leg_h)
+                    call legend_origin(leg_loc, ax_l, ax_r, ax_t, ax_b, &
                                        leg_w, leg_h, leg_x, leg_y)
                 end if
                 if (len_trim(a%legend_title) > 0) then
@@ -10894,7 +10962,7 @@ contains
                 leg_x0 = leg_x
                 k = 0
                 do i = 1, a%n_series
-                    if (len_trim(a%series(i)%label) == 0) cycle
+                    if (.not. in_legend(a%series(i))) cycle
                     k = k + 1
                     lc = (k - 1) / n_row
                     lr = k - 1 - lc * n_row

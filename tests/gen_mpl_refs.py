@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "legend_labels",
     "violin_opts",
     "box_opts",
     "pie_opts",
@@ -883,6 +884,15 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 113 names given at legend time, and a line kept out of it
+    fig, ax = setup_fig()
+    ax.plot(x, y)
+    ax.plot(x, y2)
+    ax.plot(x, 0.5 * y, label="_hidden")
+    ax.legend(labels=["first", "second"])
+    ax.set_title("legend labels")
+    save(fig, "legend_labels")
 
     # 112 violins across, with the mean and median marked
     boxmat = np.vstack([dist1, dist2])

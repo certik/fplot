@@ -854,6 +854,15 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 113) names given at legend time, and a line kept out of it
+    call clf()
+    call plot(x, y)
+    call plot(x, y2)
+    call plot(x, 0.5_dp*y, label="_hidden")
+    call legend(labels=["first ", "second"])
+    call title("legend labels")
+    call save_all("legend_labels")
+
 ! 112) violins across, with the mean and median marked
     call clf()
     boxmat(1, :) = dist1

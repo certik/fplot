@@ -83,7 +83,10 @@ call suptitle("figure title")
   where the data has put them so far, so nothing drawn later moves them
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
-- `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,
+- `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=,
+  labels=)`, placed where the data leaves most room when `loc` is left
+  out, as matplotlib's `"best"` does; a label starting with `_` keeps
+  its artist out of the legend,
   `figlegend(loc=, fontsize=, ncol=, frameon=, title=)` for one legend
   covering every panel,
   `xticks` / `yticks` with optional labels, `minorticks_on`,
