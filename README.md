@@ -84,6 +84,9 @@ call suptitle("figure title")
   `zlabel` and `zlim`, drawn with mplot3d's camera, panes and lighting
 - Polar axes: `polar(theta, r)`, or `set_polar()` on an axes, with the
   angular grid, the degree labels and the radial labels along 22.5°
+- Layered like matplotlib: images below patches, the grid above the
+  patches and below the lines, text on top, with `set_zorder` to lift
+  the artist just drawn out of that order
 - Missing data: a NaN or an infinity breaks the line and the band there
   and takes no part in the limits, as it does in matplotlib
 - Patches: `add_rectangle`, `add_circle`, `add_ellipse`, `add_polygon`,

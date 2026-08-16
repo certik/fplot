@@ -847,6 +847,17 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 84) what is drawn over what: the grid rules across the bars but not
+! across the line, and the band is lifted over both
+    call clf()
+    call bar(xb, hb, color="tab:blue")
+    call fill_between(xb, hb*0.5_dp, color="tab:green", alpha=0.7_dp)
+    call set_zorder(3.0_dp)
+    call plot(xb, hb, "r-", lw=2.0_dp)
+    call grid(.true.)
+    call title("layers")
+    call save_all("zorder")
+
 ! 83) missing data: the line breaks at it and the axes do not stretch
     call clf()
     ! A quiet NaN without leaning on ieee_arithmetic, which not every

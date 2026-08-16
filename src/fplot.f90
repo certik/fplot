@@ -45,7 +45,7 @@ module fplot
     public :: subplot, subplot2grid, gridspec, suptitle, subplots_adjust, tight_layout
     public :: xaxis_date, yaxis_date, date_num
     public :: twinx, twiny
-    public :: set_fontsize
+    public :: set_fontsize, set_zorder
     public :: close, gcf
     public :: axes, subplots, sca
     public :: style_use, rc
@@ -146,6 +146,9 @@ module fplot
     integer, parameter :: SERIES_VSPAN = 14
     ! PATCH: a closed ring of vertices, filled and outlined.
     integer, parameter :: SERIES_PATCH = 16
+
+    ! matplotlib's default zorders for the artists fplot draws.
+    real(dp), parameter :: Z_PATCH = 1.0_dp, Z_GRID = 1.5_dp, Z_LINE = 2.0_dp
     ! QUIVER: x, y hold the tails and qu, qv the vectors.
     integer, parameter :: SERIES_QUIVER = 15
     ! ARROWHEAD: x, y hold the tips and qu, qv the direction. Drawn at a
@@ -187,6 +190,9 @@ module fplot
         ! only when edgecolor names one, as in matplotlib, where a patch is
         ! filled and edgeless unless asked otherwise.
         logical :: patch_fill = .true.
+        ! Where the artist sits in the stack. Negative means "whatever this
+        ! kind of artist gets by default", which is what series_z works out.
+        real(dp) :: zorder = -1.0_dp
         ! A patch drawn from an arbitrary path carries its own verbs; a
         ! plain polygon leaves this alone and every point is a line to.
         integer, allocatable :: pverb(:)
@@ -2334,6 +2340,20 @@ contains
         ax(cur_i)%ymax_user = ymax
         ax(cur_i)%ylim_set = .true.
     end subroutine ylim
+
+    ! matplotlib's artist.set_zorder, applied to the artist just drawn.
+    ! Fortran has no artist objects to hang a keyword off, so rather than
+    ! add a zorder= to every plotting call this names the one that would
+    ! have taken it: the series most recently added to these axes.
+    subroutine set_zorder(z)
+        real(dp), intent(in) :: z
+
+        call ensure_fig()
+        if (ax(cur_i)%n_series < 1) &
+            error stop "fplot: set_zorder needs something drawn first"
+        if (z < 0.0_dp) error stop "fplot: zorder must not be negative"
+        ax(cur_i)%series(ax(cur_i)%n_series)%zorder = z
+    end subroutine set_zorder
 
     subroutine plot_num(x, y, fmt, label, lw, color, marker, linestyle, alpha)
         real(dp), intent(in) :: x(:), y(:)
@@ -6872,6 +6892,33 @@ contains
                          h + 2.0_dp*BLEED, color)
     end subroutine append_cell
 
+    ! The grid lines of an axes, drawn between the patches and the lines
+    ! because that is where matplotlib's axes.axisbelow="line" puts them.
+    subroutine append_grid(b, a, xt, nxt, yt, nyt, xmin, xmax, ymin, ymax, &
+                           ax_l, ax_r, ax_t, ax_b, ax_w, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(axes_t), intent(in) :: a
+        real(dp), intent(in) :: xt(:), yt(:)
+        integer, intent(in) :: nxt, nyt
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax
+        real(dp), intent(in) :: ax_l, ax_r, ax_t, ax_b, ax_w, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp) :: p
+        integer :: i
+
+        if (.not. a%grid_on) return
+        do i = 1, nxt
+            p = map_x(xt(i), xmin, xmax, ax_l, ax_w, xsc)
+            call append_line(b, p, ax_t, p, ax_b, rc_grid_color, rc_grid_lw, &
+                             LINE_SOLID, 1.0_dp)
+        end do
+        do i = 1, nyt
+            p = map_y(yt(i), ymin, ymax, ax_b, ax_h, ysc)
+            call append_line(b, ax_l, p, ax_r, p, rc_grid_color, rc_grid_lw, &
+                             LINE_SOLID, 1.0_dp)
+        end do
+    end subroutine append_grid
+
     ! Vertical gradient strip plus its own frame, ticks and labels.
     subroutine append_colorbar(b, a, idx, W, H)
         class(renderer_t), intent(inout) :: b
@@ -7004,6 +7051,23 @@ contains
             t = (v - lo) / (hi - lo)
         end if
     end function cmap_t
+
+    ! matplotlib layers artists rather than drawing them in call order: an
+    ! image is at 0, a patch at 1, the grid at 1.5, a line at 2 and text at
+    ! 3. So a bar drawn after a line still sits under it, and the grid rules
+    ! across the bars but not across the lines.
+    pure function series_z(s) result(z)
+        type(series_t), intent(in) :: s
+        real(dp) :: z
+        if (s%zorder >= 0.0_dp) then
+            z = s%zorder
+        else if (is_patch_series(s%kind) .or. s%kind == SERIES_PATCH .or. &
+                 s%kind == SERIES_PIE .or. s%kind == SERIES_VIOLIN) then
+            z = Z_PATCH
+        else
+            z = Z_LINE
+        end if
+    end function series_z
 
     ! Series drawn as filled shapes, which take a swatch in the legend.
     pure function is_patch_series(kd) result(v)
@@ -7788,8 +7852,9 @@ contains
         real(dp) :: leg_x, leg_y, leg_w, leg_h, row_h, col_w, ttl_h, leg_x0
         real(dp), allocatable :: lx(:), ly(:)
         logical, allocatable :: lstart(:)
-        logical :: brk
-        integer :: k0, k1
+        integer, allocatable :: ord(:)
+        logical :: brk, grid_done
+        integer :: k0, k1, ii
         type(paint_t) :: pnt
 
         ax_l = a%left * W
@@ -7869,20 +7934,6 @@ contains
             call append_rect(b, ax_l, ax_t, ax_w, ax_h, rc_axes_face)
         end if
 
-        ! grid
-        if (a%grid_on) then
-            do i = 1, nxt
-                px = map_x(xticks(i), xmin, xmax, ax_l, ax_w, xsc)
-                call append_line(b, px, ax_t, px, ax_b, rc_grid_color, rc_grid_lw, &
-                                 LINE_SOLID, 1.0_dp)
-            end do
-            do i = 1, nyt
-                py = map_y(yticks(i), ymin, ymax, ax_b, ax_h, ysc)
-                call append_line(b, ax_l, py, ax_r, py, rc_grid_color, rc_grid_lw, &
-                                 LINE_SOLID, 1.0_dp)
-            end do
-        end if
-
         if (a%has_img .or. a%has_cont) then
             call set_clip(ax_l, ax_t, ax_w, ax_h)
             if (a%has_img) &
@@ -7892,9 +7943,34 @@ contains
             call clear_clip()
         end if
 
-        ! data
-        call set_clip(ax_l, ax_t, ax_w, ax_h)
+        ! data, layered rather than in call order. Series of equal zorder
+        ! keep the order they were added in, which is what matplotlib's
+        ! stable sort does too.
+        allocate (ord(max(1, a%n_series)))
         do i = 1, a%n_series
+            ord(i) = i
+        end do
+        do i = 2, a%n_series
+            k0 = ord(i)
+            k1 = i - 1
+            do while (k1 >= 1)
+                if (series_z(a%series(ord(k1))) <= series_z(a%series(k0))) exit
+                ord(k1 + 1) = ord(k1)
+                k1 = k1 - 1
+            end do
+            ord(k1 + 1) = k0
+        end do
+
+        call set_clip(ax_l, ax_t, ax_w, ax_h)
+        grid_done = .false.
+        do ii = 1, a%n_series
+            i = ord(ii)
+            if (.not. grid_done .and. series_z(a%series(i)) >= Z_GRID) then
+                call append_grid(b, a, xticks, nxt, yticks, nyt, xmin, xmax, &
+                                 ymin, ymax, ax_l, ax_r, ax_t, ax_b, ax_w, ax_h, &
+                                 xsc, ysc)
+                grid_done = .true.
+            end if
             n = a%series(i)%n
             if (n <= 0) cycle
             if (allocated(lstart)) deallocate (lstart)
@@ -8063,6 +8139,9 @@ contains
                 end if
             end if
         end do
+        if (.not. grid_done) &
+            call append_grid(b, a, xticks, nxt, yticks, nyt, xmin, xmax, &
+                             ymin, ymax, ax_l, ax_r, ax_t, ax_b, ax_w, ax_h, xsc, ysc)
         ! annotations, in data coordinates
         do i = 1, a%n_texts
             px = map_x(a%texts(i)%x, xmin, xmax, ax_l, ax_w, xsc)

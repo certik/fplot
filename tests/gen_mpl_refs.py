@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "zorder",
     "nan_gap",
     "patches_path",
     "cmap_discrete",
@@ -854,6 +855,17 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 84 what is drawn over what
+    fig, ax = setup_fig()
+    zx = np.arange(1.0, 7.0)
+    zh = np.array([3.0, 5.0, 2.0, 7.0, 4.0, 6.0])
+    ax.bar(zx, zh, color="tab:blue")
+    ax.fill_between(zx, zh * 0.5, color="tab:green", alpha=0.7, zorder=3)
+    ax.plot(zx, zh, "r-", lw=2.0)
+    ax.grid(True)
+    ax.set_title("layers")
+    save(fig, "zorder")
 
     # 83 missing data: the line breaks at it and the axes do not stretch
     fig, ax = setup_fig()
