@@ -18,7 +18,7 @@
 ! place rather than merely a similar one.
 
 module fplot_backend_png
-    use fplot_style, only: dp
+    use fplot_style, only: dp, utf8_next
     use fplot_render
     use fplot_raster
     use fplot_png, only: png_encode
@@ -366,11 +366,14 @@ contains
         character(len=*), intent(in) :: s
         type(font_t), intent(in) :: font
         real(dp) :: w
-        integer :: i
+        integer :: i, code, nb
 
         w = 0.0_dp
-        do i = 1, len(s)
-            w = w + glyph_advance(iachar(s(i:i)), font_face(font))
+        i = 1
+        do while (i <= len(s))
+            call utf8_next(s, i, code, nb)
+            w = w + glyph_advance(code, font_face(font))
+            i = i + nb
         end do
         w = w*font%size/EM
     end function text_width
@@ -404,7 +407,7 @@ contains
         real(dp) :: c1x, c1y, c2x, c2y, ex, ey
         real(dp), allocatable :: px(:), py(:)
         integer, allocatable :: gv(:)
-        integer :: i, j, p, nv, np, code, face
+        integer :: i, j, p, nv, np, code, nb, face
         type(paint_t) :: pp
 
         if (len_trim(s) == 0) return
@@ -437,8 +440,10 @@ contains
         pp%clip = shifted_clip(self, paint%clip)
 
         call pb_reset(self%pb)
-        do i = 1, len(s)
-            code = iachar(s(i:i))
+        i = 1
+        do while (i <= len(s))
+            call utf8_next(s, i, code, nb)
+            i = i + nb
             call glyph_verbs(code, gv, nv, face)
             call glyph_points(code, px, py, np, face)
             p = 0

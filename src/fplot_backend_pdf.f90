@@ -30,6 +30,7 @@ module fplot_backend_pdf
     use fplot_svg, only: svg_builder, builder_init, builder_append, &
                          builder_get, fmt_num
     use fplot_png, only: zlib_compress
+    use fplot_textpath, only: text_needs_outline, text_path, text_path_width
     implicit none
     private
 
@@ -418,6 +419,13 @@ contains
         character(len=1) :: ch
 
         if (len_trim(s) == 0) return
+        ! A greek letter out of mathtext is in no core font, so that string
+        ! is drawn rather than set.
+        if (text_needs_outline(trim(s))) then
+            call pdf_text_outline(self, x, y, trim(s), font, paint, anchor, &
+                                  baseline, angle)
+            return
+        end if
 
         ! SVG asks the viewer to align the string; PDF places a fixed origin,
         ! so the offset has to be measured here.
@@ -462,6 +470,48 @@ contains
         call put(self, "ET"//new_line("a"))
         call put(self, "Q"//new_line("a"))
     end subroutine pdf_draw_text
+
+    ! The same placement as pdf_draw_text, but filling the glyph outlines
+    ! instead of asking for a font. The widths come from the outlines too,
+    ! so the string is spaced as the rest of the library measured it.
+    subroutine pdf_text_outline(self, x, y, s, font, paint, anchor, baseline, angle)
+        class(pdf_renderer_t), intent(inout) :: self
+        real(dp), intent(in) :: x, y
+        character(len=*), intent(in) :: s
+        type(font_t), intent(in) :: font
+        type(paint_t), intent(in) :: paint
+        integer, intent(in) :: anchor, baseline
+        real(dp), intent(in) :: angle
+        real(dp), allocatable :: px(:), py(:)
+        integer, allocatable :: verbs(:)
+        real(dp) :: w, dx, dy, ca, sa, rad
+        integer :: nv, face
+        type(paint_t) :: pp
+
+        face = font_face(font)
+        w = text_path_width(s, font%size, face)
+        dx = 0.0_dp
+        select case (anchor)
+        case (ANCHOR_MIDDLE); dx = -0.5_dp*w
+        case (ANCHOR_END); dx = -w
+        end select
+        dy = 0.0_dp
+        select case (baseline)
+        case (BASE_MIDDLE); dy = 0.36_dp*font%size
+        case (BASE_TOP); dy = 0.76_dp*font%size
+        case (BASE_BOTTOM); dy = -0.21_dp*font%size
+        end select
+        rad = angle*acos(-1.0_dp)/180.0_dp
+        ca = cos(rad)
+        sa = sin(rad)
+
+        call text_path(s, x + dx*ca - dy*sa, y + dx*sa + dy*ca, font%size, &
+                       face, angle, px, py, verbs, nv)
+        pp = paint
+        pp%stroked = .false.
+        pp%filled = .true.
+        call pdf_draw_path(self, px, py, verbs, nv, pp)
+    end subroutine pdf_text_outline
 
     ! The image itself is registered for later; what goes in the content
     ! stream is a matrix and one Do. PDF draws an image into the unit square

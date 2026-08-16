@@ -1,6 +1,6 @@
 ! SVG string builder for fplot.
 module fplot_svg
-    use fplot_style, only: dp
+    use fplot_style, only: dp, utf8_next
     implicit none
     private
 
@@ -136,12 +136,14 @@ contains
         character(len=*), intent(in) :: s
         character(len=*), intent(out) :: out
         integer, intent(out) :: n
-        integer :: i, m
+        integer :: i, m, code, nb, digits
         character(len=1) :: c
 
         n = 0
         m = len_trim(s)
-        do i = 1, m
+        i = 0
+        do while (i < m)
+            i = i + 1
             c = s(i:i)
             select case (c)
             case ("&")
@@ -161,13 +163,19 @@ contains
                 out(n+1:n+6) = "&quot;"
                 n = n + 6
             case default
-                ! A byte past ASCII is a Latin-1 symbol such as the degree
-                ! sign. XML is read as UTF-8, so it goes out as a character
-                ! reference rather than as the raw byte.
+                ! Anything past ASCII is a code point in its own right: a
+                ! degree sign, or a greek letter out of mathtext. It goes
+                ! out as a character reference, which every reader takes
+                ! the same way whatever it believes the encoding to be.
                 if (iachar(c) > 126) then
-                    if (n + 6 > len(out)) exit
-                    write (out(n+1:n+6), "(A2,I3,A1)") "&#", iachar(c), ";"
-                    n = n + 6
+                    call utf8_next(s, i, code, nb)
+                    i = i + nb - 1
+                    digits = 3
+                    if (code > 999) digits = 4
+                    if (code > 9999) digits = 5
+                    if (n + digits + 3 > len(out)) exit
+                    write (out(n+1:n+digits+3), "(A2,I0,A1)") "&#", code, ";"
+                    n = n + digits + 3
                 else
                     if (n + 1 > len(out)) exit
                     n = n + 1
