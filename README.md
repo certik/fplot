@@ -62,7 +62,8 @@ call suptitle("figure title")
 - Several live figures at once: `figure(num=)`, `gcf()`, `close(num=, all=)`
 - `subplots(m, n, axs, sharex=, sharey=)` hands back axes handles, so
   `call axs(1,2)%plot(x, y)` works alongside the stateful `subplot` style;
-  shared axes span the union of the group and drop their inner tick labels
+  shared axes span the union of the group and drop their inner tick labels.
+  Every call the stateful interface offers is also a method on the handle
 - Subplots: `subplot(m, n, i)` and figure-level `suptitle`; per-axes state
   (series, labels, grid, legend, scale, limits) with matplotlib's default
   subplot spacing

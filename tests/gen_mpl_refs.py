@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "axes_handles2",
     "zorder",
     "nan_gap",
     "patches_path",
@@ -855,6 +856,18 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 85 the same calls, reached through an axes handle
+    fig, axs = plt.subplots(2, 2, figsize=(6.4, 4.8))
+    axs[0, 0].boxplot(dist1)
+    axs[0, 0].set_title("box")
+    axs[0, 1].violinplot(dist2)
+    axs[0, 1].set_title("violin")
+    axs[1, 0].semilogy(x + 1.0, np.exp(x))
+    axs[1, 0].minorticks_on()
+    axs[1, 1].pie([3.0, 1.0, 2.0])
+    axs[1, 1].set_title("pie")
+    save(fig, "axes_handles2")
 
     # 84 what is drawn over what
     fig, ax = setup_fig()

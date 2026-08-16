@@ -465,6 +465,34 @@ module fplot
         procedure :: tick_params => ax_tick_params
         procedure :: spines => ax_spines
         procedure :: axis => ax_axis
+        procedure :: set_zorder => ax_set_zorder
+        procedure :: axes3d => ax_axes3d
+        procedure :: boxplot => ax_boxplot
+        procedure :: violinplot => ax_violinplot
+        procedure :: broken_barh => ax_broken_barh
+        procedure :: eventplot => ax_eventplot
+        procedure :: hexbin => ax_hexbin
+        procedure :: hist2d => ax_hist2d
+        procedure :: loglog => ax_loglog
+        procedure :: semilogx => ax_semilogx
+        procedure :: semilogy => ax_semilogy
+        procedure :: matshow => ax_matshow
+        procedure :: minorticks_on => ax_minorticks_on
+        procedure :: pie => ax_pie
+        procedure :: polar => ax_polar
+        procedure :: streamplot => ax_streamplot
+        procedure :: table => ax_table
+        procedure :: tick_format => ax_tick_format
+        procedure :: tick_locator => ax_tick_locator
+        procedure :: ticklabel_format => ax_ticklabel_format
+        procedure :: add_arrow => ax_add_arrow
+        procedure :: add_path => ax_add_path
+        procedure :: plot3d => ax_plot3d
+        procedure :: scatter3d => ax_scatter3d
+        procedure :: plot_surface => ax_plot_surface
+        procedure :: view_init => ax_view_init
+        procedure :: set_zlabel => ax_set_zlabel
+        procedure :: set_zlim => ax_set_zlim
         procedure :: twinx => ax_twinx
         procedure :: twiny => ax_twiny
     end type axes
@@ -1767,6 +1795,248 @@ contains
         call add_polygon(x, y, facecolor, edgecolor, lw, alpha, fill)
     end subroutine ax_add_polygon
 
+    subroutine ax_set_zorder(self, z)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z
+        call ax_sca(self)
+        call set_zorder(z)
+    end subroutine ax_set_zorder
+
+    subroutine ax_axes3d(self, elev, azim)
+        class(axes), intent(in) :: self
+        real(dp), intent(in), optional :: elev, azim
+        call ax_sca(self)
+        call axes3d(elev, azim)
+    end subroutine ax_axes3d
+
+    subroutine ax_boxplot(self, y, position, width, color, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y(:)
+        real(dp), intent(in), optional :: position, width
+        character(len=*), intent(in), optional :: color, label
+        call ax_sca(self)
+        call boxplot(y, position, width, color, label)
+    end subroutine ax_boxplot
+
+    subroutine ax_violinplot(self, y, position, width, color, label)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: y(:)
+        real(dp), intent(in), optional :: position, width
+        character(len=*), intent(in), optional :: color, label
+        call ax_sca(self)
+        call violinplot(y, position, width, color, label)
+    end subroutine ax_violinplot
+
+    subroutine ax_broken_barh(self, xranges, yrange, color, alpha, edgecolor, lw)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: xranges(:, :), yrange(2)
+        character(len=*), intent(in), optional :: color, edgecolor
+        real(dp), intent(in), optional :: alpha, lw
+        call ax_sca(self)
+        call broken_barh(xranges, yrange, color, alpha, edgecolor, lw)
+    end subroutine ax_broken_barh
+
+    subroutine ax_eventplot(self, positions, lineoffset, linelength, color, lw)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: positions(:)
+        real(dp), intent(in), optional :: lineoffset, linelength, lw
+        character(len=*), intent(in), optional :: color
+        call ax_sca(self)
+        call eventplot(positions, lineoffset, linelength, color, lw)
+    end subroutine ax_eventplot
+
+    subroutine ax_hexbin(self, x, y, gridsize, cmap, mincnt)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        integer, intent(in), optional :: gridsize, mincnt
+        character(len=*), intent(in), optional :: cmap
+        call ax_sca(self)
+        call hexbin(x, y, gridsize, cmap, mincnt)
+    end subroutine ax_hexbin
+
+    subroutine ax_hist2d(self, x, y, bins, cmap, vmin, vmax)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        integer, intent(in), optional :: bins(2)
+        character(len=*), intent(in), optional :: cmap
+        real(dp), intent(in), optional :: vmin, vmax
+        call ax_sca(self)
+        call hist2d(x, y, bins, cmap, vmin, vmax)
+    end subroutine ax_hist2d
+
+    subroutine ax_loglog(self, x, y, fmt, label, lw, color)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: fmt, label, color
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call loglog(x, y, fmt, label, lw, color)
+    end subroutine ax_loglog
+
+    subroutine ax_semilogx(self, x, y, fmt, label, lw, color)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: fmt, label, color
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call semilogx(x, y, fmt, label, lw, color)
+    end subroutine ax_semilogx
+
+    subroutine ax_semilogy(self, x, y, fmt, label, lw, color)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in), optional :: fmt, label, color
+        real(dp), intent(in), optional :: lw
+        call ax_sca(self)
+        call semilogy(x, y, fmt, label, lw, color)
+    end subroutine ax_semilogy
+
+    subroutine ax_matshow(self, z, cmap, vmin, vmax)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: z(:, :)
+        character(len=*), intent(in), optional :: cmap
+        real(dp), intent(in), optional :: vmin, vmax
+        call ax_sca(self)
+        call matshow(z, cmap, vmin, vmax)
+    end subroutine ax_matshow
+
+    subroutine ax_minorticks_on(self)
+        class(axes), intent(in) :: self
+        call ax_sca(self)
+        call minorticks_on()
+    end subroutine ax_minorticks_on
+
+    subroutine ax_pie(self, values, labels, cmap)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: values(:)
+        character(len=*), intent(in), optional :: labels(:), cmap
+        call ax_sca(self)
+        call pie(values, labels, cmap)
+    end subroutine ax_pie
+
+    subroutine ax_polar(self, theta, r, color, label, lw, linestyle, marker, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: theta(:), r(:)
+        character(len=*), intent(in), optional :: color, label, linestyle, marker
+        real(dp), intent(in), optional :: lw, alpha
+        call ax_sca(self)
+        call polar(theta, r, color, label, lw, linestyle, marker, alpha)
+    end subroutine ax_polar
+
+    subroutine ax_streamplot(self, x, y, u, v, density, color, lw, arrowsize)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), u(:, :), v(:, :)
+        real(dp), intent(in), optional :: density, lw, arrowsize
+        character(len=*), intent(in), optional :: color
+        call ax_sca(self)
+        call streamplot(x, y, u, v, density, color, lw, arrowsize)
+    end subroutine ax_streamplot
+
+    subroutine ax_table(self, cell_text, col_labels, row_labels, col_widths, loc, fontsize)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: cell_text(:, :)
+        character(len=*), intent(in), optional :: col_labels(:), row_labels(:), loc
+        real(dp), intent(in), optional :: col_widths(:), fontsize
+        call ax_sca(self)
+        call table(cell_text, col_labels, row_labels, col_widths, loc, fontsize)
+    end subroutine ax_table
+
+    subroutine ax_tick_format(self, axis, style, decimals, whole)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: style
+        character(len=*), intent(in), optional :: axis
+        integer, intent(in), optional :: decimals
+        real(dp), intent(in), optional :: whole
+        call ax_sca(self)
+        call tick_format(axis, style, decimals, whole)
+    end subroutine ax_tick_format
+
+    subroutine ax_tick_locator(self, axis, base, nbins)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: axis
+        real(dp), intent(in), optional :: base
+        integer, intent(in), optional :: nbins
+        call ax_sca(self)
+        call tick_locator(axis, base, nbins)
+    end subroutine ax_tick_locator
+
+    subroutine ax_ticklabel_format(self, axis, style, useoffset, scilimits)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in), optional :: axis, style
+        logical, intent(in), optional :: useoffset
+        integer, intent(in), optional :: scilimits(2)
+        call ax_sca(self)
+        call ticklabel_format(axis, style, useoffset, scilimits)
+    end subroutine ax_ticklabel_format
+
+    subroutine ax_add_arrow(self, x, y, dx, dy, width, facecolor, edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x, y, dx, dy
+        real(dp), intent(in), optional :: width, lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_arrow(x, y, dx, dy, width, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_arrow
+
+    subroutine ax_add_path(self, x, y, codes, facecolor, edgecolor, lw, alpha, fill)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:)
+        character(len=*), intent(in) :: codes
+        real(dp), intent(in), optional :: lw, alpha
+        character(len=*), intent(in), optional :: facecolor, edgecolor
+        logical, intent(in), optional :: fill
+        call ax_sca(self)
+        call add_path(x, y, codes, facecolor, edgecolor, lw, alpha, fill)
+    end subroutine ax_add_path
+
+    subroutine ax_plot3d(self, x, y, z, fmt, label, lw, color, marker, linestyle, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        character(len=*), intent(in), optional :: fmt, label, color, marker, linestyle
+        real(dp), intent(in), optional :: lw, alpha
+        call ax_sca(self)
+        call plot3d(x, y, z, fmt, label, lw, color, marker, linestyle, alpha)
+    end subroutine ax_plot3d
+
+    subroutine ax_scatter3d(self, x, y, z, s, c, marker, label, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), z(:)
+        real(dp), intent(in), optional :: s, alpha
+        character(len=*), intent(in), optional :: c, marker, label
+        call ax_sca(self)
+        call scatter3d(x, y, z, s, c, marker, label, alpha)
+    end subroutine ax_scatter3d
+
+    subroutine ax_plot_surface(self, x, y, z, color, alpha)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: x(:), y(:), z(:, :)
+        character(len=*), intent(in), optional :: color
+        real(dp), intent(in), optional :: alpha
+        call ax_sca(self)
+        call plot_surface(x, y, z, color, alpha)
+    end subroutine ax_plot_surface
+
+    subroutine ax_view_init(self, elev, azim)
+        class(axes), intent(in) :: self
+        real(dp), intent(in), optional :: elev, azim
+        call ax_sca(self)
+        call view_init(elev, azim)
+    end subroutine ax_view_init
+
+    subroutine ax_set_zlabel(self, s)
+        class(axes), intent(in) :: self
+        character(len=*), intent(in) :: s
+        call ax_sca(self)
+        call zlabel(s)
+    end subroutine ax_set_zlabel
+
+    subroutine ax_set_zlim(self, lo, hi)
+        class(axes), intent(in) :: self
+        real(dp), intent(in) :: lo, hi
+        call ax_sca(self)
+        call zlim(lo, hi)
+    end subroutine ax_set_zlim
     subroutine ax_quiver(self, x, y, u, v, color, scale, width, label)
         class(axes), intent(in) :: self
         real(dp), intent(in) :: x(:), y(:), u(:), v(:)

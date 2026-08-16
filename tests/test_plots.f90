@@ -847,6 +847,20 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 85) the same calls, reached through an axes handle rather than the
+! current axes
+    call clf()
+    call subplots(2, 2, axs)
+    call axs(1, 1)%boxplot(dist1)
+    call axs(1, 1)%set_title("box")
+    call axs(1, 2)%violinplot(dist2)
+    call axs(1, 2)%set_title("violin")
+    call axs(2, 1)%semilogy(x + 1.0_dp, exp(x))
+    call axs(2, 1)%minorticks_on()
+    call axs(2, 2)%pie([3.0_dp, 1.0_dp, 2.0_dp])
+    call axs(2, 2)%set_title("pie")
+    call save_all("axes_handles2")
+
 ! 84) what is drawn over what: the grid rules across the bars but not
 ! across the line, and the band is lifted over both
     call clf()
