@@ -850,6 +850,19 @@ program test_plots
     call title("table")
     call save_all("table")
 
+! 92) how much room the data is given
+    call clf()
+    call subplot(1, 2, 1)
+    call plot(x, y)
+    call margins(x=0.0_dp, y=0.3_dp)
+    call title("margins")
+    call subplot(1, 2, 2)
+    call plot(x, y)
+    call autoscale(.false.)
+    call plot(x, 3.0_dp * y)
+    call title("autoscale off")
+    call save_all("margins")
+
 ! 91) stacked bands, a band along y, and an endless line
     call clf()
     do i = 1, nst

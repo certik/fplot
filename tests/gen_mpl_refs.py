@@ -76,6 +76,7 @@ OUT_NAMES = [
     "broken_barh",
     "streamplot",
     "table",
+    "margins",
     "fills",
     "axes_facecolor",
     "marker_detail",
@@ -862,6 +863,21 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 92 how much room the data is given
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].plot(x, y)
+    axs[0].margins(x=0.0, y=0.3)
+    axs[0].set_title("margins")
+    axs[1].plot(x, y)
+    # matplotlib defers autoscaling to the draw, so the limits only exist
+    # once something has drawn them; fplot computes them on demand, so the
+    # two agree only after a draw is forced here.
+    fig.canvas.draw()
+    axs[1].autoscale(False)
+    axs[1].plot(x, 3.0 * y)
+    axs[1].set_title("autoscale off")
+    save(fig, "margins")
 
     # 91 stacked bands, a band along y, and an endless line
     fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))

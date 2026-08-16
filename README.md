@@ -59,6 +59,9 @@ call suptitle("figure title")
 - `savefig(file, transparent=, facecolor=)`; the extension picks the format,
   one of `.svg`, `.png`, `.pdf` or `.eps`, and `dpi=` sizes the PNG raster
 - `axis("on"|"off"|"equal"|"scaled"|"tight"|"auto")` and `set_aspect`
+- `margins(m)` or `margins(x=, y=)` for the room left past the data, and
+  `autoscale(enable, axis=, tight=)`; `autoscale(.false.)` pins the limits
+  where the data has put them so far, so nothing drawn later moves them
 - `set_xscale` / `set_yscale` with `"linear"`, `"log"` or `"symlog"`
 - `tick_params(axis=, direction=, length=, labelsize=, rotation=)` and `spines`
 - `legend(loc=, fontsize=, ncol=, frameon=, title=, bbox_to_anchor=)`,

@@ -34,6 +34,7 @@ module fplot
     public :: axhspan, axvspan, hlines, vlines, bar_label
     public :: step, stem, pie, boxplot, violinplot
     public :: axis, set_aspect, tick_params, spines
+    public :: margins, autoscale
     public :: text, annotate, figtext, set_facecolor
     public :: xticks, yticks, minorticks_on
     public :: ticklabel_format, tick_format, tick_locator
@@ -426,8 +427,10 @@ module fplot
         logical :: patch_off = .false.
         real(dp) :: aspect = 0.0_dp
         logical :: aspect_datalim = .false.
-        ! axis("tight"): fit the data exactly, with no 5% margin.
-        logical :: tight = .false.
+        ! How much room past the data each axis takes, as a fraction of the
+        ! drawn length. Matplotlib's five percent unless margins() says
+        ! otherwise; zero is axis("tight"), which fits the data exactly.
+        real(dp) :: xmargin = 0.05_dp, ymargin = 0.05_dp
         logical :: cbar_on = .false.
         character(len=32) :: cbar_label = ""
         type(scale_t) :: xsc
@@ -486,6 +489,8 @@ module fplot
         procedure :: contour => ax_contour
         procedure :: contourf => ax_contourf
         procedure :: colorbar => ax_colorbar
+        procedure :: margins => ax_margins
+        procedure :: autoscale => ax_autoscale
         procedure :: axhline => ax_axhline
         procedure :: axvline => ax_axvline
         procedure :: axline => ax_axline
@@ -2198,6 +2203,21 @@ contains
         call ax_sca(self)
         call colorbar(label)
     end subroutine ax_colorbar
+
+    subroutine ax_margins(self, m, x, y)
+        class(axes), intent(in) :: self
+        real(dp), intent(in), optional :: m, x, y
+        call ax_sca(self)
+        call margins(m, x, y)
+    end subroutine ax_margins
+
+    subroutine ax_autoscale(self, enable, axis, tight)
+        class(axes), intent(in) :: self
+        logical, intent(in), optional :: enable, tight
+        character(len=*), intent(in), optional :: axis
+        call ax_sca(self)
+        call autoscale(enable, axis, tight)
+    end subroutine ax_autoscale
 
     subroutine ax_axhline(self, y, color, linestyle, lw, label)
         class(axes), intent(in) :: self
@@ -4567,14 +4587,84 @@ contains
         case ("scaled")
             call set_aspect(1.0_dp, "box")
         case ("tight")
-            ax(cur_i)%tight = .true.
+            ax(cur_i)%xmargin = 0.0_dp
+            ax(cur_i)%ymargin = 0.0_dp
         case ("auto")
             ax(cur_i)%aspect = 0.0_dp
-            ax(cur_i)%tight = .false.
+            ax(cur_i)%xmargin = 0.05_dp
+            ax(cur_i)%ymargin = 0.05_dp
         case default
             error stop "fplot: unknown axis mode"
         end select
     end subroutine axis
+
+    ! matplotlib's margins(): the room left past the data, as a fraction of
+    ! the drawn length. One value sets both axes, x= and y= one each.
+    subroutine margins(m, x, y)
+        real(dp), intent(in), optional :: m, x, y
+        call ensure_fig()
+        if (present(m)) then
+            ax(cur_i)%xmargin = m
+            ax(cur_i)%ymargin = m
+        end if
+        if (present(x)) ax(cur_i)%xmargin = x
+        if (present(y)) ax(cur_i)%ymargin = y
+    end subroutine margins
+
+    ! matplotlib's autoscale(). enable=.false. pins the limits where the
+    ! data has put them so far, which is the only way to stop an axis from
+    ! growing with what is drawn next; enable=.true. hands it back to the
+    ! data. tight= drops the margin, or puts the usual five percent back.
+    subroutine autoscale(enable, axis, tight)
+        logical, intent(in), optional :: enable, tight
+        character(len=*), intent(in), optional :: axis
+        logical :: dox, doy, on
+        real(dp) :: xmn, xmx, ymn, ymx
+
+        call ensure_fig()
+        dox = .true.
+        doy = .true.
+        if (present(axis)) then
+            select case (lower(axis))
+            case ("x")
+                doy = .false.
+            case ("y")
+                dox = .false.
+            case ("both")
+            case default
+                error stop "fplot: autoscale axis must be x, y or both"
+            end select
+        end if
+
+        if (present(tight)) then
+            if (tight) then
+                if (dox) ax(cur_i)%xmargin = 0.0_dp
+                if (doy) ax(cur_i)%ymargin = 0.0_dp
+            else
+                if (dox) ax(cur_i)%xmargin = 0.05_dp
+                if (doy) ax(cur_i)%ymargin = 0.05_dp
+            end if
+        end if
+
+        on = .true.
+        if (present(enable)) on = enable
+        if (on) then
+            if (dox) ax(cur_i)%xlim_set = .false.
+            if (doy) ax(cur_i)%ylim_set = .false.
+            return
+        end if
+        call compute_limits(ax(cur_i), xmn, xmx, ymn, ymx)
+        if (dox) then
+            ax(cur_i)%xmin_user = xmn
+            ax(cur_i)%xmax_user = xmx
+            ax(cur_i)%xlim_set = .true.
+        end if
+        if (doy) then
+            ax(cur_i)%ymin_user = ymn
+            ax(cur_i)%ymax_user = ymx
+            ax(cur_i)%ylim_set = .true.
+        end if
+    end subroutine autoscale
 
     ! ratio is the length of one y unit over the length of one x unit.
     subroutine set_aspect(ratio, adjustable)
@@ -5725,7 +5815,7 @@ contains
             ! An axes with nothing to autoscale to keeps the plain unit
             ! square matplotlib gives it, margins and all.
             if (anyx) then
-                if (.not. a%tight) call expand_limits(xmin, xmax, a%xsc, sx_lo, sx_hi)
+                call expand_limits(xmin, xmax, a%xsc, a%xmargin, sx_lo, sx_hi)
             else
                 xmin = 0.0_dp
                 xmax = 1.0_dp
@@ -5737,7 +5827,7 @@ contains
             ymax = a%ymax_user
         else
             if (anyy) then
-                if (.not. a%tight) call expand_limits(ymin, ymax, a%ysc, sticky_lo, sticky_hi)
+                call expand_limits(ymin, ymax, a%ysc, a%ymargin, sticky_lo, sticky_hi)
             else
                 ymin = 0.0_dp
                 ymax = 1.0_dp
@@ -5845,11 +5935,12 @@ contains
         v = t
     end subroutine swap
 
-    ! Pad a data range by matplotlib's 5% margin. A sticky edge (the bar
+    ! Pad a data range by the axis margin. A sticky edge (the bar
     ! baseline) is left exactly where it is.
-    subroutine expand_limits(lo, hi, sc, sticky_lo, sticky_hi)
+    subroutine expand_limits(lo, hi, sc, margin, sticky_lo, sticky_hi)
         real(dp), intent(inout) :: lo, hi
         type(scale_t), intent(in) :: sc
+        real(dp), intent(in) :: margin
         logical, intent(in) :: sticky_lo, sticky_hi
         real(dp) :: u0, u1, d
 
@@ -5858,14 +5949,16 @@ contains
             if (hi <= lo) hi = lo * 10.0_dp
         end if
 
-        ! The margin is 5% of the drawn length, so it has to be measured in
-        ! transformed space; on a linear axis that is the same thing.
+        if (margin <= 0.0_dp) return
+        ! The margin is a fraction of the drawn length, so it has to be
+        ! measured in transformed space; on a linear axis that is the same
+        ! thing.
         u0 = scale_fwd(sc, lo)
         u1 = scale_fwd(sc, hi)
         d = u1 - u0
         if (abs(d) < 1.0e-30_dp) d = 1.0_dp
-        if (.not. sticky_lo) lo = scale_inv(sc, u0 - 0.05_dp * d)
-        if (.not. sticky_hi) hi = scale_inv(sc, u1 + 0.05_dp * d)
+        if (.not. sticky_lo) lo = scale_inv(sc, u0 - margin * d)
+        if (.not. sticky_hi) hi = scale_inv(sc, u1 + margin * d)
     end subroutine expand_limits
 
     pure function map_x(x, xmin, xmax, ax_l, ax_w, sc) result(px)
