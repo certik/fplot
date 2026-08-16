@@ -23,6 +23,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 REF = ROOT / "refs"
 OUT_NAMES = [
+    "box_opts",
     "pie_opts",
     "scatter_edge",
     "figlegend",
@@ -881,6 +882,16 @@ def main() -> None:
     ax.set_yticks([])
     ax.set_title("table")
     save(fig, "table")
+
+    # 111 boxes across, waisted, filled and with the mean marked
+    boxmat = np.vstack([dist1, dist2])
+    fig, axs = plt.subplots(1, 2, figsize=(6.4, 4.8))
+    axs[0].boxplot(boxmat.T, tick_labels=["one", "two"], notch=True,
+                   showmeans=True, patch_artist=True)
+    axs[0].set_title("notched")
+    axs[1].boxplot(boxmat.T, tick_labels=["one", "two"], vert=False)
+    axs[1].set_title("across")
+    save(fig, "box_opts")
 
     # 110 a pie with a slice pulled out and its shares written in
     fig, ax = plt.subplots(figsize=(6.4, 4.8))

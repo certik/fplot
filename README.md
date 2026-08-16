@@ -39,6 +39,8 @@ call suptitle("figure title")
   (separate keywords because Fortran cannot overload one dummy as
   scalar-or-array the way matplotlib's `s=` and `c=` do)
 - `step`, `stem`, `barh`, `pie`, `boxplot`, `violinplot`
+- `boxplot(y)` for one dataset or `boxplot(y(:,:), labels=)` for a row
+  each, with `vert=`, `notch=`, `showmeans=`, `patch_artist=` and `whis=`
 - `pie(explode=, startangle=, counterclock=, autopct=, pctdistance=,
   labeldistance=, radius=, colors=, edgecolor=, linewidth=)`
 - `semilogx`, `semilogy`, `loglog`, `axhline`, `axvline`

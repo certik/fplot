@@ -23,7 +23,7 @@ program test_plots
     real(dp) :: xm(mk), ym(mk)
     real(dp) :: xs(ns), ys(ns)
     integer, parameter :: nd = 40
-    real(dp) :: dist1(nd), dist2(nd)
+    real(dp) :: dist1(nd), dist2(nd), boxmat(2, nd)
     integer, parameter :: nsym = 201
     real(dp) :: xsym(nsym)
     integer, parameter :: nsm = 2
@@ -853,6 +853,19 @@ program test_plots
     call yticks([real(dp) ::])
     call title("table")
     call save_all("table")
+
+! 111) boxes across, waisted, filled and with the mean marked
+    call clf()
+    boxmat(1, :) = dist1
+    boxmat(2, :) = dist2
+    call subplot(1, 2, 1)
+    call boxplot(boxmat, labels=["one", "two"], notch=.true., &
+                 showmeans=.true., patch_artist=.true.)
+    call title("notched")
+    call subplot(1, 2, 2)
+    call boxplot(boxmat, labels=["one", "two"], vert=.false.)
+    call title("across")
+    call save_all("box_opts")
 
 ! 110) a pie with a slice pulled out and its shares written in
     call clf()

@@ -224,8 +224,15 @@ module fplot
         real(dp), allocatable :: qu(:), qv(:)
         real(dp) :: qscale = -1.0_dp
         real(dp) :: qwidth = -1.0_dp
-        ! BOX/VIOLIN: the position on the category axis.
+        ! BOX/VIOLIN: the position on the category axis, and how the box
+        ! is drawn: across instead of up, waisted at the median, with the
+        ! mean marked, and filled rather than left as an outline.
         real(dp) :: pos = 1.0_dp
+        logical :: box_vert = .true.
+        logical :: box_notch = .false.
+        logical :: box_mean = .false.
+        logical :: box_fill = .false.
+        real(dp) :: whis = 1.5_dp
         ! PIE: how far each wedge is pushed out along its own mid angle,
         ! where the first wedge starts, and which way the wedges run.
         real(dp), allocatable :: pexp(:)
@@ -637,6 +644,15 @@ module fplot
     interface imshow
         module procedure imshow_z, imshow_rgb
     end interface imshow
+
+    ! One dataset or a whole block of them, a row to each.
+    interface boxplot
+        module procedure boxplot_one, boxplot_many
+    end interface boxplot
+
+    interface violinplot
+        module procedure violinplot_one, violinplot_many
+    end interface violinplot
 
     interface subplots
         module procedure subplots_grid, subplots_row, subplots_one
@@ -5236,20 +5252,120 @@ contains
 
     ! One box per call. Fortran has no ragged arrays, so a group of datasets
     ! of differing sizes is built by calling this once per dataset rather than
-    ! by passing matplotlib's list.
-    subroutine boxplot(y, position, width, color, label)
+    ! by passing matplotlib's list; datasets of one size can go in together
+    ! as a matrix, a row to each.
+    subroutine boxplot_one(y, position, width, color, label, vert, notch, &
+                           showmeans, patch_artist, whis)
         real(dp), intent(in) :: y(:)
-        real(dp), intent(in), optional :: position, width
+        real(dp), intent(in), optional :: position, width, whis
         character(len=*), intent(in), optional :: color, label
-        call add_dist_series(SERIES_BOX, y, position, width, color, label, 0.15_dp)
-    end subroutine boxplot
+        logical, intent(in), optional :: vert, notch, showmeans, patch_artist
+        integer :: is
 
-    subroutine violinplot(y, position, width, color, label)
+        call add_dist_series(SERIES_BOX, y, position, width, color, label, 0.15_dp)
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        if (present(vert)) ax(cur_i)%series(is)%box_vert = vert
+        if (present(notch)) ax(cur_i)%series(is)%box_notch = notch
+        if (present(showmeans)) ax(cur_i)%series(is)%box_mean = showmeans
+        if (present(whis)) ax(cur_i)%series(is)%whis = whis
+        if (present(patch_artist)) then
+            ax(cur_i)%series(is)%box_fill = patch_artist
+            ! A filled box takes the first cycle colour, as matplotlib's
+            ! patch_artist boxes do, and keeps its black furniture.
+            if (patch_artist .and. .not. present(color)) &
+                ax(cur_i)%series(is)%hcolor = cycle_color(0)
+        end if
+    end subroutine boxplot_one
+
+    ! A row per dataset. labels name the categories along the axis the
+    ! boxes are ranged on.
+    subroutine boxplot_many(y, labels, positions, width, color, vert, notch, &
+                            showmeans, patch_artist, whis)
+        real(dp), intent(in) :: y(:, :)
+        character(len=*), intent(in), optional :: labels(:), color
+        real(dp), intent(in), optional :: positions(:), width, whis
+        logical, intent(in), optional :: vert, notch, showmeans, patch_artist
+        integer :: k, nk
+        real(dp), allocatable :: pos(:)
+        logical :: up
+
+        call ensure_fig()
+        nk = size(y, 1)
+        if (nk < 1) return
+        allocate (pos(nk))
+        do k = 1, nk
+            pos(k) = real(k, dp)
+            if (present(positions)) then
+                if (k <= size(positions)) pos(k) = positions(k)
+            end if
+            call boxplot_one(y(k, :), pos(k), width, color, vert=vert, &
+                             notch=notch, showmeans=showmeans, &
+                             patch_artist=patch_artist, whis=whis)
+        end do
+        if (present(labels)) then
+            up = .true.
+            if (present(vert)) up = vert
+            if (up) then
+                call xticks(pos, labels)
+            else
+                call yticks(pos, labels)
+            end if
+        end if
+    end subroutine boxplot_many
+
+    subroutine violinplot_one(y, position, width, color, label, vert, showmeans, &
+                              showmedians, showextrema)
         real(dp), intent(in) :: y(:)
         real(dp), intent(in), optional :: position, width
         character(len=*), intent(in), optional :: color, label
+        logical, intent(in), optional :: vert, showmeans, showmedians, showextrema
+        integer :: is
+
         call add_dist_series(SERIES_VIOLIN, y, position, width, color, label, 0.5_dp)
-    end subroutine violinplot
+        is = ax(cur_i)%n_series
+        if (is < 1) return
+        if (present(vert)) ax(cur_i)%series(is)%box_vert = vert
+        if (present(showmeans)) ax(cur_i)%series(is)%box_mean = showmeans
+        ! matplotlib draws the extrema bars unless told not to, and the
+        ! median only when asked.
+        if (present(showmedians)) ax(cur_i)%series(is)%box_notch = showmedians
+        if (present(showextrema)) ax(cur_i)%series(is)%box_fill = .not. showextrema
+    end subroutine violinplot_one
+
+    subroutine violinplot_many(y, labels, positions, width, color, vert, &
+                               showmeans, showmedians, showextrema)
+        real(dp), intent(in) :: y(:, :)
+        character(len=*), intent(in), optional :: labels(:), color
+        real(dp), intent(in), optional :: positions(:), width
+        logical, intent(in), optional :: vert, showmeans, showmedians, showextrema
+        integer :: k, nk
+        real(dp), allocatable :: pos(:)
+        logical :: up
+
+        call ensure_fig()
+        nk = size(y, 1)
+        if (nk < 1) return
+        allocate (pos(nk))
+        do k = 1, nk
+            pos(k) = real(k, dp)
+            if (present(positions)) then
+                if (k <= size(positions)) pos(k) = positions(k)
+            end if
+            call violinplot_one(y(k, :), pos(k), width, color, vert=vert, &
+                                showmeans=showmeans, showmedians=showmedians, &
+                                showextrema=showextrema)
+        end do
+        if (present(labels)) then
+            up = .true.
+            if (present(vert)) up = vert
+            if (up) then
+                call xticks(pos, labels)
+            else
+                call yticks(pos, labels)
+            end if
+        end if
+    end subroutine violinplot_many
 
     subroutine add_dist_series(kd, y, position, width, color, label, wdefault)
         integer, intent(in) :: kd
@@ -6415,6 +6531,22 @@ contains
                     pxhi = max(pxhi, a%series(i)%x(j))
                     pylo = min(pylo, a%series(i)%y(j))
                     pyhi = max(pyhi, a%series(i)%y(j))
+                end do
+                cycle
+            end if
+            if ((a%series(i)%kind == SERIES_BOX .or. &
+                 a%series(i)%kind == SERIES_VIOLIN) .and. &
+                .not. a%series(i)%box_vert) then
+                ! Laid across, the two axes trade jobs.
+                anyy = .true.
+                sticky_lo = .true.
+                sticky_hi = .true.
+                ymin = min(ymin, a%series(i)%pos - 0.5_dp)
+                ymax = max(ymax, a%series(i)%pos + 0.5_dp)
+                do j = 1, a%series(i)%n
+                    anyx = .true.
+                    xmin = min(xmin, a%series(i)%y(j))
+                    xmax = max(xmax, a%series(i)%y(j))
                 end do
                 cycle
             end if
@@ -8166,9 +8298,10 @@ contains
         type(series_t), intent(in) :: s
         real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
         type(scale_t), intent(in) :: xsc, ysc
-        real(dp) :: q1, q2, q3, iqr, wlo, whi, hw, cw
-        real(dp) :: xl, xr, cl, cr, xc, y1, y3, ym, yl, yh
-        integer :: j
+        real(dp) :: q1, q2, q3, iqr, wlo, whi, hw, cw, ci, mean
+        real(dp) :: bx(12), by(12), px, py
+        real(dp) :: lo_c, hi_c, ctr, nlo_c, nhi_c, mlo, mhi
+        integer :: j, np
 
         q1 = quantile(s%y(1:s%n), 0.25_dp)
         q2 = quantile(s%y(1:s%n), 0.5_dp)
@@ -8177,45 +8310,146 @@ contains
         wlo = q1
         whi = q3
         do j = 1, s%n
-            if (s%y(j) >= q1 - 1.5_dp * iqr) then
+            if (s%y(j) >= q1 - s%whis*iqr) then
                 wlo = s%y(j)
                 exit
             end if
         end do
         do j = s%n, 1, -1
-            if (s%y(j) <= q3 + 1.5_dp * iqr) then
+            if (s%y(j) <= q3 + s%whis*iqr) then
                 whi = s%y(j)
                 exit
             end if
         end do
 
-        hw = 0.5_dp * s%width
-        cw = 0.25_dp * s%width
-        xl = map_x(s%pos - hw, xmin, xmax, ax_l, ax_w, xsc)
-        xr = map_x(s%pos + hw, xmin, xmax, ax_l, ax_w, xsc)
-        cl = map_x(s%pos - cw, xmin, xmax, ax_l, ax_w, xsc)
-        cr = map_x(s%pos + cw, xmin, xmax, ax_l, ax_w, xsc)
-        xc = map_x(s%pos, xmin, xmax, ax_l, ax_w, xsc)
-        y1 = map_y(q1, ymin, ymax, ax_b, ax_h, ysc)
-        y3 = map_y(q3, ymin, ymax, ax_b, ax_h, ysc)
-        ym = map_y(q2, ymin, ymax, ax_b, ax_h, ysc)
-        yl = map_y(wlo, ymin, ymax, ax_b, ax_h, ysc)
-        yh = map_y(whi, ymin, ymax, ax_b, ax_h, ysc)
+        hw = 0.5_dp*s%width
+        cw = 0.25_dp*s%width
+        ! The three offsets across the category axis: the box edges, the
+        ! waist of a notched box, and the centre line the whiskers run on.
+        lo_c = pos_coord(s, s%pos - hw, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        hi_c = pos_coord(s, s%pos + hw, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        nlo_c = pos_coord(s, s%pos - cw, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        nhi_c = pos_coord(s, s%pos + cw, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        ctr = pos_coord(s, s%pos, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
 
-        call append_stroke_path(b, [xl, xr, xr, xl, xl], [y1, y1, y3, y3, y1], 5, &
-                                trim(s%color), 1.0_dp, s%alpha)
-        call append_line(b, xc, y1, xc, yl, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
-        call append_line(b, xc, y3, xc, yh, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
-        call append_line(b, cl, yl, cr, yl, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
-        call append_line(b, cl, yh, cr, yh, trim(s%color), 1.0_dp, LINE_SOLID, s%alpha)
-        call append_line(b, xl, ym, xr, ym, "#ff7f0e", 1.0_dp, LINE_SOLID, s%alpha)
+        ! matplotlib's notch reaches 1.57 IQR / sqrt(N) either side of the
+        ! median, which is the 95% interval for it.
+        ci = 1.57_dp*iqr/sqrt(real(s%n, dp))
+        mlo = q2 - ci
+        mhi = q2 + ci
+        if (.not. s%box_notch) then
+            mlo = q2
+            mhi = q2
+        end if
+
+        ! The box outline, waisted at the median when notched.
+        if (s%box_notch) then
+            call box_pt(s, lo_c, q1, bx, by, 1, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, hi_c, q1, bx, by, 2, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, hi_c, mlo, bx, by, 3, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, nhi_c, q2, bx, by, 4, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, hi_c, mhi, bx, by, 5, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, hi_c, q3, bx, by, 6, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, lo_c, q3, bx, by, 7, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, lo_c, mhi, bx, by, 8, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, nlo_c, q2, bx, by, 9, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, lo_c, mlo, bx, by, 10, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, lo_c, q1, bx, by, 11, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            np = 11
+        else
+            call box_pt(s, lo_c, q1, bx, by, 1, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, hi_c, q1, bx, by, 2, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, hi_c, q3, bx, by, 3, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, lo_c, q3, bx, by, 4, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call box_pt(s, lo_c, q1, bx, by, 5, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            np = 5
+        end if
+
+        if (s%box_fill) call append_polygon(b, bx(1:np - 1), by(1:np - 1), np - 1, &
+                                            trim(s%hcolor), s%alpha)
+        call append_stroke_path(b, bx(1:np), by(1:np), np, trim(s%color), 1.0_dp, s%alpha)
+
+        ! Whiskers along the centre line, with a cap on each.
+        call box_seg(b, s, ctr, q1, ctr, wlo, trim(s%color), xmin, xmax, ymin, ymax, &
+                     ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        call box_seg(b, s, ctr, q3, ctr, whi, trim(s%color), xmin, xmax, ymin, ymax, &
+                     ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        call box_seg(b, s, nlo_c, wlo, nhi_c, wlo, trim(s%color), xmin, xmax, ymin, ymax, &
+                     ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        call box_seg(b, s, nlo_c, whi, nhi_c, whi, trim(s%color), xmin, xmax, ymin, ymax, &
+                     ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        ! The median, drawn between the waist of a notched box.
+        if (s%box_notch) then
+            call box_seg(b, s, nlo_c, q2, nhi_c, q2, "#ff7f0e", xmin, xmax, ymin, ymax, &
+                         ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        else
+            call box_seg(b, s, lo_c, q2, hi_c, q2, "#ff7f0e", xmin, xmax, ymin, ymax, &
+                         ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        end if
 
         do j = 1, s%n
             if (s%y(j) >= wlo .and. s%y(j) <= whi) cycle
-            call append_open_circle(b, xc, map_y(s%y(j), ymin, ymax, ax_b, ax_h, ysc), &
-                                    3.0_dp, trim(s%color))
+            call box_pt(s, ctr, s%y(j), bx, by, 1, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            call append_open_circle(b, bx(1), by(1), 3.0_dp, trim(s%color))
         end do
+
+        ! matplotlib marks the mean with a green triangle.
+        if (s%box_mean) then
+            mean = sum(s%y(1:s%n))/real(s%n, dp)
+            call box_pt(s, ctr, mean, bx, by, 1, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+            px = bx(1)
+            py = by(1)
+            call append_markers(b, MARKER_TRI_UP, [px], [py], 1, 6.0_dp, "#2ca02c", s%alpha)
+        end if
     end subroutine append_box
+
+    ! The canvas coordinate of a position on the category axis, whichever
+    ! axis that is for this box.
+    function pos_coord(s, v, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc) result(c)
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: v, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp) :: c
+        if (s%box_vert) then
+            c = map_x(v, xmin, xmax, ax_l, ax_w, xsc)
+        else
+            c = map_y(v, ymin, ymax, ax_b, ax_h, ysc)
+        end if
+    end function pos_coord
+
+    ! Store one point of the box, given an already mapped category
+    ! coordinate and a value still in data units.
+    subroutine box_pt(s, c, v, bx, by, k, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: c, v, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        real(dp), intent(inout) :: bx(:), by(:)
+        integer, intent(in) :: k
+        type(scale_t), intent(in) :: xsc, ysc
+        if (s%box_vert) then
+            bx(k) = c
+            by(k) = map_y(v, ymin, ymax, ax_b, ax_h, ysc)
+        else
+            bx(k) = map_x(v, xmin, xmax, ax_l, ax_w, xsc)
+            by(k) = c
+        end if
+    end subroutine box_pt
+
+    ! One straight piece of box furniture, from a category/value pair to
+    ! another.
+    subroutine box_seg(b, s, c0, v0, c1, v1, color, xmin, xmax, ymin, ymax, &
+                       ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        class(renderer_t), intent(inout) :: b
+        type(series_t), intent(in) :: s
+        real(dp), intent(in) :: c0, v0, c1, v1
+        character(len=*), intent(in) :: color
+        real(dp), intent(in) :: xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h
+        type(scale_t), intent(in) :: xsc, ysc
+        real(dp) :: bx(2), by(2)
+
+        call box_pt(s, c0, v0, bx, by, 1, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        call box_pt(s, c1, v1, bx, by, 2, xmin, xmax, ymin, ymax, ax_l, ax_w, ax_b, ax_h, xsc, ysc)
+        call append_line(b, bx(1), by(1), bx(2), by(2), color, 1.0_dp, LINE_SOLID, s%alpha)
+    end subroutine box_seg
 
     subroutine append_open_circle(b, cx, cy, r, color)
         class(renderer_t), intent(inout) :: b
