@@ -274,6 +274,17 @@ tests/         Fortran test plots, matplotlib refs, compare scripts
 scripts/       build_flang.sh, build_lfortran.sh
 ```
 
+## License
+
+MIT, in `LICENSE`.
+
+The compiled-in glyph outlines in `src/fplot_glyphs.f90` are derived from
+DejaVu Sans, whose licence is in `LICENSE_DEJAVU`: the Bitstream Vera fonts
+are copyright Bitstream, and the DejaVu changes are in the public domain. The
+colormap tables in `src/fplot_cmap.f90` are sampled from matplotlib, which is
+BSD-licensed, and the perceptual maps (viridis, magma, inferno, plasma) are
+released by their authors under CC0.
+
 ## Jupyter (LFortran)
 
 With LFortran as a Jupyter kernel, display the SVG interactively:
