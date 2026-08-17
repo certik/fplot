@@ -206,6 +206,28 @@ call suptitle("figure title")
   single letters, `C0`-`C9`, or a greyscale fraction such as `"0.5"`
 - SVG defaults aligned with matplotlib (6.4×4.8 in, tab10 colors, subplot margins)
 
+## Using fplot in your project
+
+fplot is an [fpm](https://fpm.fortran-lang.org) package with no dependencies
+outside the Fortran standard library, so a project picks it up with one entry
+in its `fpm.toml`:
+
+```toml
+[dependencies]
+fplot = { git = "https://github.com/certik/fplot" }
+```
+
+and then `use fplot` and call `plot`, `title`, `savefig` as the examples below
+do. It builds with both flang and LFortran:
+
+```bash
+fpm build --compiler flang
+fpm build --compiler lfortran
+```
+
+The pixi tasks below are for developing fplot itself, where the build scripts
+give finer control over compile and link order.
+
 ## Build
 
 Requires [pixi](https://pixi.sh). LFortran is installed by pixi on all platforms.

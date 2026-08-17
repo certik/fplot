@@ -15,6 +15,10 @@ build-lfortran = "bash scripts/build_lfortran.sh"
 test-lfortran = "bash scripts/build_lfortran.sh && mkdir -p tests/out && ./build/lfortran/test_plots"
 demo-lfortran = "bash scripts/build_lfortran.sh && ./build/lfortran/demo"
 
+# fpm is how another project depends on fplot, so build it that way too.
+fpm-flang = "fpm build --compiler flang"
+fpm-lfortran = "fpm build --compiler lfortran"
+
 mpl-refs = "python tests/gen_mpl_refs.py"
 
 # The five comparisons share their setup, so it is expressed once as a
@@ -50,6 +54,7 @@ poppler = "*"
 lfortran = ">=0.64.0,<0.65"
 # gs, for rasterizing EPS in tests/compare_eps.py
 ghostscript = ">=10.4.0,<11"
+fpm = ">=0.13.0,<0.14"
 
 [target.linux-64.dependencies]
 flang_linux-64 = ">=22,<23"
