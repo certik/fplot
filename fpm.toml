@@ -1,6 +1,8 @@
 name = "fplot"
 version = "0.1.0"
 description = "Pure Fortran pylab-style plotting: SVG, PNG, PDF, EPS and GIF"
+license = "MIT"
+author = "Ondřej Čertík"
 categories = ["graphics"]
 keywords = ["plotting", "matplotlib", "svg", "png", "pdf"]
 
