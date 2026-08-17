@@ -1,0 +1,23 @@
+name = "fplot"
+version = "0.1.0"
+description = "Pure Fortran pylab-style plotting: SVG, PNG, PDF, EPS and GIF"
+categories = ["graphics"]
+keywords = ["plotting", "matplotlib", "svg", "png", "pdf"]
+
+[build]
+auto-executables = false
+auto-examples = false
+auto-tests = false
+
+[library]
+source-dir = "src"
+
+[[example]]
+name = "demo"
+source-dir = "examples"
+main = "demo.f90"
+
+[[test]]
+name = "test_plots"
+source-dir = "tests"
+main = "test_plots.f90"
